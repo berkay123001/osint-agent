@@ -5,9 +5,15 @@ export type Message = OpenAI.Chat.ChatCompletionMessageParam
 const EMPTY_ASSISTANT_FALLBACK = 'Araçlar çalıştı ancak model boş yanıt döndürdü.'
 const EMPTY_TOOL_FALLBACK = 'Tool sonuç üretemedi.'
 
+const TOOL_RESULT_MAX_CHARS = 3000
+
 export function normalizeToolContent(content: string | null | undefined): string {
   const text = typeof content === 'string' ? content.trim() : ''
-  return text || EMPTY_TOOL_FALLBACK
+  const result = text || EMPTY_TOOL_FALLBACK
+  if (result.length > TOOL_RESULT_MAX_CHARS) {
+    return result.slice(0, TOOL_RESULT_MAX_CHARS) + `\n... [sonuç kısaltıldı, toplam ${result.length} karakter]`
+  }
+  return result
 }
 
 export function normalizeAssistantMessage(

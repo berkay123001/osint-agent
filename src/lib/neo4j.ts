@@ -445,6 +445,44 @@ export async function writeBreachData(
 }
 
 /**
+ * Firecrawl scrape sonuçlarını grafa yazar.
+ * Profile→SCRAPE_FOUND→Email/CryptoWallet/Username ilişkileri oluşturur.
+ */
+export async function writeScrapeData(
+  profileUrl: string,
+  data: {
+    emails: string[]
+    cryptoWallets: string[]
+    usernameHints: string[]
+  },
+  source: string = 'firecrawl'
+): Promise<{ nodesCreated: number; relsCreated: number }> {
+  const beforeStats = await getGraphStats()
+  const meta = { source, confidence: sourceToConfidence(source) }
+
+  await mergeNode('Website', { value: profileUrl })
+
+  for (const email of data.emails) {
+    await mergeNode('Email', { value: email })
+    await mergeRelation('Website', profileUrl, 'Email', email, 'SCRAPE_FOUND', meta)
+  }
+  for (const wallet of data.cryptoWallets) {
+    await mergeNode('CryptoWallet', { value: wallet })
+    await mergeRelation('Website', profileUrl, 'CryptoWallet', wallet, 'SCRAPE_FOUND', meta)
+  }
+  for (const hint of data.usernameHints) {
+    await mergeNode('Username', { value: hint })
+    await mergeRelation('Website', profileUrl, 'Username', hint, 'SCRAPE_FOUND', meta)
+  }
+
+  const afterStats = await getGraphStats()
+  return {
+    nodesCreated: Math.max(afterStats.nodes - beforeStats.nodes, 0),
+    relsCreated: Math.max(afterStats.relationships - beforeStats.relationships, 0),
+  }
+}
+
+/**
  * SAME_AS ilişkisi kur — iki farklı platformdaki hesabın aynı kişiye ait olduğuna dair kanıt.
  * Pivot noktası: email eşleşmesi, SSH key eşleşmesi vb.
  */
