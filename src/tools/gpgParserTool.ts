@@ -50,12 +50,12 @@ export async function parseGpgKeyFile(filePath: string): Promise<GpgKeyInfo> {
     result.rawOutput = packetsOutput
 
     // User ID satırlarından email çıkar
-    const uidRegex = /user ID "([^"]+)"/g
+    const uidRegex = /user ID(?: packet:)?[ \t]+"([^"]+)"/g
     let match
     while ((match = uidRegex.exec(packetsOutput)) !== null) {
       const uid = match[1]
-      // Email çıkar
-      const emailMatch = uid.match(/<([^>]+@[^>]+)>/)
+      // Email çıkar (köşeli parantez içinde veya doğrudan)
+      const emailMatch = uid.match(/<([^>]+@[^>]+)>/) || uid.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/)
       if (emailMatch) {
         const email = emailMatch[1]
         if (!result.emails.includes(email)) result.emails.push(email)

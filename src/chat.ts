@@ -6,16 +6,19 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import chalk from 'chalk'
 import { githubOsint } from './tools/githubTool.js'
-import { writeOsintToGraph, getConnections, getGraphStats, getGraphNodeCountsByLabel, listGraphNodes, pruneMisclassifiedFullNameUsernames, findLinkedIdentifiers, writeEmailRegistrations, writeBreachData, closeNeo4j, clearGraph } from './lib/neo4j.js'
+import { writeOsintToGraph, getConnections, getGraphStats, getGraphNodeCountsByLabel, listGraphNodes, pruneMisclassifiedFullNameUsernames, findLinkedIdentifiers, writeEmailRegistrations, writeBreachData, writeScrapeData, closeNeo4j, clearGraph } from './lib/neo4j.js'
 import { normalizeAssistantMessage, normalizeToolContent, sanitizeHistoryForProvider } from './lib/chatHistory.js'
 import { isLikelyUsernameCandidate } from './lib/osintHeuristics.js'
 import { extractMetadataFromUrl, extractMetadataFromFile, formatMetadata } from './tools/metadataTool.js'
-import { parseGithubGpgKey, formatGpgResult } from './tools/gpgParserTool.js'
+import { parseGithubGpgKey, parseGpgKeyFile, formatGpgResult } from './tools/gpgParserTool.js'
 import { waybackSearch, formatWaybackResult } from './tools/waybackTool.js'
 import { webFetch } from './tools/webFetchTool.js'
 import { checkEmailRegistrations, formatHoleheResult } from './tools/holeheTool.js'
 import { checkBreaches, formatBreachResult } from './tools/breachCheckTool.js'
 import { searchWeb, formatSearchResult } from './tools/searchTool.js'
+import { scrapeProfile, formatScrapeResult } from './tools/scrapeTool.js'
+import os from 'os'
+import { writeFile, unlink } from 'fs/promises'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -236,6 +239,21 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'scrape_profile',
+      description:
+        'Scrape a webpage using Firecrawl stealth proxy. Works well on: GitHub, personal blogs, forums, CTF writeup sites, portfolio pages. Returns page as Markdown and auto-extracts emails, crypto wallets (BTC/ETH), Telegram links, and external URLs. NOTE: Twitter/X and Reddit are NOT supported by Firecrawl free tier — use web_fetch for those (will auto-fallback). ⚠️ Monthly limit: 500 requests — use only when web_fetch gets blocked (403).',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'Full URL of the profile/page to scrape (e.g. https://twitter.com/username, https://tiktok.com/@user)' },
+        },
+        required: ['url'],
+      },
+    },
+  },
 ]
 
 // ─── Tool Executors ──────────────────────────────────────────────────
@@ -328,7 +346,8 @@ async function executeTool(
   if (name === 'check_email_registrations') return runEmailRegistrations(args.email)
   if (name === 'check_breaches') return runBreachCheck(args.email)
   if (name === 'search_web') return runSearchWeb(args.query)
-  if (name === 'clear_graph') return runClearGraph(args.confirm === true || args.confirm === 'true')
+  if (name === 'scrape_profile') return runScrapeProfile(args.url)
+  if (name === 'clear_graph') return runClearGraph(args.confirm === 'true')
   return `Unknown tool: ${name}`
 }
 
@@ -346,7 +365,34 @@ async function runExtractMetadata(url: string): Promise<string> {
 
 async function runParseGpgKey(username: string): Promise<string> {
   console.log(chalk.cyan(`\n   🔑 GPG key analizi: `) + chalk.yellow.bold(username) + chalk.cyan(`...`))
-  const result = await parseGithubGpgKey(username)
+  let result = await parseGithubGpgKey(username)
+
+  // GitHub .gpg endpoint boş döndüyse → repo'da raw PGP dosyası arama yap
+  if (result.error && result.emails.length === 0) {
+    console.log(chalk.gray(`   🔍 Repo'da PGP key aranıyor (${username}/PGP)...`))
+    const rawUrls = [
+      `https://raw.githubusercontent.com/${username}/PGP/main/pgp.asc`,
+      `https://raw.githubusercontent.com/${username}/PGP/main/publickey`,
+      `https://raw.githubusercontent.com/${username}/pgp/main/pgp.asc`,
+      `https://raw.githubusercontent.com/${username}/PGP/master/pgp.asc`,
+      `https://raw.githubusercontent.com/${username}/gpg/main/key.asc`,
+    ]
+    for (const rawUrl of rawUrls) {
+      try {
+        const raw = await webFetch(rawUrl)
+        if (!raw.error && raw.textContent && raw.textContent.includes('BEGIN PGP PUBLIC KEY')) {
+          console.log(chalk.green(`   ✅ Repo'da PGP key bulundu: ${rawUrl}`))
+          const tmpFile = `${os.tmpdir()}/pgp-${Date.now()}.asc`
+          await writeFile(tmpFile, raw.textContent)
+          result = await parseGpgKeyFile(tmpFile)
+          result = { ...result, source: rawUrl }
+          await unlink(tmpFile).catch(() => {})
+          break
+        }
+      } catch { /* bu URL'de yok, devam */ }
+    }
+  }
+
   if (result.error) {
     console.log(chalk.red(`   ❌ ${result.error}`))
   } else {
@@ -379,11 +425,27 @@ async function runWaybackSearch(url: string): Promise<string> {
 
 async function runWebFetch(url: string): Promise<string> {
   console.log(chalk.cyan(`\n   🌐 Sayfa çekiliyor: `) + chalk.yellow.bold(url) + chalk.cyan(`...`))
-  const result = await webFetch(url)
-  if (result.error) {
-    console.log(chalk.red(`   ❌ ${result.error}`))
-    return `Fetch hatası: ${result.error}`
+  let result = await webFetch(url)
+  
+  // HİBRİT FALLBACK: Eğer 403 (Cloudflare/Bot protection) veya bağlantı hatası alırsak, Firecrawl API'sine (scrapeTool) düş.
+  if (result.error || result.statusCode === 403 || result.statusCode === 401) {
+    console.log(chalk.gray(`   ⚠️ curl engellendi (HTTP ${result.statusCode || 'Hata'}). Firecrawl Stealth Proxy'ye geçiliyor...`))
+    try {
+      const scrapeResult = await scrapeProfile(url)
+      if (!scrapeResult.error) {
+        console.log(chalk.green(`   ✅ Firecrawl ile başarıyla çekildi (Markdown okundu)`))
+        // Scrape sonuçlarını formatlayıp dön
+        return formatScrapeResult(scrapeResult)
+      } else {
+        console.log(chalk.red(`   ❌ Firecrawl da başarısız: ${scrapeResult.error}`))
+        return `Fetch ve Scrape hatası: ${scrapeResult.error}`
+      }
+    } catch (e) {
+      console.log(chalk.red(`   ❌ Scrape modülü hatası: ${(e as Error).message}`))
+      return `Scrape hatası: ${(e as Error).message}`
+    }
   }
+
   console.log(chalk.green(`   ✅ ${result.contentType} (HTTP ${result.statusCode})`))
   if (result.textContent) {
     return result.textContent.slice(0, 5000)
@@ -439,6 +501,32 @@ async function runSearchWeb(query: string): Promise<string> {
   }
   console.log(chalk.green(`   ✅ ${result.results.length} sonuç bulundu`))
   return formatSearchResult(result)
+}
+
+async function runScrapeProfile(url: string): Promise<string> {
+  console.log(chalk.cyan(`\n   🕷️  Profil kazınıyor (Firecrawl): `) + chalk.yellow.bold(url) + chalk.cyan(`...`))
+  const result = await scrapeProfile(url)
+  if (result.error) {
+    console.log(chalk.red(`   ❌ ${result.error}`))
+    if (result.usageWarning) console.log(chalk.yellow(`   ${result.usageWarning}`))
+    return formatScrapeResult(result)
+  }
+  const found = [result.emails.length, result.cryptoWallets.length, result.usernameHints.length]
+    .map((n, i) => n > 0 ? `${n} ${['email', 'cüzdan', 'handle'][i]}` : '')
+    .filter(Boolean).join(', ')
+  console.log(chalk.green(`   ✅ Sayfa alındı${found ? ` — ${found}` : ''}: ${result.title || url}`))
+
+  // Bulunan OSINT verilerini grafa yaz
+  if (result.emails.length > 0 || result.cryptoWallets.length > 0 || result.usernameHints.length > 0) {
+    try {
+      const stats = await writeScrapeData(url, result, 'firecrawl')
+      console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
+    } catch {
+      console.log(chalk.gray(`   ⚠️  Graf yazma atlandı`))
+    }
+  }
+
+  return formatScrapeResult(result)
 }
 
 async function runBreachCheck(email: string): Promise<string> {
@@ -588,6 +676,7 @@ Kullanılabilir araçlar (12 araç):
 🔗 PİVOT ARAÇLARI (YENİ — email üzerinden genişletme):
 - check_email_registrations: (Holehe) Email'in Amazon, Spotify, Gravatar, WordPress, Adobe vb. 120+ platformda kayıtlı olup olmadığını kontrol eder. Bulunan her platform grafa Email→REGISTERED_ON→Platform olarak yazılır.
 - check_breaches: (Have I Been Pwned / lokal DB) Email'in veri sızıntılarında olup olmadığını kontrol eder. Sızıntı bulunursa grafa Email→LEAKED_IN→Breach olarak yazılır. Sızan veriler (şifre, telefon, IP) de gösterilir.
+- scrape_profile: (Firecrawl stealth) GitHub, kişisel bloglar, forum ve CTF writeup siteleri gibi sayfaları kazır. Bio, email, kripto cüzdan, Telegram linki çıkarır. Grafa Website→SCRAPE_FOUND→Email/CryptoWallet/Username olarak yazılır. ⚠️ Twitter/X ve Reddit Firecrawl free tier'da DESTEKLENM‌İYOR. ⚠️ Aylık 500 istek limiti var — web_fetch 403 verdiğinde fallback olarak otomatik devreye girer.
 
 📊 GRAF ARAÇLARI:
 - query_graph: Neo4j'de bağlantıları sorgular (kaynak + güven seviyesi ile).
@@ -606,11 +695,12 @@ Güven Zinciri (Chain of Trust):
 
 🎯 PİVOT STRATEJİSİ (Araştırma Akışı):
 1. USERNAME KEŞFI: run_sherlock + run_github_osint ile doğrulanmış bilgi topla
-2. EMAIL PİVOT: Bulunan email'i check_email_registrations ile tara → hangi platformlarda kayıtlı?
-3. SIZINTI KONTROLÜ: Aynı email'i check_breaches ile kontrol et → sızıntılarda mı?
-4. ÇAPRAZ DOĞRULAMA: cross_reference ile tüm bağları kontrol et
-5. GENİŞLETME: Sızıntıdan yeni email/telefon çıkarsa, onlarla da pivot yap
-6. GRAF SORGULA: query_graph ile tüm bağlantı ağını göster
+2. PROFİL KAZIMA: Sherlock'un bulduğu önemli profil URL'lerini scrape_profile ile tara → bio, email, kripto cüzdan
+3. EMAIL PİVOT: Bulunan email'i check_email_registrations ile tara → hangi platformlarda kayıtlı?
+4. SIZINTI KONTROLÜ: Aynı email'i check_breaches ile kontrol et → sızıntılarda mı?
+5. ÇAPRAZ DOĞRULAMA: cross_reference ile tüm bağları kontrol et
+6. GENİŞLETME: Sızıntıdan yeni email/telefon çıkarsa, onlarla da pivot yap
+7. GRAF SORGULA: query_graph ile tüm bağlantı ağını göster
 
 Bu akış Neo4j'de şu yapıyı oluşturur:
 (Username)→[USES_EMAIL]→(Email)→[REGISTERED_ON]→(Platform)
@@ -643,26 +733,38 @@ Bağlam Doğrulama:
 10. İsimden username türetme (tahmin). Türetilmişse "⚠️ low confidence — tahmin" etiketle.
 11. Bağlamla çelişen sonuçları "⚠️ Bağlam uyuşmazlığı" ile işaretle.
 12. Email bulduğunda MUTLAKA check_email_registrations ve check_breaches ile pivot yap. Bu en değerli adımdır.
+13. GÜVEN SEVİYESİ KURALI: search_web (web araması) ile bulunan bilgiler asla ✅ Doğrulandı veya 🔵 Yüksek olarak raporlanmaz. Web araması bulgular DAIMA ⚠️ Orta veya 🔻 Düşük seviyededir. Yalnızca API çağrıları (github_api, holehe, hibp) ile doğrulanan bilgiler yüksek/doğrulanmış olabilir.
 
 Kullanım kuralları:
 1. Araçları YALNIZCA kullanıcı araştırma istediğinde kullan.
 2. Genel sorulara araç KULLANMA.
 3. Kapsamlı araştırmada birden fazla aracı sırayla kullan.
 4. Sonuçlar otomatik olarak Neo4j'ye yazılır.
-5. Sonuçları Türkçe, kısa, madde madde özetle. Güven seviyesini belirt.`,
+5. Sonuçları Türkçe, kısa, madde madde özetle. Güven seviyesini belirt.
+
+CRITICAL INSTRUCTION: Asla sessiz kalma veya boş mesaj dönme. Araçlar çalıştıktan ve verileri topladıktan sonra MUTLAKA elde ettiğin tüm bulguları ve graf bağlantılarını (Markdown tablo/liste formatında) kullanıcıya sun. Eğer bir araç hata verdiyse veya sonuç bulamadıysa bunu da raporda belirt.`,
   },
 ]
 
+const MAX_TOOL_CALLS_PER_TURN = 18
+
 async function chat(userMessage: string): Promise<void> {
   history.push({ role: 'user', content: userMessage })
+  let toolCallCount = 0
 
   // Agent loop — araç çağrısı bitene kadar devam et
   while (true) {
+    // Çok fazla araç çağrısı → modeli özet yazmaya zorla
+    const toolChoice: 'auto' | 'none' = toolCallCount >= MAX_TOOL_CALLS_PER_TURN ? 'none' : 'auto'
+    if (toolChoice === 'none') {
+      console.log(chalk.yellow(`\n   ⚠️  Maksimum araç çağrısı (${MAX_TOOL_CALLS_PER_TURN}) aşıldı, özet isteniyor...`))
+    }
+
     const response = await client.chat.completions.create({
       model: MODEL,
       messages: sanitizeHistoryForProvider(history),
       tools,
-      tool_choice: 'auto',
+      tool_choice: toolChoice,
       max_tokens: 4096,
     })
 
@@ -697,6 +799,7 @@ async function chat(userMessage: string): Promise<void> {
         tool_call_id: toolCall.id,
         content: normalizeToolContent(result),
       })
+      toolCallCount++
     }
   }
 }
