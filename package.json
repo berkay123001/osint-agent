@@ -1,0 +1,37 @@
+{
+  "name": "osint-agent",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "npx genkit start -- tsx src/index.ts",
+    "chat": "tsx src/chat.ts",
+    "build": "tsc",
+    "test": "npm run test:unit",
+    "test:unit": "node --import tsx --test src/lib/chatHistory.test.ts src/tools/githubGpgUtils.test.ts src/lib/osintHeuristics.test.ts src/tools/sherlockTool.test.ts src/tools/githubTool.test.ts",
+    "test:graph": "tsx src/scripts/runGraphTests.ts",
+    "test:graph:local": "NEO4J_ALLOW_CLEAR=1 node --env-file=.env --import tsx --test --test-concurrency=1 src/lib/neo4j.integration.test.ts",
+    "test:seed": "NEO4J_ALLOW_CLEAR=1 tsx src/scripts/seedTestGraph.ts",
+    "db:clear": "NEO4J_ALLOW_CLEAR=1 node --env-file=.env --import tsx -e \"import { clearGraph, getGraphStats, closeNeo4j } from './src/lib/neo4j.ts'; await clearGraph(); const s = await getGraphStats(); console.log('Graf temizlendi:', s.nodes, 'node'); await closeNeo4j()\"",
+    "test:agent:unit": "node --import tsx --test src/lib/chatHistory.test.ts src/tools/githubGpgUtils.test.ts src/lib/osintHeuristics.test.ts",
+    "test:tools": "node --import tsx --test src/tools/*.test.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "chalk": "^5.6.2",
+    "dotenv": "^17.3.1",
+    "genkit": "^1.29.0",
+    "genkitx-openai": "^0.30.0",
+    "neo4j-driver": "^6.0.1",
+    "openai": "^6.27.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.5",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

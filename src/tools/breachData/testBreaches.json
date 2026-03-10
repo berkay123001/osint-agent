@@ -1,0 +1,36 @@
+{
+  "torvalds@linux-foundation.org": [
+    {
+      "name": "LinkedInScrape2021",
+      "domain": "linkedin.com",
+      "breachDate": "2021-06-22",
+      "dataClasses": ["Email addresses", "Names", "Job titles", "Geographic locations"],
+      "description": "2021 LinkedIn veri kazıma olayında 700M+ kullanıcı verisi sızdırıldı. Şifreler sızmadı ancak profil bilgileri açığa çıktı."
+    }
+  ],
+  "jess@oxide.computer": [
+    {
+      "name": "AdobeBreach2013",
+      "domain": "adobe.com",
+      "breachDate": "2013-10-04",
+      "dataClasses": ["Email addresses", "Password hints", "Passwords", "Usernames"],
+      "description": "Adobe'nin 2013 sızıntısında 153M hesap açığa çıktı. Şifreler 3DES ile şifrelenmişti ancak aynı anahtar kullanılmıştı."
+    },
+    {
+      "name": "DropboxBreach2012",
+      "domain": "dropbox.com",
+      "breachDate": "2012-07-01",
+      "dataClasses": ["Email addresses", "Passwords"],
+      "description": "Dropbox sızıntısında 68M+ kullanıcı email ve bcrypt/SHA1 hash'leri açığa çıktı."
+    }
+  ],
+  "test@example.com": [
+    {
+      "name": "TestBreach2024",
+      "domain": "example.com",
+      "breachDate": "2024-01-15",
+      "dataClasses": ["Email addresses", "Passwords", "Phone numbers", "IP addresses"],
+      "description": "Test sızıntı verisi — yalnızca geliştirme/demo amaçlıdır."
+    }
+  ]
+}
