@@ -445,6 +445,45 @@ export async function writeBreachData(
 }
 
 /**
+ * GitHub following bağlantılarını grafa yazar.
+ * Username→FOLLOWS→Username ve bio bilgilerini (konum, bio, blog) node property'si olarak saklar.
+ * Düşük follower'lı (gerçek kişi olası) hesaplar OSINT_TARGET olarak işaretlenir.
+ */
+export async function writeFollowingConnections(
+  username: string,
+  following: Array<{ username: string; name: string | null; bio: string | null; blog: string | null; location: string | null; followers: number; skipped: boolean }>,
+  source: string = 'github_api'
+): Promise<{ nodesCreated: number; relsCreated: number }> {
+  const beforeStats = await getGraphStats()
+  const meta = { source, confidence: sourceToConfidence(source) }
+
+  for (const f of following) {
+    const props: Record<string, string> = { value: f.username }
+    if (f.name) props.realName = f.name
+    if (f.bio) props.bio = f.bio
+    if (f.location) props.location = f.location
+    if (f.blog) props.blog = f.blog
+    props.followerCount = String(f.followers)
+    props.osintPriority = f.skipped ? 'low' : 'high'
+
+    await mergeNode('Username', props)
+    await mergeRelation('Username', username, 'Username', f.username, 'FOLLOWS', meta)
+
+    // Blog link varsa Website node'u olarak bağla
+    if (f.blog && (f.blog.startsWith('http://') || f.blog.startsWith('https://'))) {
+      await mergeNode('Website', { value: f.blog })
+      await mergeRelation('Username', f.username, 'Website', f.blog, 'OWNS_WEBSITE', meta)
+    }
+  }
+
+  const afterStats = await getGraphStats()
+  return {
+    nodesCreated: Math.max(afterStats.nodes - beforeStats.nodes, 0),
+    relsCreated: Math.max(afterStats.relationships - beforeStats.relationships, 0),
+  }
+}
+
+/**
  * Firecrawl scrape sonuçlarını grafa yazar.
  * Profile→SCRAPE_FOUND→Email/CryptoWallet/Username ilişkileri oluşturur.
  */

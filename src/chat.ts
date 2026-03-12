@@ -6,7 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import chalk from 'chalk'
 import { githubOsint } from './tools/githubTool.js'
-import { writeOsintToGraph, getConnections, getGraphStats, getGraphNodeCountsByLabel, listGraphNodes, pruneMisclassifiedFullNameUsernames, findLinkedIdentifiers, writeEmailRegistrations, writeBreachData, writeScrapeData, closeNeo4j, clearGraph } from './lib/neo4j.js'
+import { writeOsintToGraph, getConnections, getGraphStats, getGraphNodeCountsByLabel, listGraphNodes, pruneMisclassifiedFullNameUsernames, findLinkedIdentifiers, writeEmailRegistrations, writeBreachData, writeScrapeData, writeFollowingConnections, closeNeo4j, clearGraph } from './lib/neo4j.js'
 import { normalizeAssistantMessage, normalizeToolContent, sanitizeHistoryForProvider } from './lib/chatHistory.js'
 import { isLikelyUsernameCandidate } from './lib/osintHeuristics.js'
 import { extractMetadataFromUrl, extractMetadataFromFile, formatMetadata } from './tools/metadataTool.js'
@@ -83,11 +83,12 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'run_github_osint',
       description:
-        'Extract emails, real name, company, location, GPG/SSH keys from a GitHub username using the official GitHub API. Use when investigating a GitHub user.',
+        'Extract emails, real name, company, location, bio, blog, GPG/SSH keys from a GitHub username using the official GitHub API. Use when investigating a GitHub user. Set deep=true for DEEP MODE: fetches all following accounts, filters out public figures (>500 followers), and maps real connections with their bios and locations — great for finding social circles and shared context (same university, same city).',
       parameters: {
         type: 'object',
         properties: {
           username: { type: 'string', description: 'GitHub username to investigate' },
+          deep: { type: 'string', enum: ['true', 'false'], description: 'Set to true for deep mode: fetches following list, filters real people by follower count, reads their bios. Slower but reveals social connections.' },
         },
         required: ['username'],
       },
@@ -301,9 +302,9 @@ async function runSherlock(username: string): Promise<string> {
   })
 }
 
-async function runGithubOsint(username: string): Promise<string> {
-  console.log(chalk.cyan(`\n   🐙 GitHub API OSINT: `) + chalk.yellow.bold(username) + chalk.cyan(`...`))
-  const result = await githubOsint(username)
+async function runGithubOsint(username: string, deep = false): Promise<string> {
+  console.log(chalk.cyan(`\n   🐙 GitHub API OSINT: `) + chalk.yellow.bold(username) + chalk.cyan(deep ? ` (DEEP MOD)...` : `...`))
+  const result = await githubOsint(username, deep)
   if (result.error) {
     console.log(chalk.red(`   ❌ ${result.error}`))
     return result.error
@@ -312,7 +313,7 @@ async function runGithubOsint(username: string): Promise<string> {
 
   // Grafa yaz
   try {
-    const profile = result.profile as Record<string, any>
+    const profile = result.profile as Record<string, string | null>
     const stats = await writeOsintToGraph(username, {
       emails: result.emails,
       realName: profile.name || undefined,
@@ -322,8 +323,20 @@ async function runGithubOsint(username: string): Promise<string> {
       blog: profile.blog || undefined,
     }, 'github_api')
     console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
-  } catch (e) {
+  } catch {
     console.log(chalk.gray(`   ⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)`))
+  }
+
+  // Deep mod: following bağlantılarını grafa yaz
+  if (result.following.length > 0) {
+    const realPeople = result.following.filter(f => !f.skipped)
+    console.log(chalk.cyan(`   🔍 Following analizi: `) + chalk.green.bold(`${realPeople.length} gerçek kişi`) + chalk.gray(` (${result.following.length - realPeople.length} atlandı)`))
+    try {
+      const stats = await writeFollowingConnections(username, result.following, 'github_api')
+      console.log(chalk.blue(`   💾 Following grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
+    } catch {
+      console.log(chalk.gray(`   ⚠️  Following graf yazma atlandı`))
+    }
   }
 
   return result.rawSummary
@@ -334,7 +347,7 @@ async function executeTool(
   args: Record<string, string>
 ): Promise<string> {
   if (name === 'run_sherlock') return runSherlock(args.username)
-  if (name === 'run_github_osint') return runGithubOsint(args.username)
+  if (name === 'run_github_osint') return runGithubOsint(args.username, args.deep === 'true')
   if (name === 'query_graph') return queryGraph(args.value)
   if (name === 'graph_stats') return graphStats()
   if (name === 'list_graph_nodes') return runListGraphNodes(args.label, args.limit)
@@ -666,7 +679,7 @@ Kullanılabilir araçlar (12 araç):
 
 🔍 KEŞIF ARAÇLARI:
 - run_sherlock: Username'i 400+ sosyal medya platformunda arar.
-- run_github_osint: GitHub API ile profil, email, company, location çeker.
+- run_github_osint: GitHub API ile profil, email, company, location, bio, blog çeker. deep=true ile following listesinden gerçek kişileri (< 500 follower) filtreler, biyolarını ve konumlarını haritalar.
 - parse_gpg_key: GitHub GPG key'inden gizli email/isim çıkarır. Noreply email varsa çok etkili.
 - extract_metadata: Dosya (görsel, PDF, SVG) EXIF/XMP metadata'sı çıkarır.
 - wayback_search: Wayback Machine'de silinmiş/eski sayfaları arar.
