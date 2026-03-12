@@ -6,7 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import chalk from 'chalk'
 import { githubOsint } from './tools/githubTool.js'
-import { writeOsintToGraph, getConnections, getGraphStats, getGraphNodeCountsByLabel, listGraphNodes, pruneMisclassifiedFullNameUsernames, findLinkedIdentifiers, writeEmailRegistrations, writeBreachData, writeScrapeData, writeFollowingConnections, closeNeo4j, clearGraph } from './lib/neo4j.js'
+import { writeOsintToGraph, getConnections, getGraphStats, getGraphNodeCountsByLabel, listGraphNodes, pruneMisclassifiedFullNameUsernames, findLinkedIdentifiers, writeEmailRegistrations, writeBreachData, writeScrapeData, writeFollowingConnections, mergeRelation, closeNeo4j, clearGraph } from './lib/neo4j.js'
 import { normalizeAssistantMessage, normalizeToolContent, sanitizeHistoryForProvider } from './lib/chatHistory.js'
 import { isLikelyUsernameCandidate } from './lib/osintHeuristics.js'
 import { extractMetadataFromUrl, extractMetadataFromFile, formatMetadata } from './tools/metadataTool.js'
@@ -17,6 +17,10 @@ import { checkEmailRegistrations, formatHoleheResult } from './tools/holeheTool.
 import { checkBreaches, formatBreachResult } from './tools/breachCheckTool.js'
 import { searchWeb, formatSearchResult } from './tools/searchTool.js'
 import { scrapeProfile, formatScrapeResult } from './tools/scrapeTool.js'
+import { verifySherlockProfiles, formatVerificationResults } from './tools/profileVerifier.js'
+import { fetchNitterProfile, formatNitterResult } from './tools/nitterTool.js'
+import { findUnexploredPivots, formatUnexploredPivots } from './lib/pivotAnalyzer.js'
+import { searchPerson, formatPersonSearchResult } from './tools/personSearchTool.js'
 import os from 'os'
 import { writeFile, unlink } from 'fs/promises'
 
@@ -255,6 +259,67 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'verify_profiles',
+      description:
+        'Sherlock sonuçlarını çapraz doğrula: Bulunan profil URL\'lerini Firecrawl ile kazıyarak, profil sahibinin hedef kişiye ait olup olmadığını kontrol eder. Bilinen email, gerçek isim, konum, blog ile sayfadaki bilgileri karşılaştırır. Eşleşme varsa güven "high"a yükselir. Sherlock çalıştıktan SONRA kullan — önce GitHub OSINT ile bilinen bilgileri topla.',
+      parameters: {
+        type: 'object',
+        properties: {
+          username: { type: 'string', description: 'Araştırılan kullanıcı adı (graftan bilinen tanımlayıcılar çekilir)' },
+        },
+        required: ['username'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'nitter_profile',
+      description:
+        'Twitter/X profilini Nitter üzerinden oku. Firecrawl ve web_fetch Twitter\'da 403 verdiği için Nitter kullanılır. Bio, konum, website, katılım tarihi, tweet/takipçi sayısı ve son tweetleri çeker. Ücretsiz, API key gerektirmez.',
+      parameters: {
+        type: 'object',
+        properties: {
+          username: { type: 'string', description: 'Twitter/X kullanıcı adı (@ olmadan)' },
+        },
+        required: ['username'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'unexplored_pivots',
+      description:
+        'Graf üzerinden henüz pivot yapılmamış (araştırılmamış) node\'ları ve fırsatları bul. Örneğin: bir email bulundu ama check_email_registrations yapılmadı, veya bir website var ama scrape edilmedi. Agent\'ın "bir sonraki en verimli adımı" otomatik belirlemesine yardımcı olur.',
+      parameters: {
+        type: 'object',
+        properties: {
+          username: { type: 'string', description: 'Araştırma kök kullanıcı adı' },
+        },
+        required: ['username'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_person',
+      description:
+        'Gerçek isimle araştırma başlat. Grafta ters arama yapar (Person node → Username/Email), olası username\'ler türetir ve web\'de arar. ÖNEMLİ: Yaygın isimler (Mehmet Yılmaz) ile yanlış pozitif riski yüksektir — ek bağlam (şehir, kurum, meslek) ver. Tam isimle Sherlock çalıştırmak da hatalı sonuç verir — önce bu tool ile username bul, sonra Sherlock kullan.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Araştırılan kişinin gerçek ismi (Örn: "Berkay Hasırcı")' },
+          context: { type: 'string', description: 'Opsiyonel bağlam: meslek, şehir, kurum (Örn: "İstanbul yazılımcı")' },
+        },
+        required: ['name'],
+      },
+    },
+  },
 ]
 
 // ─── Tool Executors ──────────────────────────────────────────────────
@@ -360,6 +425,10 @@ async function executeTool(
   if (name === 'check_breaches') return runBreachCheck(args.email)
   if (name === 'search_web') return runSearchWeb(args.query)
   if (name === 'scrape_profile') return runScrapeProfile(args.url)
+  if (name === 'verify_profiles') return runVerifyProfiles(args.username)
+  if (name === 'nitter_profile') return runNitterProfile(args.username)
+  if (name === 'unexplored_pivots') return runUnexploredPivots(args.username)
+  if (name === 'search_person') return runSearchPerson(args.name, args.context)
   if (name === 'clear_graph') return runClearGraph(args.confirm === 'true' || (args.confirm as unknown) === true)
   return `Unknown tool: ${name}`
 }
@@ -564,6 +633,126 @@ async function runBreachCheck(email: string): Promise<string> {
   return formatBreachResult(result)
 }
 
+async function runVerifyProfiles(username: string): Promise<string> {
+  console.log(chalk.cyan(`\n   🔍 Profil doğrulama başlatılıyor: `) + chalk.yellow.bold(username) + chalk.cyan(`...`))
+
+  // Graftan bilinen tanımlayıcıları çek
+  let known: { emails: string[]; realNames: string[]; handles: string[]; websites: string[] }
+  try {
+    known = await findLinkedIdentifiers(username)
+  } catch {
+    return 'Neo4j bağlantısı kurulamadı — bilinen tanımlayıcılar çekilemedi.'
+  }
+
+  if (known.emails.length === 0 && known.realNames.length === 0) {
+    return `"${username}" için grafta bilinen email veya gerçek isim yok. Önce run_github_osint ile bilgi topla.`
+  }
+
+  // Graftan Sherlock profil URL'lerini çek
+  let profiles: Array<{ platform: string; url: string }>
+  try {
+    const connections = await getConnections(username)
+    profiles = connections
+      .filter(c => c.relation === 'HAS_PROFILE')
+      .map(c => {
+        // Platform adını URL'den çıkar
+        const urlMatch = c.to.match(/(?:www\.)?([^./]+)\.\w+/)
+        return { platform: urlMatch?.[1] || 'unknown', url: c.to }
+      })
+  } catch {
+    return 'Neo4j bağlantısı kurulamadı — profiller çekilemedi.'
+  }
+
+  if (profiles.length === 0) {
+    return `"${username}" için grafta doğrulanacak profil yok. Önce run_sherlock çalıştır.`
+  }
+
+  console.log(chalk.gray(`   📋 ${profiles.length} profil bulundu, doğrulama yapılıyor (max 5)...`))
+
+  const knownIds = {
+    username,
+    realName: known.realNames[0],
+    emails: known.emails,
+  }
+
+  const { results, verified, unverified, skipped } = await verifySherlockProfiles(profiles, knownIds, 5)
+
+  console.log(
+    chalk.green(`   ✅ Doğrulama tamamlandı: `) +
+    chalk.green.bold(`${verified} doğrulandı`) +
+    chalk.gray(`, ${unverified} doğrulanmadı, ${skipped} atlandı`)
+  )
+
+  // Doğrulanan profillerin güven seviyesini grafta yükselt
+  for (const r of results.filter(r => r.verified)) {
+    try {
+      await mergeRelation('Username', username, 'Profile', r.url, 'HAS_PROFILE', {
+        source: 'profile_verification',
+        confidence: 'high',
+      })
+    } catch { /* sessiz geç */ }
+  }
+
+  return formatVerificationResults(results)
+}
+
+async function runNitterProfile(username: string): Promise<string> {
+  console.log(chalk.cyan(`\n   🐦 Twitter/X profil çekiliyor (Nitter): `) + chalk.yellow.bold(username) + chalk.cyan(`...`))
+  const result = await fetchNitterProfile(username)
+
+  if (result.error) {
+    console.log(chalk.red(`   ❌ ${result.error}`))
+    return formatNitterResult(result)
+  }
+
+  console.log(chalk.green(`   ✅ Twitter profili çekildi: `) + chalk.green.bold(result.displayName || username))
+
+  // Grafa yaz
+  try {
+    const data: Record<string, string | undefined> = {}
+    if (result.displayName) data.realName = result.displayName
+    if (result.location) data.location = result.location
+    if (result.website) data.blog = result.website
+
+    const stats = await writeOsintToGraph(username, {
+      realName: data.realName,
+      location: data.location,
+      blog: data.blog,
+    }, 'nitter')
+    console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
+  } catch {
+    console.log(chalk.gray(`   ⚠️  Graf yazma atlandı`))
+  }
+
+  return formatNitterResult(result)
+}
+
+async function runUnexploredPivots(username: string): Promise<string> {
+  console.log(chalk.cyan(`\n   🧭 Keşfedilmemiş pivot noktaları aranıyor: `) + chalk.yellow.bold(username) + chalk.cyan(`...`))
+  try {
+    const pivots = await findUnexploredPivots(username)
+    console.log(chalk.green(`   ✅ ${pivots.suggestions.length} öneri bulundu`))
+    return formatUnexploredPivots(pivots)
+  } catch (e) {
+    console.log(chalk.red(`   ❌ ${(e as Error).message}`))
+    return `Pivot analizi hatası: ${(e as Error).message}`
+  }
+}
+
+async function runSearchPerson(name: string, context?: string): Promise<string> {
+  console.log(chalk.cyan(`\n   👤 İsim araştırması: `) + chalk.yellow.bold(name) + (context ? chalk.gray(` (${context})`) : '') + chalk.cyan(`...`))
+  const result = await searchPerson(name, context)
+
+  if (result.graphMatches.length > 0) {
+    const totalUsernames = result.graphMatches.reduce((sum, m) => sum + m.linkedUsernames.length, 0)
+    console.log(chalk.green(`   ✅ Grafta ${result.graphMatches.length} eşleşme, ${totalUsernames} bağlı username bulundu`))
+  } else {
+    console.log(chalk.yellow(`   ⚠️ Grafta eşleşme yok — web araması yapıldı`))
+  }
+
+  return formatPersonSearchResult(result)
+}
+
 async function queryGraph(value: string): Promise<string> {
   console.log(chalk.cyan(`\n   📊 Graf sorgulanıyor: `) + chalk.yellow.bold(value) + chalk.cyan(`...`))
   try {
@@ -691,12 +880,18 @@ Kullanılabilir araçlar (12 araç):
 - check_breaches: (Have I Been Pwned / lokal DB) Email'in veri sızıntılarında olup olmadığını kontrol eder. Sızıntı bulunursa grafa Email→LEAKED_IN→Breach olarak yazılır. Sızan veriler (şifre, telefon, IP) de gösterilir.
 - scrape_profile: (Firecrawl stealth) GitHub, kişisel bloglar, forum ve CTF writeup siteleri gibi sayfaları kazır. Bio, email, kripto cüzdan, Telegram linki çıkarır. Grafa Website→SCRAPE_FOUND→Email/CryptoWallet/Username olarak yazılır. ⚠️ Twitter/X ve Reddit Firecrawl free tier'da DESTEKLENM‌İYOR. ⚠️ Aylık 500 istek limiti var — web_fetch 403 verdiğinde fallback olarak otomatik devreye girer.
 
+� DOĞRULAMA ARAÇLARI:
+- verify_profiles: Sherlock'un bulduğu profilleri Firecrawl ile kazıyarak çapraz doğrular. Bio'daki email, isim, konum, blog bilgileri ile bilinen tanımlayıcıları karşılaştırır. Eşleşme varsa güven "high"a yükselir. Önce GitHub OSINT ile bilinen bilgileri topla, sonra bunu kullan.
+- nitter_profile: Twitter/X profilini Nitter üzerinden oku. Bio, konum, website, katılım tarihi, tweet/takipçi sayısı ve son tweetleri çeker. Firecrawl/web_fetch Twitter'da 403 verdiği için bu tool'u kullan. Ücretsiz, API key gerektirmez.
+- search_person: Gerçek isimle araştırma başlat. Grafta ters arama yapar (Person → Username/Email), olası username'ler türetir ve web'de isim araması yapar. ÖNEMLİ: Yaygın isimlerle yanlış pozitif riski yüksek — ek bağlam ver (şehir, kurum, meslek). Önce bu tool ile username bul, sonra Sherlock kullan.
+
 📊 GRAF ARAÇLARI:
 - query_graph: Neo4j'de bağlantıları sorgular (kaynak + güven seviyesi ile).
 - graph_stats: Graf istatistiklerini gösterir.
 - list_graph_nodes: Graf node'larını listeler.
 - cross_reference: Username'e bağlı doğrulanmış email/handle/website getirir.
 - clear_graph: Tüm grafı siler (sadece kullanıcı isterse kullan).
+- unexplored_pivots: Grafta henüz pivot yapılmamış (araştırılmamış) node'ları ve fırsatları bulur. Örneğin: email bulundu ama check_email_registrations yapılmadı, website var ama scrape edilmedi. Agent'ın bir sonraki en verimli adımı otomatik belirler.
 
 ⚠️ KİMLİK DOĞRULAMA KURALLARI (ÇOK ÖNEMLİ):
 
@@ -710,12 +905,15 @@ Güven Zinciri (Chain of Trust):
 
 🎯 PİVOT STRATEJİSİ (Araştırma Akışı):
 1. USERNAME KEŞFI: run_sherlock + run_github_osint ile doğrulanmış bilgi topla
-2. PROFİL KAZIMA: Sherlock'un bulduğu önemli profil URL'lerini scrape_profile ile tara → bio, email, kripto cüzdan
-3. EMAIL PİVOT: Bulunan email'i check_email_registrations ile tara → hangi platformlarda kayıtlı?
-4. SIZINTI KONTROLÜ: Aynı email'i check_breaches ile kontrol et → sızıntılarda mı?
-5. ÇAPRAZ DOĞRULAMA: cross_reference ile tüm bağları kontrol et
-6. GENİŞLETME: Sızıntıdan yeni email/telefon çıkarsa, onlarla da pivot yap
-7. GRAF SORGULA: query_graph ile tüm bağlantı ağını göster
+2. PROFİL DOĞRULAMA: verify_profiles ile Sherlock sonuçlarını çapraz doğrula → eşleşen profillerin güveni "high"a yükselir
+3. PROFİL KAZIMA: Sherlock'un bulduğu önemli profil URL'lerini scrape_profile ile tara → bio, email, kripto cüzdan
+4. TWITTER OSINT: Sherlock'ta Twitter bulunursa nitter_profile ile bio/konum/website çek
+5. EMAIL PİVOT: Bulunan email'i check_email_registrations ile tara → hangi platformlarda kayıtlı?
+6. SIZINTI KONTROLÜ: Aynı email'i check_breaches ile kontrol et → sızıntılarda mı?
+7. ÇAPRAZ DOĞRULAMA: cross_reference ile tüm bağları kontrol et
+8. GENİŞLETME: Sızıntıdan yeni email/telefon çıkarsa, onlarla da pivot yap
+9. GRAF SORGULA: query_graph ile tüm bağlantı ağını göster
+10. PİVOT ANALİZİ: unexplored_pivots ile henüz araştırılmamış fırsatları bul → sonraki en verimli adımı seç
 
 Bu akış Neo4j'de şu yapıyı oluşturur:
 (Username)→[USES_EMAIL]→(Email)→[REGISTERED_ON]→(Platform)
@@ -733,7 +931,8 @@ Bu akış Neo4j'de şu yapıyı oluşturur:
 
 Yaygın İsim Problemi:
 - "Salih Dursun", "Mehmet Yılmaz" gibi isimler → pivot email/handle üzerinden yap, isimle değil.
-- Gerçek isimle arama → ÖNCE cross_reference ile mevcut tanımlayıcıları çek.
+- Gerçek isimle arama → ÖNCE search_person ile grafta ters arama yap ve olası username'leri türet.
+- cross_reference ile mevcut tanımlayıcıları çek.
 
 Bağlam Doğrulama:
 - Kullanıcı bağlam veriyorsa (meslek, kurum), her sonucu bu bağlamla kontrol et.
@@ -742,7 +941,7 @@ Bağlam Doğrulama:
 
 Özel kurallar:
 6. Web aramaları (search_web) sonuçlarını KESİNLİKLE doğrudan kabul etme. Sonuçlardaki metinleri hedefin bilinen diğer tanımlayıcılarıyla (email, username, vb.) Çapraz Doğrula. Sadece uyuşan sonuçları hedefe ait kabul et.
-7. Gerçek isim → önce cross_reference ile grafta handle ara.
+7. Gerçek isim → önce search_person ile grafta ters arama yap, username türet. Grafta yoksa cross_reference ile handle ara.
 8. list_graph_nodes/graph_stats tüm graf içindir.
 9. query_graph sonuçlarında güven seviyesi gösterilir.
 10. İsimden username türetme (tahmin). Türetilmişse "⚠️ low confidence — tahmin" etiketle.
