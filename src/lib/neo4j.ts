@@ -564,6 +564,42 @@ export interface GraphEdge {
   source_tool?: string
 }
 
+/** Grafta Person node'larını isimle ters ara — bağlı Username/Email bilgilerini döndür */
+export async function findPersonByName(name: string): Promise<Array<{
+  personName: string
+  linkedUsernames: string[]
+  linkedEmails: string[]
+  linkedLocations: string[]
+  linkedOrganizations: string[]
+}>> {
+  const session = getDriver().session()
+  try {
+    const result = await session.run(
+      `MATCH (p:Person)
+       WHERE toLower(p.value) CONTAINS toLower($name)
+       OPTIONAL MATCH (u:Username)-[:REAL_NAME]->(p)
+       OPTIONAL MATCH (u)-[:USES_EMAIL]->(e:Email)
+       OPTIONAL MATCH (u)-[:LOCATED_IN]->(loc:Location)
+       OPTIONAL MATCH (u)-[:WORKS_AT]->(org:Organization)
+       RETURN p.value AS personName,
+              collect(DISTINCT u.value) AS linkedUsernames,
+              collect(DISTINCT e.value) AS linkedEmails,
+              collect(DISTINCT loc.value) AS linkedLocations,
+              collect(DISTINCT org.value) AS linkedOrganizations`,
+      { name }
+    )
+    return result.records.map(r => ({
+      personName: r.get('personName') as string,
+      linkedUsernames: (r.get('linkedUsernames') ?? []).filter(Boolean) as string[],
+      linkedEmails: (r.get('linkedEmails') ?? []).filter(Boolean) as string[],
+      linkedLocations: (r.get('linkedLocations') ?? []).filter(Boolean) as string[],
+      linkedOrganizations: (r.get('linkedOrganizations') ?? []).filter(Boolean) as string[],
+    }))
+  } finally {
+    await session.close()
+  }
+}
+
 export async function exportGraphForVisualization(): Promise<{
   nodes: GraphNode[]
   edges: GraphEdge[]
