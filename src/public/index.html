@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OSINT Graph Viewer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0a0e17;
+      color: #e0e6ed;
+      font-family: 'Segoe UI', -apple-system, sans-serif;
+      overflow: hidden;
+    }
+
+    /* ─── Üst Bar ─────────────────────────────── */
+    #topbar {
+      position: fixed; top: 0; left: 0; right: 0;
+      height: 48px;
+      background: linear-gradient(90deg, #0d1224 0%, #131b34 100%);
+      border-bottom: 1px solid #1e2a45;
+      display: flex; align-items: center;
+      padding: 0 20px;
+      z-index: 100;
+      gap: 16px;
+    }
+
+    #topbar .logo {
+      font-size: 18px; font-weight: 700;
+      background: linear-gradient(135deg, #00d4ff, #7b2dff);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+
+    #topbar .stats {
+      font-size: 12px; color: #6b7fa3;
+      display: flex; gap: 16px;
+    }
+
+    #topbar .stats span { color: #00d4ff; font-weight: 600; }
+
+    #search-box {
+      margin-left: auto;
+      background: #131b34;
+      border: 1px solid #1e2a45;
+      border-radius: 6px;
+      padding: 6px 12px;
+      color: #e0e6ed;
+      font-size: 13px;
+      width: 220px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    #search-box:focus { border-color: #00d4ff; }
+    #search-box::placeholder { color: #3d4f6e; }
+
+    .btn {
+      background: #1a2340;
+      border: 1px solid #1e2a45;
+      border-radius: 6px;
+      padding: 6px 14px;
+      color: #8899b8;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn:hover { background: #222e50; color: #00d4ff; border-color: #00d4ff; }
+
+    /* ─── SVG Canvas ──────────────────────────── */
+    #graph-container {
+      position: fixed;
+      top: 48px; left: 0; right: 0; bottom: 0;
+    }
+
+    svg { width: 100%; height: 100%; }
+
+    /* ─── Legend ───────────────────────────────── */
+    #legend {
+      position: fixed;
+      bottom: 20px; left: 20px;
+      background: rgba(13, 18, 36, 0.92);
+      border: 1px solid #1e2a45;
+      border-radius: 10px;
+      padding: 14px 18px;
+      font-size: 12px;
+      backdrop-filter: blur(10px);
+      z-index: 50;
+    }
+
+    #legend h4 {
+      color: #6b7fa3;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .legend-item {
+      display: flex; align-items: center;
+      gap: 8px; margin-bottom: 4px;
+      cursor: pointer;
+      opacity: 1;
+      transition: opacity 0.2s;
+    }
+    .legend-item.dimmed { opacity: 0.3; }
+
+    .legend-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* ─── Detail Panel ────────────────────────── */
+    #detail-panel {
+      position: fixed;
+      top: 48px; right: 0;
+      width: 320px;
+      height: calc(100vh - 48px);
+      background: rgba(13, 18, 36, 0.95);
+      border-left: 1px solid #1e2a45;
+      backdrop-filter: blur(10px);
+      transform: translateX(100%);
+      transition: transform 0.3s ease;
+      z-index: 50;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    #detail-panel.open { transform: translateX(0); }
+
+    #detail-panel .close-btn {
+      position: absolute; top: 12px; right: 12px;
+      background: none; border: none;
+      color: #6b7fa3; font-size: 18px;
+      cursor: pointer;
+    }
+    #detail-panel .close-btn:hover { color: #ff4d6a; }
+
+    #detail-panel h3 {
+      font-size: 16px;
+      margin-bottom: 4px;
+      word-break: break-all;
+    }
+
+    #detail-panel .label-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-bottom: 14px;
+    }
+
+    #detail-panel .prop-list {
+      list-style: none;
+      font-size: 13px;
+    }
+
+    #detail-panel .prop-list li {
+      padding: 6px 0;
+      border-bottom: 1px solid #1a2340;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    #detail-panel .prop-key {
+      color: #6b7fa3;
+      flex-shrink: 0;
+    }
+
+    #detail-panel .prop-val {
+      color: #e0e6ed;
+      text-align: right;
+      word-break: break-all;
+    }
+
+    #detail-panel .connections-title {
+      margin-top: 18px;
+      font-size: 12px;
+      color: #6b7fa3;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .conn-item {
+      font-size: 12px;
+      padding: 4px 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .conn-rel {
+      color: #7b2dff;
+      font-weight: 600;
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .conn-target {
+      color: #00d4ff;
+      cursor: pointer;
+    }
+    .conn-target:hover { text-decoration: underline; }
+
+    .confidence-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 9px;
+      font-weight: 600;
+    }
+
+    .conf-verified { background: #0a3d2a; color: #00e68a; }
+    .conf-high { background: #0a2d4a; color: #00b4ff; }
+    .conf-medium { background: #3d3a0a; color: #e6c300; }
+    .conf-low { background: #3d1a0a; color: #ff6644; }
+
+    /* ─── Tooltip ─────────────────────────────── */
+    #tooltip {
+      position: fixed;
+      pointer-events: none;
+      background: rgba(13, 18, 36, 0.95);
+      border: 1px solid #1e2a45;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 12px;
+      z-index: 200;
+      display: none;
+      max-width: 280px;
+      backdrop-filter: blur(8px);
+    }
+
+    #tooltip .tt-label {
+      color: #6b7fa3;
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    #tooltip .tt-value {
+      color: #e0e6ed;
+      font-weight: 600;
+      word-break: break-all;
+    }
+
+    /* ─── Loading ─────────────────────────────── */
+    #loading {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      z-index: 300;
+    }
+
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid #1e2a45;
+      border-top-color: #00d4ff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 12px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #loading p { color: #6b7fa3; font-size: 13px; }
+
+    /* ─── Edge Labels ─────────────────────────── */
+    .edge-label {
+      font-size: 9px;
+      fill: #3d4f6e;
+      pointer-events: none;
+      text-anchor: middle;
+    }
+
+    .edge-label.highlighted { fill: #8899b8; }
+  </style>
+</head>
+<body>
+  <div id="topbar">
+    <div class="logo">🕵️ OSINT Graph</div>
+    <div class="stats" id="stats">
+      Yükleniyor...
+    </div>
+    <input type="text" id="search-box" placeholder="Node ara... (Ctrl+K)" />
+    <button class="btn" id="btn-refresh" title="Verileri yenile">⟳ Yenile</button>
+    <button class="btn" id="btn-reset" title="Görünümü sıfırla">⊡ Sıfırla</button>
+  </div>
+
+  <div id="graph-container">
+    <svg id="graph-svg"></svg>
+  </div>
+
+  <div id="legend">
+    <h4>Node Tipleri</h4>
+    <div id="legend-items"></div>
+  </div>
+
+  <div id="detail-panel">
+    <button class="close-btn" id="panel-close">&times;</button>
+    <div id="panel-content"></div>
+  </div>
+
+  <div id="tooltip">
+    <div class="tt-label" id="tt-label"></div>
+    <div class="tt-value" id="tt-value"></div>
+  </div>
+
+  <div id="loading">
+    <div class="spinner"></div>
+    <p>Neo4j'den graf verisi çekiliyor...</p>
+  </div>
+
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script>
+    // ─── Renk Paleti ─────────────────────────────
+    const COLORS = {
+      Username:     '#00d4ff',
+      Email:        '#ff4d6a',
+      Person:       '#ffb340',
+      Platform:     '#7b2dff',
+      Profile:      '#44ddaa',
+      Location:     '#ff7b4d',
+      Organization: '#4dff88',
+      Website:      '#ff6bff',
+      Phone:        '#ffd700',
+      Breach:       '#ff2222',
+      CryptoWallet: '#f5a623',
+      _default:     '#6b7fa3',
+    }
+
+    const SIZES = {
+      Username: 18,
+      Email: 14,
+      Person: 16,
+      Platform: 10,
+      Profile: 8,
+      Location: 12,
+      Organization: 14,
+      Website: 12,
+      Phone: 12,
+      Breach: 14,
+      CryptoWallet: 12,
+      _default: 10,
+    }
+
+    const ICONS = {
+      Username:     '👤',
+      Email:        '📧',
+      Person:       '🧑',
+      Platform:     '🌐',
+      Profile:      '🔗',
+      Location:     '📍',
+      Organization: '🏢',
+      Website:      '🔗',
+      Phone:        '📱',
+      Breach:       '💥',
+      CryptoWallet: '💰',
+    }
+
+    const CONF_COLORS = {
+      verified: '#00e68a',
+      high:     '#00b4ff',
+      medium:   '#e6c300',
+      low:      '#ff6644',
+    }
+
+    let graphData = { nodes: [], edges: [] }
+    let simulation, svg, g, linkGroup, nodeGroup, labelGroup
+    let activeFilters = new Set()
+    let selectedNode = null
+
+    // ─── Init ────────────────────────────────────
+    async function init() {
+      await fetchGraph()
+      setupSVG()
+      buildLegend()
+      render()
+      setupSearch()
+      setupKeyboard()
+      document.getElementById('btn-refresh').addEventListener('click', refresh)
+      document.getElementById('btn-reset').addEventListener('click', resetView)
+      document.getElementById('panel-close').addEventListener('click', closePanel)
+    }
+
+    async function fetchGraph() {
+      try {
+        const res = await fetch('/api/graph')
+        graphData = await res.json()
+        document.getElementById('loading').style.display = 'none'
+        updateStats()
+      } catch (e) {
+        document.getElementById('loading').querySelector('p').textContent =
+          'Neo4j bağlantısı kurulamadı: ' + e.message
+      }
+    }
+
+    async function refresh() {
+      document.getElementById('loading').style.display = 'block'
+      await fetchGraph()
+      render()
+    }
+
+    function updateStats() {
+      const labels = {}
+      graphData.nodes.forEach(n => { labels[n.label] = (labels[n.label] || 0) + 1 })
+      const parts = Object.entries(labels).map(([l, c]) => `${l}: <span>${c}</span>`)
+      document.getElementById('stats').innerHTML =
+        `Toplam: <span>${graphData.nodes.length}</span> node, <span>${graphData.edges.length}</span> edge &nbsp;|&nbsp; ` +
+        parts.join(' &nbsp;|&nbsp; ')
+    }
+
+    // ─── SVG Setup ───────────────────────────────
+    function setupSVG() {
+      const container = document.getElementById('graph-container')
+      const width = container.clientWidth
+      const height = container.clientHeight
+
+      svg = d3.select('#graph-svg')
+        .attr('width', width)
+        .attr('height', height)
+
+      // Defs — glow filter + arrow markers
+      const defs = svg.append('defs')
+
+      // Glow efekti
+      const filter = defs.append('filter')
+        .attr('id', 'glow')
+        .attr('x', '-50%').attr('y', '-50%')
+        .attr('width', '200%').attr('height', '200%')
+      filter.append('feGaussianBlur')
+        .attr('stdDeviation', '3')
+        .attr('result', 'coloredBlur')
+      const merge = filter.append('feMerge')
+      merge.append('feMergeNode').attr('in', 'coloredBlur')
+      merge.append('feMergeNode').attr('in', 'SourceGraphic')
+
+      // ok İşaretleri (arrow markers)
+      defs.append('marker')
+        .attr('id', 'arrowhead')
+        .attr('viewBox', '-0 -5 10 10')
+        .attr('refX', 20)
+        .attr('refY', 0)
+        .attr('orient', 'auto')
+        .attr('markerWidth', 6)
+        .attr('markerHeight', 6)
+        .append('path')
+        .attr('d', 'M 0,-5 L 10,0 L 0,5')
+        .attr('fill', '#2a3a5c')
+
+      g = svg.append('g')
+
+      // Zoom + pan
+      const zoom = d3.zoom()
+        .scaleExtent([0.1, 8])
+        .on('zoom', (event) => {
+          g.attr('transform', event.transform)
+        })
+      svg.call(zoom)
+
+      // Çift tıklama ile zoom'u sıfırla
+      svg.on('dblclick.zoom', null)
+
+      linkGroup = g.append('g').attr('class', 'links')
+      nodeGroup = g.append('g').attr('class', 'nodes')
+      labelGroup = g.append('g').attr('class', 'labels')
+    }
+
+    // ─── Render ──────────────────────────────────
+    function render() {
+      const width = document.getElementById('graph-container').clientWidth
+      const height = document.getElementById('graph-container').clientHeight
+
+      // Filter
+      const filteredNodes = activeFilters.size > 0
+        ? graphData.nodes.filter(n => !activeFilters.has(n.label))
+        : graphData.nodes
+
+      const nodeIds = new Set(filteredNodes.map(n => n.id))
+      const filteredEdges = graphData.edges.filter(e =>
+        nodeIds.has(e.source?.id ?? e.source) && nodeIds.has(e.target?.id ?? e.target)
+      )
+
+      // Simulation
+      if (simulation) simulation.stop()
+
+      simulation = d3.forceSimulation(filteredNodes)
+        .force('link', d3.forceLink(filteredEdges)
+          .id(d => d.id)
+          .distance(d => {
+            if (d.type === 'ON_PLATFORM') return 50
+            if (d.type === 'HAS_PROFILE') return 60
+            return 120
+          })
+        )
+        .force('charge', d3.forceManyBody()
+          .strength(d => d.label === 'Profile' ? -80 : -250)
+        )
+        .force('center', d3.forceCenter(width / 2, height / 2))
+        .force('collision', d3.forceCollide().radius(d => getSize(d) + 5))
+
+      // ─── Links ─────
+      linkGroup.selectAll('*').remove()
+
+      const links = linkGroup.selectAll('line')
+        .data(filteredEdges)
+        .join('line')
+        .attr('stroke', d => getEdgeColor(d))
+        .attr('stroke-width', d => d.confidence === 'verified' ? 2 : 1)
+        .attr('stroke-opacity', 0.4)
+        .attr('marker-end', 'url(#arrowhead)')
+
+      // Edge labels
+      const edgeLabels = linkGroup.selectAll('text')
+        .data(filteredEdges)
+        .join('text')
+        .attr('class', 'edge-label')
+        .text(d => d.type.replace(/_/g, ' '))
+
+      // ─── Nodes ─────
+      nodeGroup.selectAll('*').remove()
+
+      const nodes = nodeGroup.selectAll('circle')
+        .data(filteredNodes)
+        .join('circle')
+        .attr('r', d => getSize(d))
+        .attr('fill', d => getColor(d))
+        .attr('stroke', d => d3.color(getColor(d)).brighter(0.5))
+        .attr('stroke-width', 1.5)
+        .attr('cursor', 'pointer')
+        .attr('filter', d => d.label === 'Username' ? 'url(#glow)' : null)
+        .on('mouseover', handleMouseOver)
+        .on('mouseout', handleMouseOut)
+        .on('click', handleClick)
+        .call(d3.drag()
+          .on('start', dragStart)
+          .on('drag', dragging)
+          .on('end', dragEnd)
+        )
+
+      // ─── Labels ────
+      labelGroup.selectAll('*').remove()
+
+      const labels = labelGroup.selectAll('text')
+        .data(filteredNodes)
+        .join('text')
+        .text(d => truncate(d.properties.value || d.id, 20))
+        .attr('fill', d => d3.color(getColor(d)).brighter(1.2))
+        .attr('font-size', d => d.label === 'Profile' ? '8px' : '11px')
+        .attr('text-anchor', 'middle')
+        .attr('dy', d => getSize(d) + 14)
+        .attr('pointer-events', 'none')
+        .attr('opacity', d => d.label === 'Profile' ? 0.5 : 0.8)
+
+      // Tick
+      simulation.on('tick', () => {
+        links
+          .attr('x1', d => d.source.x)
+          .attr('y1', d => d.source.y)
+          .attr('x2', d => d.target.x)
+          .attr('y2', d => d.target.y)
+
+        edgeLabels
+          .attr('x', d => (d.source.x + d.target.x) / 2)
+          .attr('y', d => (d.source.y + d.target.y) / 2)
+
+        nodes
+          .attr('cx', d => d.x)
+          .attr('cy', d => d.y)
+
+        labels
+          .attr('x', d => d.x)
+          .attr('y', d => d.y)
+      })
+    }
+
+    // ─── Helpers ─────────────────────────────────
+    function getColor(d) {
+      return COLORS[d.label] || COLORS._default
+    }
+
+    function getSize(d) {
+      return SIZES[d.label] || SIZES._default
+    }
+
+    function getEdgeColor(d) {
+      if (d.confidence) return CONF_COLORS[d.confidence] || '#2a3a5c'
+      return '#2a3a5c'
+    }
+
+    function truncate(str, max) {
+      return str.length > max ? str.slice(0, max) + '…' : str
+    }
+
+    // ─── Mouse Events ───────────────────────────
+    function handleMouseOver(event, d) {
+      const tooltip = document.getElementById('tooltip')
+      document.getElementById('tt-label').textContent = `${ICONS[d.label] || '●'} ${d.label}`
+      document.getElementById('tt-value').textContent = d.properties.value || d.id
+      tooltip.style.display = 'block'
+      tooltip.style.left = event.clientX + 12 + 'px'
+      tooltip.style.top = event.clientY - 8 + 'px'
+
+      // Highlight connected
+      highlightConnected(d)
+    }
+
+    function handleMouseOut() {
+      document.getElementById('tooltip').style.display = 'none'
+      resetHighlight()
+    }
+
+    function highlightConnected(d) {
+      const connectedIds = new Set([d.id])
+      graphData.edges.forEach(e => {
+        const sid = e.source?.id ?? e.source
+        const tid = e.target?.id ?? e.target
+        if (sid === d.id) connectedIds.add(tid)
+        if (tid === d.id) connectedIds.add(sid)
+      })
+
+      nodeGroup.selectAll('circle')
+        .attr('opacity', n => connectedIds.has(n.id) ? 1 : 0.15)
+      labelGroup.selectAll('text')
+        .attr('opacity', n => connectedIds.has(n.id) ? 1 : 0.05)
+      linkGroup.selectAll('line')
+        .attr('stroke-opacity', e => {
+          const sid = e.source?.id ?? e.source
+          const tid = e.target?.id ?? e.target
+          return (sid === d.id || tid === d.id) ? 0.8 : 0.05
+        })
+      linkGroup.selectAll('text.edge-label')
+        .attr('class', e => {
+          const sid = e.source?.id ?? e.source
+          const tid = e.target?.id ?? e.target
+          return (sid === d.id || tid === d.id)
+            ? 'edge-label highlighted'
+            : 'edge-label'
+        })
+    }
+
+    function resetHighlight() {
+      nodeGroup.selectAll('circle').attr('opacity', 1)
+      labelGroup.selectAll('text').attr('opacity', d => d.label === 'Profile' ? 0.5 : 0.8)
+      linkGroup.selectAll('line').attr('stroke-opacity', 0.4)
+      linkGroup.selectAll('text.edge-label').attr('class', 'edge-label')
+    }
+
+    // ─── Click → Detail Panel ────────────────────
+    function handleClick(event, d) {
+      event.stopPropagation()
+      selectedNode = d
+      openPanel(d)
+    }
+
+    function openPanel(d) {
+      const panel = document.getElementById('detail-panel')
+      const content = document.getElementById('panel-content')
+
+      const color = getColor(d)
+
+      // Bağlantılar
+      const connections = []
+      graphData.edges.forEach(e => {
+        const sid = e.source?.id ?? e.source
+        const tid = e.target?.id ?? e.target
+        if (sid === d.id) {
+          const targetNode = graphData.nodes.find(n => n.id === tid)
+          connections.push({ direction: '→', rel: e.type, target: tid, targetLabel: targetNode?.label, confidence: e.confidence, source_tool: e.source_tool })
+        }
+        if (tid === d.id) {
+          const sourceNode = graphData.nodes.find(n => n.id === sid)
+          connections.push({ direction: '←', rel: e.type, target: sid, targetLabel: sourceNode?.label, confidence: e.confidence, source_tool: e.source_tool })
+        }
+      })
+
+      let html = `
+        <h3 style="color:${color}">${ICONS[d.label] || '●'} ${d.properties.value || d.id}</h3>
+        <div class="label-badge" style="background:${color}22; color:${color}; border:1px solid ${color}44">${d.label}</div>
+        <ul class="prop-list">
+      `
+
+      for (const [key, val] of Object.entries(d.properties)) {
+        if (key === 'value') continue
+        html += `<li><span class="prop-key">${key}</span><span class="prop-val">${escapeHtml(String(val))}</span></li>`
+      }
+      html += `</ul>`
+
+      if (connections.length > 0) {
+        html += `<div class="connections-title">Bağlantılar (${connections.length})</div>`
+        for (const c of connections) {
+          const confClass = c.confidence ? `conf-${c.confidence}` : ''
+          const confBadge = c.confidence
+            ? `<span class="confidence-badge ${confClass}">${c.confidence}</span>`
+            : ''
+          const targetColor = COLORS[c.targetLabel] || COLORS._default
+          html += `
+            <div class="conn-item">
+              <span style="color:#6b7fa3">${c.direction}</span>
+              <span class="conn-rel">${c.rel.replace(/_/g, ' ')}</span>
+              <span class="conn-target" style="color:${targetColor}" data-target="${escapeHtml(c.target)}">${truncate(c.target, 25)}</span>
+              ${confBadge}
+            </div>
+          `
+        }
+      }
+
+      content.innerHTML = html
+      panel.classList.add('open')
+
+      // Bağlantı tıklama
+      content.querySelectorAll('.conn-target').forEach(el => {
+        el.addEventListener('click', () => {
+          const targetId = el.dataset.target
+          const targetNode = graphData.nodes.find(n => n.id === targetId)
+          if (targetNode) {
+            openPanel(targetNode)
+            highlightConnected(targetNode)
+          }
+        })
+      })
+    }
+
+    function closePanel() {
+      document.getElementById('detail-panel').classList.remove('open')
+      selectedNode = null
+      resetHighlight()
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div')
+      div.textContent = str
+      return div.innerHTML
+    }
+
+    // ─── Legend ───────────────────────────────────
+    function buildLegend() {
+      const items = document.getElementById('legend-items')
+      const labels = [...new Set(graphData.nodes.map(n => n.label))].sort()
+
+      items.innerHTML = labels.map(label => `
+        <div class="legend-item" data-label="${label}">
+          <div class="legend-dot" style="background:${COLORS[label] || COLORS._default}"></div>
+          <span>${ICONS[label] || '●'} ${label}</span>
+        </div>
+      `).join('')
+
+      items.querySelectorAll('.legend-item').forEach(el => {
+        el.addEventListener('click', () => {
+          const label = el.dataset.label
+          if (activeFilters.has(label)) {
+            activeFilters.delete(label)
+            el.classList.remove('dimmed')
+          } else {
+            activeFilters.add(label)
+            el.classList.add('dimmed')
+          }
+          render()
+        })
+      })
+    }
+
+    // ─── Search ──────────────────────────────────
+    function setupSearch() {
+      const input = document.getElementById('search-box')
+      input.addEventListener('input', () => {
+        const q = input.value.toLowerCase().trim()
+        if (!q) {
+          resetHighlight()
+          return
+        }
+
+        const matches = new Set()
+        graphData.nodes.forEach(n => {
+          if ((n.properties.value || n.id).toLowerCase().includes(q)) {
+            matches.add(n.id)
+          }
+        })
+
+        nodeGroup.selectAll('circle')
+          .attr('opacity', n => matches.has(n.id) ? 1 : 0.1)
+          .attr('r', n => matches.has(n.id) ? getSize(n) * 1.5 : getSize(n))
+        labelGroup.selectAll('text')
+          .attr('opacity', n => matches.has(n.id) ? 1 : 0.05)
+      })
+    }
+
+    function setupKeyboard() {
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'k' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault()
+          document.getElementById('search-box').focus()
+        }
+        if (e.key === 'Escape') {
+          closePanel()
+          document.getElementById('search-box').value = ''
+          resetHighlight()
+          nodeGroup.selectAll('circle').attr('r', d => getSize(d))
+        }
+      })
+    }
+
+    // ─── Drag ────────────────────────────────────
+    function dragStart(event, d) {
+      if (!event.active) simulation.alphaTarget(0.3).restart()
+      d.fx = d.x
+      d.fy = d.y
+    }
+
+    function dragging(event, d) {
+      d.fx = event.x
+      d.fy = event.y
+    }
+
+    function dragEnd(event, d) {
+      if (!event.active) simulation.alphaTarget(0)
+      d.fx = null
+      d.fy = null
+    }
+
+    // ─── Reset View ──────────────────────────────
+    function resetView() {
+      const width = document.getElementById('graph-container').clientWidth
+      const height = document.getElementById('graph-container').clientHeight
+      svg.transition().duration(750).call(
+        d3.zoom().transform,
+        d3.zoomIdentity.translate(0, 0).scale(1)
+      )
+      closePanel()
+      activeFilters.clear()
+      document.querySelectorAll('.legend-item').forEach(el => el.classList.remove('dimmed'))
+      render()
+    }
+
+    // SVG background tıklama → panel kapat
+    document.getElementById('graph-svg').addEventListener('click', (e) => {
+      if (e.target.tagName === 'svg' || e.target.tagName === 'rect') {
+        closePanel()
+        resetHighlight()
+      }
+    })
+
+    // ─── Start ───────────────────────────────────
+    init()
+  </script>
+</body>
+</html>

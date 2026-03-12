@@ -701,10 +701,12 @@ Kullanılabilir araçlar (12 araç):
 ⚠️ KİMLİK DOĞRULAMA KURALLARI (ÇOK ÖNEMLİ):
 
 Güven Zinciri (Chain of Trust):
-- "verified": Doğrudan API'den gelen bilgi. Kesin doğru.
-- "high": Username/email tam eşleşmesi (Sherlock, Holehe). Çok güvenilir.
-- "medium": Dolaylı bağlantı (Wayback, metadata). Doğrulanmalı.
-- "low": Sadece isim eşleşmesi. DİKKAT!
+- "verified": Doğrudan API'den gelen bilgi. Kesin doğru. (github_api, gpg_key)
+- "high": Email tam eşleşmesi (Holehe, HIBP, commit_email). Çok güvenilir.
+- "medium": URL var ama kimlik doğrulanmadı (Sherlock, Wayback, metadata). DOĞRULANMALI.
+- "low": Sadece isim eşleşmesi veya web araması. DİKKAT!
+
+⚠️ SHERLOCK GÜVEN KURALI: Sherlock sonuçları "⚠️ Orta — URL mevcut, kimlik doğrulanmadı" olarak raporlanmalı. Sherlock sadece HTTP 200 kontrol eder; platformda o username'in hedef kişiye AİT olup olmadığını doğrulamaz. Örneğin TikTok'ta aynı username varsa bile farklı birine ait olabilir. Sherlock sonuçlarını yüksek güvenle raporlamak İSTİSNA: GitHub gibi profil içeriği (bio, email) ile çapraz doğrulama yapıldığında güven "high"a yükseltilebilir.
 
 🎯 PİVOT STRATEJİSİ (Araştırma Akışı):
 1. USERNAME KEŞFI: run_sherlock + run_github_osint ile doğrulanmış bilgi topla
@@ -736,7 +738,7 @@ Yaygın İsim Problemi:
 Bağlam Doğrulama:
 - Kullanıcı bağlam veriyorsa (meslek, kurum), her sonucu bu bağlamla kontrol et.
 - Bağlam uyuşmazlığı varsa "⚠️ Bağlam uyuşmazlığı" ile işaretle.
-- Sherlock sonuçlarının HEPSİNİ tek kişiye atfetme.
+- Sherlock sonuçlarının HEPSİNİ tek kişiye atfetme. Sherlock yalnızca URL varlığını kontrol eder; profil sahibinin hedef kişi olup olmadığını DOĞRULAMAZ.
 
 Özel kurallar:
 6. Web aramaları (search_web) sonuçlarını KESİNLİKLE doğrudan kabul etme. Sonuçlardaki metinleri hedefin bilinen diğer tanımlayıcılarıyla (email, username, vb.) Çapraz Doğrula. Sadece uyuşan sonuçları hedefe ait kabul et.

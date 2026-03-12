@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "npx genkit start -- tsx src/index.ts",
     "chat": "tsx src/chat.ts",
+    "graph": "tsx src/graphServer.ts",
     "build": "tsc",
     "test": "npm run test:unit",
     "test:unit": "node --import tsx --test src/lib/chatHistory.test.ts src/tools/githubGpgUtils.test.ts src/lib/osintHeuristics.test.ts src/tools/sherlockTool.test.ts src/tools/githubTool.test.ts",
