@@ -362,8 +362,9 @@ export async function writeOsintToGraph(
 /** Kaynak adından otomatik güven seviyesi çıkar */
 function sourceToConfidence(source: string): ConfidenceLevel {
   if (source === 'github_api' || source === 'gpg_key') return 'verified'
-  if (source === 'sherlock' || source === 'commit_email') return 'high'
+  if (source === 'commit_email') return 'high'
   if (source === 'holehe' || source === 'hibp') return 'high'
+  if (source === 'sherlock') return 'medium' // Sherlock sadece HTTP 200 kontrol eder, kimlik doğrulamaz
   if (source === 'wayback' || source === 'metadata') return 'medium'
   return 'low'
 }
@@ -543,6 +544,64 @@ export async function mergeSameAsRelation(
        SET r.evidence = $evidence, r.source = $source, r.confidence = $confidence, r.updatedAt = datetime()`,
       { fromVal: fromValue, toVal: toValue, evidence, source, confidence }
     )
+  } finally {
+    await session.close()
+  }
+}
+
+/** Tüm graf verisini D3.js uyumlu JSON formatına dışa aktar */
+export interface GraphNode {
+  id: string
+  label: string
+  properties: Record<string, string>
+}
+
+export interface GraphEdge {
+  source: string
+  target: string
+  type: string
+  confidence?: string
+  source_tool?: string
+}
+
+export async function exportGraphForVisualization(): Promise<{
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}> {
+  const session = getDriver().session()
+  try {
+    // Tüm node'ları çek
+    const nodesResult = await session.run(
+      `MATCH (n) RETURN labels(n)[0] AS label, properties(n) AS props, elementId(n) AS eid`
+    )
+    const nodeMap = new Map<string, GraphNode>()
+    for (const record of nodesResult.records) {
+      const props = record.get('props') as Record<string, unknown>
+      const value = String(props.value ?? '')
+      const label = record.get('label') as string
+      const id = value || record.get('eid') as string
+      const cleanProps: Record<string, string> = {}
+      for (const [k, v] of Object.entries(props)) {
+        if (v != null) cleanProps[k] = String(v)
+      }
+      nodeMap.set(id, { id, label, properties: cleanProps })
+    }
+
+    // Tüm edge'leri çek
+    const edgesResult = await session.run(
+      `MATCH (a)-[r]->(b)
+       RETURN a.value AS fromVal, b.value AS toVal, type(r) AS relType,
+              r.confidence AS confidence, r.source AS sourceTool`
+    )
+    const edges: GraphEdge[] = edgesResult.records.map((r) => ({
+      source: String(r.get('fromVal') ?? ''),
+      target: String(r.get('toVal') ?? ''),
+      type: r.get('relType') as string,
+      confidence: (r.get('confidence') as string) ?? undefined,
+      source_tool: (r.get('sourceTool') as string) ?? undefined,
+    }))
+
+    return { nodes: Array.from(nodeMap.values()), edges }
   } finally {
     await session.close()
   }
