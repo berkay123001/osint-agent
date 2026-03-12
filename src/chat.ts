@@ -360,7 +360,7 @@ async function executeTool(
   if (name === 'check_breaches') return runBreachCheck(args.email)
   if (name === 'search_web') return runSearchWeb(args.query)
   if (name === 'scrape_profile') return runScrapeProfile(args.url)
-  if (name === 'clear_graph') return runClearGraph(args.confirm === 'true')
+  if (name === 'clear_graph') return runClearGraph(args.confirm === 'true' || (args.confirm as unknown) === true)
   return `Unknown tool: ${name}`
 }
 
