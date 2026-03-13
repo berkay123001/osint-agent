@@ -374,11 +374,18 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     console.log(chalk.red(`   ❌ ${result.error}`))
     return result.error
   }
-  console.log(chalk.green(`   ✅ GitHub OSINT: `) + chalk.green.bold(`${result.emails.length} email bulundu`))
+  console.log(chalk.green(`   ✅ GitHub OSINT: `) + chalk.green.bold(`${result.emails.length} email, ${result.socialAccounts.length} sosyal medya hesabı bulundu`))
 
   // Grafa yaz
   try {
     const profile = result.profile as Record<string, string | null>
+    
+    // Social accounts listesini platforms array'ine dönüştür
+    const platforms = result.socialAccounts.map(account => ({
+      platform: account.provider,
+      url: account.url
+    }))
+    
     const stats = await writeOsintToGraph(username, {
       emails: result.emails,
       realName: profile.name || undefined,
@@ -386,6 +393,7 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       company: profile.company || undefined,
       twitter: profile.twitter_username || undefined,
       blog: profile.blog || undefined,
+      platforms: platforms.length > 0 ? platforms : undefined
     }, 'github_api')
     console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
   } catch {

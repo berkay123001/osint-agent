@@ -26,6 +26,11 @@ interface CommitEmail {
   source: string
 }
 
+export interface SocialAccount {
+  provider: string
+  url: string
+}
+
 export interface GitHubOsintResult {
   username: string
   profile: Partial<GitHubProfile>
@@ -33,6 +38,7 @@ export interface GitHubOsintResult {
   gpgKeyUrl: string | null
   sshKeyUrl: string | null
   following: FollowingProfile[]
+  socialAccounts: SocialAccount[]
   rawSummary: string
   error?: string
 }
@@ -76,6 +82,17 @@ async function getProfile(username: string): Promise<GitHubProfile | null> {
     return await res.json() as GitHubProfile
   } catch {
     return null
+  }
+}
+
+async function getSocialAccounts(username: string): Promise<SocialAccount[]> {
+  try {
+    const res = await fetchWithTimeout(`${GITHUB_API}/users/${username}/social_accounts`)
+    if (!res.ok) return []
+    const accounts = await res.json() as SocialAccount[]
+    return accounts.filter(a => a.url && a.url.trim() !== '')
+  } catch {
+    return []
   }
 }
 
@@ -182,6 +199,7 @@ export async function githubOsint(username: string, deep = false): Promise<GitHu
     gpgKeyUrl: null,
     sshKeyUrl: null,
     following: [],
+    socialAccounts: [],
     rawSummary: '',
   }
 
@@ -196,6 +214,9 @@ export async function githubOsint(username: string, deep = false): Promise<GitHu
 
   // Profile'daki email varsa ekle
   if (profile.email) result.emails.push(profile.email)
+
+  // 1b. Social accounts bilgisi
+  result.socialAccounts = await getSocialAccounts(username)
 
   // 2. Repolardan email çıkar (max 5 repo, paralel)
   const repos = await getRepos(username)
@@ -235,6 +256,7 @@ export async function githubOsint(username: string, deep = false): Promise<GitHu
     `Emails found in commits: ${result.emails.join(', ') || 'none'}`,
     `GPG key: ${result.gpgKeyUrl || 'none'}`,
     `SSH keys: ${result.sshKeyUrl || 'none'}`,
+    `Social accounts: ${result.socialAccounts.map(s => s.url).join(', ') || 'none'}`
   ]
 
   if (result.following.length > 0) {
