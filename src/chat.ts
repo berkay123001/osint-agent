@@ -6,7 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import chalk from 'chalk'
 import { githubOsint } from './tools/githubTool.js'
-import { writeOsintToGraph, getConnections, getGraphStats, getGraphNodeCountsByLabel, listGraphNodes, pruneMisclassifiedFullNameUsernames, findLinkedIdentifiers, writeEmailRegistrations, writeBreachData, writeScrapeData, writeFollowingConnections, mergeRelation, closeNeo4j, clearGraph } from './lib/neo4j.js'
+import { writeOsintToGraph, getConnections, getGraphStats, getGraphNodeCountsByLabel, listGraphNodes, pruneMisclassifiedFullNameUsernames, findLinkedIdentifiers, writeEmailRegistrations, writeBreachData, writeScrapeData, writeFollowingConnections, mergeRelation, closeNeo4j, clearGraph, deleteGraphNodeAndRelations } from './lib/neo4j.js'
 import { normalizeAssistantMessage, normalizeToolContent, sanitizeHistoryForProvider } from './lib/chatHistory.js'
 import { isLikelyUsernameCandidate } from './lib/osintHeuristics.js'
 import { extractMetadataFromUrl, extractMetadataFromFile, formatMetadata } from './tools/metadataTool.js'
@@ -49,6 +49,22 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
           confirm: { type: 'boolean', description: 'Silme işlemini onaylamak için true gönder' },
         },
         required: ['confirm'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'remove_false_positive',
+      description: 'Silinmesi gereken hatalı, yanlış eklenmiş veya hedefle uyuşmayan graf düğümünü ve onun ilişkilerini siler (False Positive temizliği için).',
+      parameters: {
+        type: 'object',
+        properties: {
+          label: { type: 'string', description: 'Silinecek düğümün türü/etiketi (örn. Username, Email, Person, Profile)' },
+          value: { type: 'string', description: 'Silinecek düğümün spesifik değeri (örn. target@gmail.com, targetUsername)' },
+        },
+        required: ['label', 'value'],
+        additionalProperties: false,
       },
     },
   },
@@ -374,18 +390,11 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     console.log(chalk.red(`   ❌ ${result.error}`))
     return result.error
   }
-  console.log(chalk.green(`   ✅ GitHub OSINT: `) + chalk.green.bold(`${result.emails.length} email, ${result.socialAccounts.length} sosyal medya hesabı bulundu`))
+  console.log(chalk.green(`   ✅ GitHub OSINT: `) + chalk.green.bold(`${result.emails.length} email bulundu`))
 
   // Grafa yaz
   try {
     const profile = result.profile as Record<string, string | null>
-    
-    // Social accounts listesini platforms array'ine dönüştür
-    const platforms = result.socialAccounts.map(account => ({
-      platform: account.provider,
-      url: account.url
-    }))
-    
     const stats = await writeOsintToGraph(username, {
       emails: result.emails,
       realName: profile.name || undefined,
@@ -393,7 +402,6 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       company: profile.company || undefined,
       twitter: profile.twitter_username || undefined,
       blog: profile.blog || undefined,
-      platforms: platforms.length > 0 ? platforms : undefined
     }, 'github_api')
     console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
   } catch {
@@ -438,6 +446,7 @@ async function executeTool(
   if (name === 'unexplored_pivots') return runUnexploredPivots(args.username)
   if (name === 'search_person') return runSearchPerson(args.name, args.context)
   if (name === 'clear_graph') return runClearGraph(args.confirm === 'true' || (args.confirm as unknown) === true)
+  if (name === 'remove_false_positive') return runRemoveFalsePositive(args.label, args.value)
   return `Unknown tool: ${name}`
 }
 
@@ -578,6 +587,23 @@ async function runClearGraph(confirm: boolean): Promise<string> {
     return 'Tüm graf veritabanı kalıcı olarak silindi ve sıfırlandı.';
   } catch (e) {
     console.log(chalk.red(`   ❌ Hata: ${(e as Error).message}`));
+    return `Temizleme hatası: ${(e as Error).message}`;
+  }
+}
+
+async function runRemoveFalsePositive(label: string, value: string): Promise<string> {
+  console.log(chalk.red.bold(`\n   🧹 False Positive Temizleniyor: `) + chalk.yellow(`${label}(${value})`));
+  try {
+    const success = await deleteGraphNodeAndRelations(label, value);
+    if (success) {
+      console.log(chalk.green(`   ✅ Düğüm ve ilişkileri Graf'tan silindi.`));
+      return `Başarı: ${label} etiketli ve ${value} değerli düğüm (ve bağlı ilişkileri) sinildi.`;
+    } else {
+      console.log(chalk.yellow(`   ⚠️ Eşleşen düğüm bulunamadı veya silinemedi.`));
+      return `Hata: ${label} etiketli ve ${value} değerli düğüm bulunamadı.`;
+    }
+  } catch (e) {
+    console.log(chalk.red(`   ❌ Temizleme hatası: ${(e as Error).message}`));
     return `Temizleme hatası: ${(e as Error).message}`;
   }
 }

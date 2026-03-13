@@ -642,3 +642,24 @@ export async function exportGraphForVisualization(): Promise<{
     await session.close()
   }
 }
+
+export async function deleteGraphNodeAndRelations(label: string, value: string): Promise<boolean> {
+  const session = getDriver().session()
+  const safeLabel = sanitizeLabel(label)
+
+  try {
+    const result = await session.run(
+      `MATCH (n:${safeLabel} {value: $value}) DETACH DELETE n RETURN count(n) as deleted`,
+      { value }
+    )
+    
+    // Check if any node was deleted (count > 0)
+    const deletedCount = result.records[0]?.get('deleted')?.toNumber() || 0
+    return deletedCount > 0
+  } catch (error: any) {
+    console.error(`[Neo4j] Düğüm silme hatası (${label}:${value}):`, error.message)
+    return false
+  } finally {
+    await session.close()
+  }
+}
