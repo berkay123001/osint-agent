@@ -423,32 +423,57 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
   return result.rawSummary
 }
 
-async function executeTool(
-  name: string,
-  args: Record<string, string>
-): Promise<string> {
-  if (name === 'run_sherlock') return runSherlock(args.username)
-  if (name === 'run_github_osint') return runGithubOsint(args.username, args.deep === 'true')
-  if (name === 'query_graph') return queryGraph(args.value)
-  if (name === 'graph_stats') return graphStats()
-  if (name === 'list_graph_nodes') return runListGraphNodes(args.label, args.limit)
-  if (name === 'cross_reference') return runCrossReference(args.username)
-  if (name === 'extract_metadata') return runExtractMetadata(args.url)
-  if (name === 'parse_gpg_key') return runParseGpgKey(args.username)
-  if (name === 'wayback_search') return runWaybackSearch(args.url)
-  if (name === 'web_fetch') return runWebFetch(args.url)
-  if (name === 'check_email_registrations') return runEmailRegistrations(args.email)
-  if (name === 'check_breaches') return runBreachCheck(args.email)
-  if (name === 'search_web') return runSearchWeb(args.query)
-  if (name === 'scrape_profile') return runScrapeProfile(args.url)
-  if (name === 'verify_profiles') return runVerifyProfiles(args.username)
-  if (name === 'nitter_profile') return runNitterProfile(args.username)
-  if (name === 'unexplored_pivots') return runUnexploredPivots(args.username)
-  if (name === 'search_person') return runSearchPerson(args.name, args.context)
-  if (name === 'clear_graph') return runClearGraph(args.confirm === 'true' || (args.confirm as unknown) === true)
-  if (name === 'remove_false_positive') return runRemoveFalsePositive(args.label, args.value)
-  return `Unknown tool: ${name}`
-}
+  // Session bazlı önbellekleme (Caching) yapısı: Aynı aramaların tekrar tekrar yapılmasını önler.
+  const toolCache = new Map<string, string>();
+
+  async function executeTool(
+    name: string,
+    args: Record<string, string>
+  ): Promise<string> {
+    const cacheableTools = new Set([
+      'run_sherlock', 'run_github_osint', 'cross_reference', 'extract_metadata',
+      'parse_gpg_key', 'wayback_search', 'web_fetch', 'check_email_registrations',
+      'check_breaches', 'search_web', 'scrape_profile', 'verify_profiles',
+      'nitter_profile', 'search_person'
+    ]);
+
+    const cacheKey = `${name}:${JSON.stringify(args)}`;
+    
+    if (cacheableTools.has(name) && toolCache.has(cacheKey)) {
+      console.log(chalk.yellow(`   ⚡ [Cache Hit] ${name} (${JSON.stringify(args)}) hafızadan getirildi. Tekrar çalıştırılmadı.`));
+      return toolCache.get(cacheKey)!;
+    }
+
+    let result = '';
+    
+    if (name === 'run_sherlock') result = await runSherlock(args.username)
+    else if (name === 'run_github_osint') result = await runGithubOsint(args.username, args.deep === 'true')
+    else if (name === 'query_graph') result = await queryGraph(args.value)
+    else if (name === 'graph_stats') result = await graphStats()
+    else if (name === 'list_graph_nodes') result = await runListGraphNodes(args.label, args.limit)
+    else if (name === 'cross_reference') result = await runCrossReference(args.username)
+    else if (name === 'extract_metadata') result = await runExtractMetadata(args.url)
+    else if (name === 'parse_gpg_key') result = await runParseGpgKey(args.username)
+    else if (name === 'wayback_search') result = await runWaybackSearch(args.url)
+    else if (name === 'web_fetch') result = await runWebFetch(args.url)
+    else if (name === 'check_email_registrations') result = await runEmailRegistrations(args.email)
+    else if (name === 'check_breaches') result = await runBreachCheck(args.email)
+    else if (name === 'search_web') result = await runSearchWeb(args.query)
+    else if (name === 'scrape_profile') result = await runScrapeProfile(args.url)
+    else if (name === 'verify_profiles') result = await runVerifyProfiles(args.username)
+    else if (name === 'nitter_profile') result = await runNitterProfile(args.username)
+    else if (name === 'unexplored_pivots') result = await runUnexploredPivots(args.username)
+    else if (name === 'search_person') result = await runSearchPerson(args.name, args.context)
+    else if (name === 'clear_graph') result = await runClearGraph(args.confirm === 'true' || (args.confirm as unknown) === true)
+    else if (name === 'remove_false_positive') result = await runRemoveFalsePositive(args.label, args.value)
+    else result = `Unknown tool: ${name}`;
+
+    if (cacheableTools.has(name) && !result.startsWith('Unknown tool')) {
+      toolCache.set(cacheKey, result);
+    }
+    
+    return result;
+  }
 
 async function runExtractMetadata(url: string): Promise<string> {
   console.log(chalk.cyan(`\n   🔍 Metadata çıkarılıyor: `) + chalk.yellow.bold(url) + chalk.cyan(`...`))
