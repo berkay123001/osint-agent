@@ -8,6 +8,7 @@ import { hasUsableGithubGpgKey } from './githubGpgUtils.js'
 
 interface GitHubProfile {
   login: string
+  avatar_url: string | null
   name: string | null
   company: string | null
   blog: string | null

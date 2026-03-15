@@ -18,6 +18,7 @@ import { checkBreaches, formatBreachResult } from './tools/breachCheckTool.js'
 import { searchWeb, formatSearchResult } from './tools/searchTool.js'
 import { scrapeProfile, formatScrapeResult } from './tools/scrapeTool.js'
 import { verifySherlockProfiles, formatVerificationResults } from './tools/profileVerifier.js'
+import { fetchAndHashImage } from './tools/imageHasher.js'
 import { fetchNitterProfile, formatNitterResult } from './tools/nitterTool.js'
 import { findUnexploredPivots, formatUnexploredPivots } from './lib/pivotAnalyzer.js'
 import { searchPerson, formatPersonSearchResult } from './tools/personSearchTool.js'
@@ -402,6 +403,7 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       company: profile.company || undefined,
       twitter: profile.twitter_username || undefined,
       blog: profile.blog || undefined,
+      avatarUrl: profile.avatar_url || undefined,
     }, 'github_api')
     console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
   } catch {
@@ -696,15 +698,27 @@ async function runVerifyProfiles(username: string): Promise<string> {
   console.log(chalk.cyan(`\n   🔍 Profil doğrulama başlatılıyor: `) + chalk.yellow.bold(username) + chalk.cyan(`...`))
 
   // Graftan bilinen tanımlayıcıları çek
-  let known: { emails: string[]; realNames: string[]; handles: string[]; websites: string[] }
+  let known: { emails: string[]; realNames: string[]; handles: string[]; websites: string[]; avatarUrl?: string }
   try {
     known = await findLinkedIdentifiers(username)
   } catch {
     return 'Neo4j bağlantısı kurulamadı — bilinen tanımlayıcılar çekilemedi.'
   }
 
-  if (known.emails.length === 0 && known.realNames.length === 0) {
-    return `"${username}" için grafta bilinen email veya gerçek isim yok. Önce run_github_osint ile bilgi topla.`
+  if (known.emails.length === 0 && known.realNames.length === 0 && !known.avatarUrl) {
+    return `"${username}" için grafta bilinen email, gerçek isim veya avatar yok. Önce run_github_osint ile bilgi topla.`
+  }
+
+  // Eğer bilinen avatar URL'si varsa, hash'ini baştan hesapla ki her profilde tekrar indirmeyelim
+  let avatarHash: string | undefined;
+  if (known.avatarUrl) {
+    console.log(chalk.gray(`   🖼️ Hedefin bilinen bir avatarı var, referans hash hesaplanıyor...`));
+    avatarHash = (await fetchAndHashImage(known.avatarUrl)) || undefined;
+    if (avatarHash) {
+      console.log(chalk.green(`   ✅ Referans avatar hash eşleşti: `) + chalk.gray(avatarHash.substring(0, 16) + '...'));
+    } else {
+      console.log(chalk.yellow(`   ⚠️ Referans avatar indirilemedi veya hash hesaplanamadı.`));
+    }
   }
 
   // Graftan Sherlock profil URL'lerini çek
@@ -726,15 +740,17 @@ async function runVerifyProfiles(username: string): Promise<string> {
     return `"${username}" için grafta doğrulanacak profil yok. Önce run_sherlock çalıştır.`
   }
 
-  console.log(chalk.gray(`   📋 ${profiles.length} profil bulundu, doğrulama yapılıyor (max 5)...`))
+  console.log(chalk.gray(`   📋 ${profiles.length} profil bulundu, doğrulama yapılıyor (max 10)...`))
 
   const knownIds = {
     username,
     realName: known.realNames[0],
     emails: known.emails,
+    avatarUrl: known.avatarUrl,
+    avatarHash: avatarHash
   }
 
-  const { results, verified, unverified, skipped } = await verifySherlockProfiles(profiles, knownIds, 5)
+  const { results, verified, unverified, skipped } = await verifySherlockProfiles(profiles, knownIds, 10)
 
   console.log(
     chalk.green(`   ✅ Doğrulama tamamlandı: `) +
@@ -940,7 +956,7 @@ Kullanılabilir araçlar (12 araç):
 - scrape_profile: (Firecrawl stealth) GitHub, kişisel bloglar, forum ve CTF writeup siteleri gibi sayfaları kazır. Bio, email, kripto cüzdan, Telegram linki çıkarır. Grafa Website→SCRAPE_FOUND→Email/CryptoWallet/Username olarak yazılır. ⚠️ Twitter/X ve Reddit Firecrawl free tier'da DESTEKLENM‌İYOR. ⚠️ Aylık 500 istek limiti var — web_fetch 403 verdiğinde fallback olarak otomatik devreye girer.
 
 � DOĞRULAMA ARAÇLARI:
-- verify_profiles: Sherlock'un bulduğu profilleri Firecrawl ile kazıyarak çapraz doğrular. Bio'daki email, isim, konum, blog bilgileri ile bilinen tanımlayıcıları karşılaştırır. Eşleşme varsa güven "high"a yükselir. Önce GitHub OSINT ile bilinen bilgileri topla, sonra bunu kullan.
+- verify_profiles: Sherlock'un bulduğu profilleri Firecrawl ile kazıyarak çapraz doğrular. Bio'daki email, isim, konum, blog bilgileri ile veya profil fotoğraflarının(avatar) uyuşması ile (Image hash karşılaştırması) bilinen tanımlayıcıları karşılaştırır. Eşleşme varsa güven "high"a yükselir. Önce GitHub OSINT ile bilinen bilgileri (avatar dahil) topla, sonra bunu kullan.
 - nitter_profile: Twitter/X profilini Nitter üzerinden oku. Bio, konum, website, katılım tarihi, tweet/takipçi sayısı ve son tweetleri çeker. Firecrawl/web_fetch Twitter'da 403 verdiği için bu tool'u kullan. Ücretsiz, API key gerektirmez.
 - search_person: Gerçek isimle araştırma başlat. Grafta ters arama yapar (Person → Username/Email), olası username'ler türetir ve web'de isim araması yapar. ÖNEMLİ: Yaygın isimlerle yanlış pozitif riski yüksek — ek bağlam ver (şehir, kurum, meslek). Önce bu tool ile username bul, sonra Sherlock kullan.
 
