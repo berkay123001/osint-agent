@@ -27,12 +27,18 @@ interface CommitEmail {
   source: string
 }
 
+export interface SocialAccount {
+  provider: string
+  url: string
+}
+
 export interface GitHubOsintResult {
   username: string
   profile: Partial<GitHubProfile>
   emails: string[]
   gpgKeyUrl: string | null
   sshKeyUrl: string | null
+  socialAccounts: SocialAccount[]
   following: FollowingProfile[]
   rawSummary: string
   error?: string
@@ -175,6 +181,16 @@ async function getKeys(username: string): Promise<{ gpg: string | null; ssh: str
   return { gpg, ssh }
 }
 
+async function getSocialAccounts(username: string): Promise<SocialAccount[]> {
+  try {
+    const res = await fetchWithTimeout(`${GITHUB_API}/users/${username}/social_accounts`)
+    if (!res.ok) return []
+    return await res.json() as SocialAccount[]
+  } catch {
+    return []
+  }
+}
+
 export async function githubOsint(username: string, deep = false): Promise<GitHubOsintResult> {
   const result: GitHubOsintResult = {
     username,
@@ -182,6 +198,7 @@ export async function githubOsint(username: string, deep = false): Promise<GitHu
     emails: [],
     gpgKeyUrl: null,
     sshKeyUrl: null,
+    socialAccounts: [],
     following: [],
     rawSummary: '',
   }
@@ -212,6 +229,9 @@ export async function githubOsint(username: string, deep = false): Promise<GitHu
   result.gpgKeyUrl = keys.gpg
   result.sshKeyUrl = keys.ssh
 
+  // 3.5. Social Accounts (YouTube, LinkedIn vb.)
+  result.socialAccounts = await getSocialAccounts(username)
+
   // 4. DEEP MOD: following listesi — yalnızca kullanıcı istediğinde
   if (deep && profile.following > 0 && profile.following <= 200) {
     result.following = await getFollowing(username)
@@ -237,6 +257,13 @@ export async function githubOsint(username: string, deep = false): Promise<GitHu
     `GPG key: ${result.gpgKeyUrl || 'none'}`,
     `SSH keys: ${result.sshKeyUrl || 'none'}`,
   ]
+
+  if (result.socialAccounts.length > 0) {
+    lines.push(`Social Accounts:`)
+    result.socialAccounts.forEach(account => {
+      lines.push(`  - [${account.provider}]: ${account.url}`)
+    })
+  }
 
   if (result.following.length > 0) {
     const realPeople = result.following.filter(f => !f.skipped)

@@ -404,6 +404,10 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       twitter: profile.twitter_username || undefined,
       blog: profile.blog || undefined,
       avatarUrl: profile.avatar_url || undefined,
+      platforms: result.socialAccounts?.map(acc => ({
+        platform: acc.provider,
+        url: acc.url
+      })),
     }, 'github_api')
     console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
   } catch {
