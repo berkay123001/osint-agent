@@ -26,6 +26,7 @@
     "dotenv": "^17.3.1",
     "genkit": "^1.29.0",
     "genkitx-openai": "^0.30.0",
+    "jimp": "^0.22.12",
     "neo4j-driver": "^6.0.1",
     "openai": "^6.27.0",
     "puppeteer": "^24.39.1",

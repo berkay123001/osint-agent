@@ -8,7 +8,7 @@
  */
 
 import { scrapeProfile } from './scrapeTool.js'
-import { fetchAndHashImage } from './imageHasher.js'
+import { fetchAndHashImage, calculateHammingDistance } from './imageHasher.js'
 
 export interface VerificationResult {
   platform: string
@@ -151,13 +151,17 @@ export async function verifyProfile(
     let isAvatarMatch = false;
     if (known.avatarHash && scrapeResult.avatarUrl) {
       const scrapedAvatarHash = await fetchAndHashImage(scrapeResult.avatarUrl);
-      if (scrapedAvatarHash === known.avatarHash) {
-        isAvatarMatch = true;
-        matches.push(`avatar: %100 Hash Eşleşmesi (${scrapeResult.avatarUrl})`);
+      if (scrapedAvatarHash) {
+        const distance = calculateHammingDistance(known.avatarHash, scrapedAvatarHash);
+        // Distance 10'dan küçükse (maksimum 64), aynı resmin farklı boyut/sıkıştırılmış hali kabul edilir
+        if (distance <= 10) {
+          isAvatarMatch = true;
+          matches.push(`avatar: Görsel Eşleşmesi (Mesafe: ${distance}/64)`);
+        }
       }
     } else if (known.avatarUrl && scrapeResult.avatarUrl && known.avatarUrl === scrapeResult.avatarUrl) {
       isAvatarMatch = true;
-      matches.push(`avatar: URL Eşleşmesi (${scrapeResult.avatarUrl})`);
+      matches.push(`avatar: URL Eşleşmesi`);
     }
 
     if (matches.length > 0 || isAvatarMatch) {
@@ -244,6 +248,7 @@ export async function verifySherlockProfiles(
         verified: false,
         confidence: 'medium',
         matchedIndicators: [],
+        error: 'Öncelik sınırına takıldı (Atlandı)'
       })
       continue
     }
