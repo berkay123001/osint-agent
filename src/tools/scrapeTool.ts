@@ -1,3 +1,5 @@
+import { extractMetadataFromUrl, formatMetadata } from './metadataTool.js'
+
 /**
  * Firecrawl tabanlı profil scraping tool.
  * curl ile değil Firecrawl'ın proxy/stealth altyapısıyla sayfa içeriğini Markdown olarak alır.
@@ -16,8 +18,35 @@ export interface ScrapeResult {
   cryptoWallets: string[]
   usernameHints: string[]
   avatarUrl?: string
+  metadataAlerts?: string[]
   error?: string
   usageWarning?: string
+}
+
+
+export function isInterestingFile(url: string | undefined): boolean {
+  if (!url) return false
+  const lowerUrl = url.toLowerCase()
+  if (!lowerUrl.match(/\.(pdf|docx?|jpg|jpeg|png)$/)) return false
+  const ignoredDomains = [
+    'avatars.githubusercontent.com', 'pbs.twimg.com', 'instagram.', 
+    'facebook.', 'googleusercontent.', 'cdn.', 'gravatar.com', 'twimg', 'tiktok', 'licdn.com'
+  ]
+  if (ignoredDomains.some(d => lowerUrl.includes(d))) return false
+  return true
+}
+
+async function processMetadataForLinks(links: string[]): Promise<string[]> {
+  const interesting = links.filter(isInterestingFile).slice(0, 2); // Max 2 dosya
+  const alerts: string[] = []
+  for (const link of interesting) {
+    alerts.push(`[Yükleniyor...] ${link} (OSINT Metadata Analizi)`)
+    const m = await extractMetadataFromUrl(link)
+    if (Object.keys(m.interestingFields).length > 0) {
+      alerts.push(`⚠️ Otomatik Belge Analizi (${link}):\n${formatMetadata(m)}`)
+    }
+  }
+  return alerts.filter(a => !a.startsWith('[Yükleniyor')); // Yükleniyor loglarını at, sadece sonuçları tut
 }
 
 const FIRECRAWL_API = 'https://api.firecrawl.dev/v1/scrape'
@@ -115,6 +144,7 @@ async function fallbackPuppeteerScrape(url: string): Promise<ScrapeResult> {
       cryptoWallets,
       usernameHints,
       avatarUrl: avatarUrl ? (avatarUrl.startsWith('//') ? 'https:' + avatarUrl : (avatarUrl.startsWith('/') ? new URL(avatarUrl, url).href : avatarUrl)) : undefined,
+      metadataAlerts: await processMetadataForLinks(uniqueLinks),
     };
   } catch (err: any) {
     return {
@@ -137,7 +167,49 @@ async function fallbackPuppeteerScrape(url: string): Promise<ScrapeResult> {
 }
 
 export async function scrapeProfile(url: string): Promise<ScrapeResult> {
+
+  if (isInterestingFile(url)) {
+    console.log(`[Scrape] URL bir dosya/medya olduğu için doğrudan Metadata aracı çalıştırılıyor: ${url}`);
+    const m = await extractMetadataFromUrl(url);
+    const alerts = [];
+    if (Object.keys(m.interestingFields).length > 0) {
+      alerts.push(`⚠️ Doğrudan Belge Analizi (${url}):\n${formatMetadata(m)}`);
+    } else {
+      alerts.push(`ℹ️ Dosya incelendi ancak önemli bir metadata bulunamadı.`);
+    }
+    return {
+      url,
+      markdown: 'Bu bir belge/medya dosyasıdır (Firecrawl ile metin alınmadı).',
+      title: 'Medya/Belge Dosyası',
+      description: 'Doğrudan analiz',
+      links: [], emails: [], cryptoWallets: [], usernameHints: [],
+      metadataAlerts: alerts
+    };
+  }
+
+
+  if (isInterestingFile(url)) {
+    console.log(`[Scrape] URL bir dosya/medya olduğu için doğrudan Metadata aracı çalıştırılıyor: ${url}`);
+    const m = await extractMetadataFromUrl(url);
+    const alerts = [];
+    if (Object.keys(m.interestingFields).length > 0) {
+      alerts.push(`⚠️ Doğrudan Belge Analizi (${url}):\n${formatMetadata(m)}`);
+    } else {
+      alerts.push(`ℹ️ Dosya incelendi ancak önemli bir metadata bulunamadı.`);
+    }
+    return {
+      url,
+      markdown: 'Bu bir belge/medya dosyasıdır (Firecrawl ile metin alınmadı).',
+      title: 'Medya/Belge Dosyası',
+      description: 'Doğrudan analiz',
+      links: [], emails: [], cryptoWallets: [], usernameHints: [],
+      metadataAlerts: alerts
+    };
+  }
+
   const apiKey = process.env.FIRECRAWL_API_KEY
+
+
   if (!apiKey) {
     return {
       url,
@@ -173,7 +245,7 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
     if (!res.ok) {
       const errText = await res.text().catch(() => '')
       // 403 veya 429 = bloklandı veya kota doldu -> Puppeteer fallback yap
-      if (res.status === 403 || res.status === 429 || res.status >= 500) {
+      if (res.status === 401 || res.status === 401 || res.status === 403 || res.status === 429 || res.status >= 500) {
         console.log(`[Scrape] Firecrawl başarısız (HTTP ${res.status}), Puppeteer Stealth kullanılıyor...`)
         return await fallbackPuppeteerScrape(url)
       }
@@ -248,6 +320,7 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
     cryptoWallets,
     usernameHints,
     avatarUrl: ogImage ? ogImage : undefined,
+    metadataAlerts: await processMetadataForLinks(linksRaw),
   }
 }
 
@@ -273,6 +346,10 @@ export function formatScrapeResult(result: ScrapeResult): string {
   }
   if (result.avatarUrl) {
     lines.push(`🖼️ Avatar URL: ${result.avatarUrl}`)
+  }
+  if (result.metadataAlerts && result.metadataAlerts.length > 0) {
+    lines.push(`\n🔍 **OTOMATİK METADATA BULGULARI**`);
+    result.metadataAlerts.forEach(a => lines.push(a));
   }
   if (result.links.length > 0) {
     lines.push(`🔗 Linkler (ilk 10): ${result.links.slice(0, 10).join(', ')}`)
