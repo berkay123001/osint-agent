@@ -29,6 +29,100 @@ const DISCORD_REGEX = /\b[a-zA-Z0-9_.]{2,32}#[0-9]{4}\b/g
 // Sadece t.me/ ile başlayan linkler — bare @mention'lar başka platformlarda false positive üretir
 const TELEGRAM_REGEX = /t\.me\/([a-zA-Z0-9_]{5,})/g
 
+async function fallbackPuppeteerScrape(url: string): Promise<ScrapeResult> {
+  let browser = null;
+  try {
+    const puppeteerExtra = (await import('puppeteer-extra')).default as any;
+    const StealthPlugin = (await import('puppeteer-extra-plugin-stealth')).default as any;
+    puppeteerExtra.use(StealthPlugin());
+
+    // Import TurndownService to convert HTML to Markdown (eğer lazımsa, fakat şimdilik düz metin çıkarıyoruz)
+    
+    const puppeteerOptions: any = {
+      headless: true,
+      args: [
+        '--no-sandbox', 
+        '--disable-setuid-sandbox', 
+        '--disable-dev-shm-usage', 
+        '--disable-gpu',
+        '--ignore-certificate-errors'
+      ]
+    };
+
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+      puppeteerOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+
+    browser = await puppeteerExtra.launch(puppeteerOptions);
+    
+    const page = await browser.newPage();
+    // Bot detect engellemek için viewport ve useragent ayarları
+    await page.setViewport({ width: 1280, height: 800 });
+    
+    let isLinkedIn = url.includes('linkedin.com/in/');
+    
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+    // Özellikle JS tabanlı yönlendirmeler veya Cloudflare challenge'ları için bekle
+    await new Promise(r => setTimeout(r, 5000));
+
+    const title = await page.title();
+    
+    // Görünen tüm metni al
+    const rawText = await page.evaluate(() => {
+      // Eğer body yoksa bir şey döndürme (yönlendirme esnasında çökmeyi önler)
+      if (!document.body) return '';
+      return document.body.innerText || '';
+    });
+    
+    // Linkleri topla
+    const links = (await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('a'))
+        .map(a => a.href)
+        .filter(l => l && l.startsWith('http'));
+    })) as string[];
+    
+    const uniqueLinks = [...new Set(links)].slice(0, 30);
+    const md = rawText.substring(0, 4000);
+    
+    const emails = [...new Set(md.match(EMAIL_REGEX) ?? [])] as string[];
+    const btcMatches = md.match(BITCOIN_REGEX) ?? [];
+    const ethMatches = md.match(ETH_REGEX) ?? [];
+    const cryptoWallets = [...new Set([...btcMatches, ...ethMatches])] as string[];
+    
+    const discordHandles = [...md.matchAll(DISCORD_REGEX)].map(m => `discord:${m[0]}`);
+    const telegramHandles = [...md.matchAll(TELEGRAM_REGEX)].map(m => `telegram:${m[1]}`);
+    const usernameHints = [...new Set([...discordHandles, ...telegramHandles])] as string[];
+
+    return {
+      url,
+      markdown: md,
+      title,
+      description: 'Scraped via local Puppeteer Stealth (Fallback)',
+      links: uniqueLinks,
+      emails,
+      cryptoWallets,
+      usernameHints,
+    };
+  } catch (err: any) {
+    return {
+      url,
+      markdown: '',
+      title: '',
+      description: '',
+      links: [],
+      emails: [],
+      cryptoWallets: [],
+      usernameHints: [],
+      error: `Puppeteer Fallback Error: ${err.message}`,
+    };
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+  }
+}
+
 export async function scrapeProfile(url: string): Promise<ScrapeResult> {
   const apiKey = process.env.FIRECRAWL_API_KEY
   if (!apiKey) {
@@ -64,7 +158,12 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '')
-      // 429 = rate limit / kota doldu
+      // 403 veya 429 = bloklandı veya kota doldu -> Puppeteer fallback yap
+      if (res.status === 403 || res.status === 429 || res.status >= 500) {
+        console.log(`[Scrape] Firecrawl başarısız (HTTP ${res.status}), Puppeteer Stealth kullanılıyor...`)
+        return await fallbackPuppeteerScrape(url)
+      }
+      
       const usageWarning = res.status === 429
         ? '⚠️ Firecrawl aylık 500 istek kotası dolmuş. Alternatif çözüm gerekiyor.'
         : undefined
@@ -84,17 +183,8 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
 
     body = await res.text()
   } catch (e) {
-    return {
-      url,
-      markdown: '',
-      title: '',
-      description: '',
-      links: [],
-      emails: [],
-      cryptoWallets: [],
-      usernameHints: [],
-      error: `Firecrawl bağlantı hatası: ${(e as Error).message}`,
-    }
+    console.log(`[Scrape] Firecrawl bağlantı hatası: ${(e as Error).message}, Puppeteer Stealth kullanılıyor...`)
+    return await fallbackPuppeteerScrape(url)
   }
 
   let data: Record<string, unknown>
