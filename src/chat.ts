@@ -1019,7 +1019,7 @@ CRITICAL INSTRUCTION: Asla sessiz kalma veya boş mesaj dönme. Araçlar çalı�
   },
 ]
 
-const MAX_TOOL_CALLS_PER_TURN = 18
+const MAX_TOOL_CALLS_PER_TURN = 30
 
 async function chat(userMessage: string): Promise<void> {
   history.push({ role: 'user', content: userMessage })
