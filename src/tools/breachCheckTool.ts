@@ -21,7 +21,7 @@ export interface BreachRecord {
 export interface BreachCheckResult {
   email: string
   breaches: BreachRecord[]
-  source: 'hibp' | 'local' | 'none'
+  source: 'hibp' | 'leakcheck' | 'local' | 'none'
   error?: string
 }
 
@@ -29,22 +29,75 @@ export interface BreachCheckResult {
  * Email adresinin veri sızıntılarında olup olmadığını kontrol eder.
  * Öncelik sırası:
  * 1. HIBP API (Have I Been Pwned) — HIBP_API_KEY .env'de varsa
- * 2. Lokal test sızıntı veritabanı — her zaman fallback olarak kullanılabilir
+ * 2. LeakCheck Public API — Ücretsiz public proxy
+ * 3. Lokal test sızıntı veritabanı — her zaman fallback olarak kullanılabilir
  */
 export async function checkBreaches(email: string): Promise<BreachCheckResult> {
   const hibpKey = process.env.HIBP_API_KEY
 
-  // HIBP API varsa önce onu dene
+  // 1. HIBP API varsa önce onu dene
   if (hibpKey) {
     try {
-      return await checkHibp(email, hibpKey)
+      const result = await checkHibp(email, hibpKey)
+      if (result.source === 'hibp' && !result.error) return result
     } catch (e) {
-      // HIBP başarısızsa lokal'e düş
+      // HIBP başarısızsa devam et
     }
   }
 
-  // Lokal test veritabanı
+  // 2. LeakCheck Public API (Ücretsiz)
+  try {
+    const leakCheckResult = await checkLeakCheckPublic(email)
+    if (leakCheckResult.source === 'leakcheck' && !leakCheckResult.error) {
+      return leakCheckResult
+    }
+  } catch (e) {
+    // LeakCheck başarısızsa locale düş
+  }
+
+  // 3. Lokal test veritabanı
   return checkLocalBreaches(email)
+}
+
+/** LeakCheck Public API v1 sorgusu (Ücretsiz) */
+async function checkLeakCheckPublic(email: string): Promise<BreachCheckResult> {
+  const url = `https://leakcheck.io/api/public?check=${encodeURIComponent(email)}`
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(10000)
+    })
+    
+    // LeakCheck bazı durumlarda hata dönmesi yerine error page dönebilir.
+    if (!res.ok) {
+      return { email, breaches: [], source: 'none', error: `LeakCheck HTTP ${res.status}` }
+    }
+    
+    // Örnek response: {"success": true, "found": 2, "fields": ["email", "password"], "sources": [{"name": "Site", "date": "2020"}]}
+    const data = await res.json() as Record<string, any>
+    
+    if (data.success === false) {
+      return { email, breaches: [], source: 'leakcheck', error: data.error || 'LeakCheck error' }
+    }
+    
+    if (data.found === 0 || !data.sources || !Array.isArray(data.sources)) {
+      return { email, breaches: [], source: 'leakcheck' }
+    }
+
+    const dataClasses = Array.isArray(data.fields) ? data.fields : []
+
+    const breaches: BreachRecord[] = data.sources.map((s: any) => ({
+      name: s.name || 'Unknown',
+      domain: s.name || 'Unknown',
+      breachDate: s.date || 'Bilinmiyor',
+      dataClasses: dataClasses,
+      description: `LeakCheck public API üzerinden bulundu. Toplam sızan alanlar: ${dataClasses.join(', ')}`
+    }))
+
+    return { email, breaches, source: 'leakcheck' }
+  } catch (e) {
+    return { email, breaches: [], source: 'none', error: `LeakCheck API hatası: ${(e as Error).message}` }
+  }
 }
 
 /** Have I Been Pwned API v3 sorgusu */
@@ -136,7 +189,7 @@ export function formatBreachResult(result: BreachCheckResult): string {
 
   const lines = [
     `🔓 Veri Sızıntısı Kontrolü: ${result.email}`,
-    `Kaynak: ${result.source === 'hibp' ? 'Have I Been Pwned (HIBP)' : result.source === 'local' ? 'Lokal test veritabanı' : 'Kontrol yapılamadı'}`,
+    `Kaynak: ${result.source === 'hibp' ? 'Have I Been Pwned (HIBP)' : result.source === 'leakcheck' ? 'LeakCheck (Public Proxy)' : result.source === 'local' ? 'Lokal test veritabanı' : 'Kontrol yapılamadı'}`,
     '',
   ]
 
