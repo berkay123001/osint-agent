@@ -8,6 +8,7 @@
  */
 
 import { scrapeProfile } from './scrapeTool.js'
+import { fetchAndHashImage } from './imageHasher.js'
 
 export interface VerificationResult {
   platform: string
@@ -26,6 +27,8 @@ export interface KnownIdentifiers {
   location?: string
   company?: string
   blog?: string
+  avatarUrl?: string
+  avatarHash?: string
 }
 
 // Doğrulama yapabileceğimiz platformlar (scrape destekli)
@@ -145,12 +148,24 @@ export async function verifyProfile(
     // Bio'yu çıkar (ilk 200 karakter)
     const bio = scrapeResult.description || scrapeResult.markdown.slice(0, 200)
 
-    if (matches.length > 0) {
+    let isAvatarMatch = false;
+    if (known.avatarHash && scrapeResult.avatarUrl) {
+      const scrapedAvatarHash = await fetchAndHashImage(scrapeResult.avatarUrl);
+      if (scrapedAvatarHash === known.avatarHash) {
+        isAvatarMatch = true;
+        matches.push(`avatar: %100 Hash Eşleşmesi (${scrapeResult.avatarUrl})`);
+      }
+    } else if (known.avatarUrl && scrapeResult.avatarUrl && known.avatarUrl === scrapeResult.avatarUrl) {
+      isAvatarMatch = true;
+      matches.push(`avatar: URL Eşleşmesi (${scrapeResult.avatarUrl})`);
+    }
+
+    if (matches.length > 0 || isAvatarMatch) {
       return {
         platform,
         url,
         verified: true,
-        confidence: 'high',
+        confidence: isAvatarMatch ? 'high' : (matches.length > 1 ? 'high' : 'medium'),
         matchedIndicators: matches,
         scrapedBio: bio,
       }

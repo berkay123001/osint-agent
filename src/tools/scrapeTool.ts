@@ -15,6 +15,7 @@ export interface ScrapeResult {
   emails: string[]
   cryptoWallets: string[]
   usernameHints: string[]
+  avatarUrl?: string
   error?: string
   usageWarning?: string
 }
@@ -75,6 +76,16 @@ async function fallbackPuppeteerScrape(url: string): Promise<ScrapeResult> {
       return document.body.innerText || '';
     });
     
+    // Avatar fotoğrafını bul (öncelikli og:image veya twitter:image veya ilk profil classına sahip img)
+    const avatarUrl = await page.evaluate(() => {
+      const ogImage = document.querySelector('meta[property="og:image"]')?.getAttribute('content');
+      if (ogImage) return ogImage;
+      const twImage = document.querySelector('meta[name="twitter:image"]')?.getAttribute('content');
+      if (twImage) return twImage;
+      const img = document.querySelector('img[class*="avatar"], img[class*="profile"]');
+      return img ? img.getAttribute('src') : undefined;
+    });
+
     // Linkleri topla
     const links = (await page.evaluate(() => {
       return Array.from(document.querySelectorAll('a'))
@@ -103,6 +114,7 @@ async function fallbackPuppeteerScrape(url: string): Promise<ScrapeResult> {
       emails,
       cryptoWallets,
       usernameHints,
+      avatarUrl: avatarUrl ? (avatarUrl.startsWith('//') ? 'https:' + avatarUrl : (avatarUrl.startsWith('/') ? new URL(avatarUrl, url).href : avatarUrl)) : undefined,
     };
   } catch (err: any) {
     return {
@@ -114,6 +126,7 @@ async function fallbackPuppeteerScrape(url: string): Promise<ScrapeResult> {
       emails: [],
       cryptoWallets: [],
       usernameHints: [],
+      avatarUrl: undefined,
       error: `Puppeteer Fallback Error: ${err.message}`,
     };
   } finally {
@@ -135,6 +148,7 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
       emails: [],
       cryptoWallets: [],
       usernameHints: [],
+      avatarUrl: undefined,
       error: 'FIRECRAWL_API_KEY .env dosyasında tanımlı değil.',
     }
   }
@@ -176,6 +190,7 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
         emails: [],
         cryptoWallets: [],
         usernameHints: [],
+        avatarUrl: undefined,
         error: `Firecrawl HTTP ${res.status}: ${errText.slice(0, 200)}`,
         usageWarning,
       }
@@ -200,6 +215,7 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
       emails: [],
       cryptoWallets: [],
       usernameHints: [],
+      avatarUrl: undefined,
       error: 'Firecrawl geçersiz JSON döndürdü.',
     }
   }
@@ -220,6 +236,7 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
   const usernameHints = [...new Set([...discordHandles, ...telegramHandles])]
 
   const meta = (pageData.metadata as Record<string, unknown>) ?? {}
+  const ogImage = String(meta.ogImage ?? meta['twitter:image'] ?? '')
 
   return {
     url,
@@ -230,6 +247,7 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
     emails,
     cryptoWallets,
     usernameHints,
+    avatarUrl: ogImage ? ogImage : undefined,
   }
 }
 
@@ -252,6 +270,9 @@ export function formatScrapeResult(result: ScrapeResult): string {
   }
   if (result.usernameHints.length > 0) {
     lines.push(`👤 Kullanıcı adı ipuçları: ${result.usernameHints.join(', ')}`)
+  }
+  if (result.avatarUrl) {
+    lines.push(`🖼️ Avatar URL: ${result.avatarUrl}`)
   }
   if (result.links.length > 0) {
     lines.push(`🔗 Linkler (ilk 10): ${result.links.slice(0, 10).join(', ')}`)

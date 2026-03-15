@@ -253,6 +253,7 @@ export async function findLinkedIdentifiers(username: string): Promise<{
   realNames: string[]
   handles: string[]
   websites: string[]
+  avatarUrl?: string
 }> {
   const session = getDriver().session()
   try {
@@ -262,7 +263,8 @@ export async function findLinkedIdentifiers(username: string): Promise<{
        OPTIONAL MATCH (u)-[:REAL_NAME]->(p:Person)
        OPTIONAL MATCH (u)-[:TWITTER_ACCOUNT]->(t:Username)
        OPTIONAL MATCH (u)-[:OWNS_WEBSITE]->(w:Website)
-       RETURN collect(DISTINCT e.value) AS emails,
+       RETURN u.avatarUrl AS avatarUrl,
+              collect(DISTINCT e.value) AS emails,
               collect(DISTINCT p.value) AS realNames,
               collect(DISTINCT t.value) AS handles,
               collect(DISTINCT w.value) AS websites`,
@@ -274,6 +276,7 @@ export async function findLinkedIdentifiers(username: string): Promise<{
       realNames: (record?.get('realNames') ?? []).filter(Boolean) as string[],
       handles: (record?.get('handles') ?? []).filter(Boolean) as string[],
       websites: (record?.get('websites') ?? []).filter(Boolean) as string[],
+      avatarUrl: record?.get('avatarUrl') as string | undefined,
     }
   } finally {
     await session.close()
@@ -296,6 +299,7 @@ export async function writeOsintToGraph(
     company?: string
     twitter?: string
     blog?: string
+    avatarUrl?: string
   },
   source: string = 'unknown'
 ): Promise<{ nodesCreated: number; relsCreated: number }> {
@@ -306,7 +310,11 @@ export async function writeOsintToGraph(
   const meta = { source, confidence }
 
   // Seed node
-  await mergeNode('Username', { value: seedUsername })
+  const usernameProps: Record<string, string> = { value: seedUsername }
+  if (data.avatarUrl) {
+    usernameProps.avatarUrl = data.avatarUrl
+  }
+  await mergeNode('Username', usernameProps)
 
   // Emails
   for (const email of data.emails || []) {
