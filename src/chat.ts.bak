@@ -21,7 +21,6 @@ import { verifySherlockProfiles, formatVerificationResults } from './tools/profi
 import { fetchAndHashImage } from './tools/imageHasher.js'
 import { fetchNitterProfile, formatNitterResult } from './tools/nitterTool.js'
 import { findUnexploredPivots, formatUnexploredPivots } from './lib/pivotAnalyzer.js'
-import { compareImages } from './tools/phashCompareTool.js'
 import { searchPerson, formatPersonSearchResult } from './tools/personSearchTool.js'
 import os from 'os'
 import { writeFile, unlink } from 'fs/promises'
@@ -39,36 +38,6 @@ const client = new OpenAI({
 
 // ─── Tool Definitions ────────────────────────────────────────────────
 const tools: OpenAI.Chat.ChatCompletionTool[] = [
-  {
-    type: "function",
-    function: {
-      name: "compare_images_phash",
-      description: "İki görselin perceptual hash (pHash) değerlerini karşılaştırarak kriptografik olarak benzerliklerini ölçer. Bir haberdeki görselin başka bağlamdaki bir fotoğrafla aynı olup olmadığını analiz eder.",
-      parameters: {
-        type: "object",
-        properties: {
-          url1: { type: "string", description: "Birinci görselin tam URL'si" },
-          url2: { type: "string", description: "Karşılaştırma yapılacak ikinci görselin tam URL'si" }
-        },
-        required: ["url1", "url2"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "compare_images_phash",
-      description: "İki görselin perceptual hash (pHash) değerlerini karşılaştırarak kriptografik olarak benzerliklerini ölçer. Bir haberdeki görselin başka bağlamdaki bir fotoğrafla aynı olup olmadığını analiz eder.",
-      parameters: {
-        type: "object",
-        properties: {
-          url1: { type: "string", description: "Birinci görselin tam URL'si" },
-          url2: { type: "string", description: "Karşılaştırma yapılacak ikinci görselin tam URL'si" }
-        },
-        required: ["url1", "url2"]
-      }
-    }
-  },
   {
     type: 'function',
     function: {

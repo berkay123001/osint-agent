@@ -1,0 +1,10 @@
+--- chat.ts
++++ chat.ts
+@@ -473,6 +473,7 @@
+     }
+     
+     return result;
++  }
+ 
+   async function runExtractMetadata(url: string): Promise<string> {
+ 
