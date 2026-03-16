@@ -22,8 +22,10 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@types/fast-levenshtein": "^0.0.4",
     "chalk": "^5.6.2",
     "dotenv": "^17.3.1",
+    "fast-levenshtein": "^3.0.0",
     "genkit": "^1.29.0",
     "genkitx-openai": "^0.30.0",
     "jimp": "^0.22.12",
