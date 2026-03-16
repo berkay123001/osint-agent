@@ -21,7 +21,9 @@ import { verifySherlockProfiles, formatVerificationResults } from './tools/profi
 import { fetchAndHashImage } from './tools/imageHasher.js'
 import { fetchNitterProfile, formatNitterResult } from './tools/nitterTool.js'
 import { findUnexploredPivots, formatUnexploredPivots } from './lib/pivotAnalyzer.js'
-import { compareImages } from './tools/phashCompareTool.js'
+import { compareImages } from './tools/phashCompareTool.js';
+import { factCheckGraphTool } from './tools/factCheckGraphTool.js';
+import { searchReverseImage, formatReverseImageResult } from './tools/reverseImageTool.js';
 import { searchPerson, formatPersonSearchResult } from './tools/personSearchTool.js'
 import os from 'os'
 import { writeFile, unlink } from 'fs/promises'
@@ -39,6 +41,41 @@ const client = new OpenAI({
 
 // ─── Tool Definitions ────────────────────────────────────────────────
 const tools: OpenAI.Chat.ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "fact_check_to_graph",
+      description: "Şüpheli bir iddia (Claim) ile ilgili yapılan Doğruluk Kontrolü (Fact-Check) sonucunu Neo4j veritabanına kaydeder. Kaynak, görsel ve iddiayı birbirine bağlar.",
+      parameters: {
+        type: "object",
+        properties: {
+          claimId: { type: "string" },
+          claimText: { type: "string" },
+          source: { type: "string" },
+          claimDate: { type: "string" },
+          verdict: { type: "string", enum: ["YALAN", "DOĞRU", "ŞÜPHELİ"] },
+          truthExplanation: { type: "string" },
+          imageUrl: { type: "string" },
+          tags: { type: "array", items: { type: "string" } }
+        },
+        required: ["claimId", "claimText", "source", "claimDate", "verdict", "truthExplanation"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "reverse_image_search",
+      description: "Bir görselin internette ilk nerede ve ne zaman paylaşıldığını (Google Lens / SerpApi ile) bulur. Yalan haber veya yanlış bağlamdaki fotoğrafların gerçek kaynağını (eski deprem vb.) göstermek için kullanılır.",
+      parameters: {
+        type: "object",
+        properties: {
+          imageUrl: { type: "string", description: "Aranacak görselin tam URL'si" }
+        },
+        required: ["imageUrl"]
+      }
+    }
+  },
   {
     type: "function",
     function: {
