@@ -11,7 +11,7 @@ function isSafeClearTarget(uri: string): boolean {
   return /^(bolt|neo4j):\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(uri)
 }
 
-function getDriver(): Driver {
+export function getDriver(): Driver {
   if (!driver) {
     driverUri = getNeo4jUri()
     driver = neo4j.driver(

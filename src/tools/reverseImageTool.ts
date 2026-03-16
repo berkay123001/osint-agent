@@ -17,7 +17,7 @@ export interface ReverseImageResult {
 }
 
 export async function searchReverseImage(imageUrl: string): Promise<ReverseImageResult> {
-  const apiKey = process.env.SERPAPI_API_KEY;
+  const apiKey = process.env.SERP_API_KEY;
   
   if (!apiKey) {
     return {
