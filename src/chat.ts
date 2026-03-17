@@ -22,7 +22,7 @@ import { fetchAndHashImage } from './tools/imageHasher.js'
 import { fetchNitterProfile, formatNitterResult } from './tools/nitterTool.js'
 import { findUnexploredPivots, formatUnexploredPivots } from './lib/pivotAnalyzer.js'
 import { compareImages } from './tools/phashCompareTool.js';
-import { factCheckGraphTool } from './tools/factCheckGraphTool.js';
+import { writeFactCheckToGraph } from './lib/neo4jFactCheck.js';
 import { searchReverseImage, formatReverseImageResult } from './tools/reverseImageTool.js';
 import { searchPerson, formatPersonSearchResult } from './tools/personSearchTool.js'
 import os from 'os'
@@ -73,21 +73,6 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
           imageUrl: { type: "string", description: "Aranacak görselin tam URL'si" }
         },
         required: ["imageUrl"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "compare_images_phash",
-      description: "İki görselin perceptual hash (pHash) değerlerini karşılaştırarak kriptografik olarak benzerliklerini ölçer. Bir haberdeki görselin başka bağlamdaki bir fotoğrafla aynı olup olmadığını analiz eder.",
-      parameters: {
-        type: "object",
-        properties: {
-          url1: { type: "string", description: "Birinci görselin tam URL'si" },
-          url2: { type: "string", description: "Karşılaştırma yapılacak ikinci görselin tam URL'si" }
-        },
-        required: ["url1", "url2"]
       }
     }
   },
@@ -540,6 +525,33 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     else if (name === 'search_person') result = await runSearchPerson(args.name, args.context)
     else if (name === 'clear_graph') result = await runClearGraph(args.confirm === 'true' || (args.confirm as unknown) === true)
     else if (name === 'remove_false_positive') result = await runRemoveFalsePositive(args.label, args.value)
+        else if (name === 'fact_check_to_graph') {
+      console.log(chalk.cyan(`\n   🧠 Fact Check Kaydı (Neo4j): `) + chalk.yellow.bold(args.claimId))
+      try {
+        await writeFactCheckToGraph({
+           claimId: args.claimId,
+           claimText: args.claimText,
+           source: args.source,
+           claimDate: args.claimDate,
+           verdict: args.verdict as "YALAN" | "DOĞRU" | "ŞÜPHELİ",
+           truthExplanation: args.truthExplanation,
+           imageUrl: args.imageUrl,
+           tags: args.tags ? JSON.parse(args.tags) : []
+        });
+        result = `✅ Fact-Check sonucu Neo4j Veri Grafiğine başarıyla kaydedildi! (Claim ID: ${args.claimId})`;
+      } catch (e: any) {
+        result = `❌ Graph kaydetme hatası: ${e.message}`;
+      }
+    }
+    else if (name === 'reverse_image_search') {
+      console.log(chalk.cyan(`\n   🖼️ Reverse Image Search (SerpApi): `) + chalk.yellow.bold(args.imageUrl))
+      const res = await searchReverseImage(args.imageUrl)
+      result = formatReverseImageResult(res)
+    }
+    else if (name === 'compare_images_phash') {
+      console.log(chalk.cyan(`\n   🧩 pHash Karşılaştırması: `) + chalk.yellow.bold(args.url1 + ' vs ' + args.url2))
+      result = await compareImages(args.url1, args.url2)
+    }
     else result = `Unknown tool: ${name}`;
 
     if (cacheableTools.has(name) && !result.startsWith('Unknown tool')) {
@@ -1128,6 +1140,10 @@ async function chat(userMessage: string): Promise<void> {
       tool_choice: toolChoice,
       max_tokens: 4096,
     })
+
+    if (!response || !response.choices || !response.choices[0]) {
+      throw new Error(`Geçersiz API yanıtı alındı: ${JSON.stringify(response)}`)
+    }
 
     const message = response.choices[0].message
     history.push(normalizeAssistantMessage(message))
