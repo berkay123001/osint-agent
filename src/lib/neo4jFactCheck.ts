@@ -50,7 +50,11 @@ export async function writeFactCheckToGraph(data: FactCheckData): Promise<void> 
       MERGE (c)-[:ETİKETLENDİ]->(t)
     `;
 
-    await session.run(query, data);
+    await session.run(query, {
+      ...data,
+      tags: data.tags || [],
+      imageUrl: data.imageUrl || null
+    });
     console.log(`[Neo4j] Fact-Check verisi grafiğe yazıldı: ${data.claimId}`);
   } catch (error) {
     console.error(`[Neo4j Hatası] Graph'a yazılamadı:`, error);
