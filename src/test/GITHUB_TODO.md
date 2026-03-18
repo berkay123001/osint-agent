@@ -14,3 +14,8 @@ Bu, ajanı gerçek bir "Adlî Bilişim (Forensic) aracı" yapacaktır.
 1. Terminalde agent ile konuşurken ajan, o anki oturumda (session) öğrendiği "hedefe ait kripto cüzdanı", "özel detaylar" gibi şeyleri o anlık LLM bağlamında tutup yorumluyor. Ancak `neo4j.ts` içindeki `writeOsintToGraph` fonksiyonumuz şu an kripto para birimleri veya madencilik havuzları gibi **özel (custom) node tiplerini** kaydetmeye programlı değil. (Sadece Username, Email, Person, Profile kaydedebiliyor.) 
 2. Bu yüzden oturum kapanıp açıldığında ve graf sorgulandığında ("Graf node listesi çekiliyor"), ajan haklı olarak `0xa102...` cüzdan adresini grafta bulamıyor (çünkü hiç yazılmadı).
 3. Çözüm: Ajanın sohbet geçmişini (Session History) diskte bir JSON vb. formatta tutması (Resume Chat Mode). Ya da Neo4j tarafına `Cryptocurrency` ve `Wallet` gibi yeni tip esnek Node etiketlerinin (Label) eklenmesine olanak sağlanması gerekiyor.
+
+### Gelecek Vizyonu (Açık Kaynak Ticari İstihbarat & Yolsuzluk Tespit)
+*   **Ticaret Sicil Gazetesi Tarayıcısı (Company OSINT):** Paravan şirketleri, ortaklık yapılarını ve siyasilerin/bürokratların akraba şirket bağlarını otomatik tarayıp Neo4j'e kaydetme.
+*   **Kamu İhale Tarayıcısı (EKAP Scraper):** Çıkarılan şirketlerin devletten aldığı ihaleleri şeffaf veriler üzerinden analiz edip finansal ağ grafiği oluşturma.
+*   **Lüks Tüketim/Geo-Location İfşası (IMINT):** Siyasilerin veya çocuklarının sosyal medya fotoğraflarını kullanarak arka plandaki konut, saat, araç gibi lüks ögelerden tahmini servet değeri biçme.
