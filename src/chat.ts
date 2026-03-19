@@ -1,3 +1,4 @@
+import { addCustomNodeTool, deleteCustomNodeTool, addCustomRelationshipTool } from './tools/customGraphTool.js';
 import 'dotenv/config'
 import OpenAI from 'openai'
 import * as readline from 'readline'
@@ -41,6 +42,61 @@ const client = new OpenAI({
 
 // ─── Tool Definitions ────────────────────────────────────────────────
 const tools: OpenAI.Chat.ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "add_custom_node",
+      description: "Neo4j graf veritabanına özel (custom) bir düğüm (node) ekler. Standart nesneler (Username, Email vb.) dışındaki bulguları (ör: CryptoWallet, Malware) kaydetmek için kullanılır. Etiketleri CamelCase kullanın.",
+      parameters: {
+        type: "object",
+        properties: {
+          label: { type: "string", description: "Düğümün tipi (Örn: CryptoWallet, Malware)" },
+          properties: { 
+            type: "object", 
+            additionalProperties: { type: "string" },
+            description: "Düğüm özellikleri. Key-value (string:string) formatında."
+          }
+        },
+        required: ["label", "properties"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_custom_node",
+      description: "Graph veritabanından hatalı eklenmiş bir düğümü ID veya özellik bazlı olarak siler.",
+      parameters: {
+        type: "object",
+        properties: {
+          label: { type: "string", description: "Silinecek düğümün etiketi. (Örn: CryptoWallet)" },
+          matchKey: { type: "string", description: "Arama anahtarı. (Örn: address)" },
+          matchValue: { type: "string", description: "Arama yapılacak değer. (Örn: 0x123...)" }
+        },
+        required: ["label", "matchKey", "matchValue"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_custom_relationship",
+      description: "Graf veritabanındaki iki nesne arasına özel bir ilişki (Örn: OWNS, DISTRIBUTES) ekler.",
+      parameters: {
+        type: "object",
+        properties: {
+          sourceLabel: { type: "string", description: "Kaynak etiket (Örn: Username)" },
+          sourceKey: { type: "string", description: "Kaynak arama anahtarı (Örn: value)" },
+          sourceValue: { type: "string", description: "Kaynak değer (Örn: wgodbarrelv4)" },
+          targetLabel: { type: "string", description: "Hedef etiket (Örn: Malware)" },
+          targetKey: { type: "string", description: "Hedef arama anahtarı (Örn: name)" },
+          targetValue: { type: "string", description: "Hedef arama değeri (Örn: Vidar)" },
+          relationshipType: { type: "string", description: "İlişki tipi BÜYÜK HARFLERLE (Örn: DISTRIBUTES)" }
+        },
+        required: ["sourceLabel", "sourceKey", "sourceValue", "targetLabel", "targetKey", "targetValue", "relationshipType"]
+      }
+    }
+  },
   {
     type: "function",
     function: {
@@ -567,7 +623,41 @@ async function runExtractMetadata(url: string): Promise<string> {
   const interesting = Object.keys(result.interestingFields).length
   if (result.error) {
     console.log(chalk.red(`   ❌ ${result.error}`))
-  } else {
+  } else if (name === 'add_custom_node') {
+            console.log(colors.cyan + '    [Tool] ' + colors.reset + `Özel düğüm ekleniyor: ${args.label}`);
+            const res = await addCustomNodeTool(args.label, args.properties);
+            console.log(colors.green + '    [Success] ' + colors.reset + 'Düğüm eklendi.');
+            toolResponses.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              name: name,
+              content: JSON.stringify(res)
+            });
+          } else if (name === 'delete_custom_node') {
+            console.log(colors.cyan + '    [Tool] ' + colors.reset + `Özel düğüm siliniyor: ${args.label} (${args.matchKey}: ${args.matchValue})`);
+            const res = await deleteCustomNodeTool(args.label, args.matchKey, args.matchValue);
+            console.log(colors.yellow + '    [Action] ' + colors.reset + 'Düğüm silindi.');
+            toolResponses.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              name: name,
+              content: JSON.stringify(res)
+            });
+          } else if (name === 'add_custom_relationship') {
+            console.log(colors.cyan + '    [Tool] ' + colors.reset + `Özel ilişki ekleniyor: ${args.relationshipType}`);
+            const res = await addCustomRelationshipTool(
+              args.sourceLabel, args.sourceKey, args.sourceValue,
+              args.targetLabel, args.targetKey, args.targetValue,
+              args.relationshipType
+            );
+            console.log(colors.green + '    [Success] ' + colors.reset + 'İlişki kuruldu.');
+            toolResponses.push({
+              tool_call_id: toolCall.id,
+              role: "tool",
+              name: name,
+              content: JSON.stringify(res)
+            });
+          } else {
     console.log(chalk.green(`   ✅ ${Object.keys(result.fields).length} metadata alanı bulundu (${interesting} OSINT-relevant)`))
   }
   return formatMetadata(result)
