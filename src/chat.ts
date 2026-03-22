@@ -608,6 +608,29 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       console.log(chalk.cyan(`\n   🧩 pHash Karşılaştırması: `) + chalk.yellow.bold(args.url1 + ' vs ' + args.url2))
       result = await compareImages(args.url1, args.url2)
     }
+    else if (name === 'add_custom_node') {
+      console.log(chalk.cyan(`\n   ➕ Özel düğüm ekleniyor: `) + chalk.yellow.bold(args.label));
+      const res = await addCustomNodeTool({ label: args.label, properties: args.properties as any });
+      result = JSON.stringify(res);
+    }
+    else if (name === 'delete_custom_node') {
+      console.log(chalk.cyan(`\n   ➖ Özel düğüm siliniyor: `) + chalk.yellow.bold(`${args.label} (${args.matchKey}: ${args.matchValue})`));
+      const res = await deleteCustomNodeTool({ label: args.label, matchKey: args.matchKey, matchValue: args.matchValue });
+      result = JSON.stringify(res);
+    }
+    else if (name === 'add_custom_relationship') {
+      console.log(chalk.cyan(`\n   🔗 Özel ilişki ekleniyor: `) + chalk.yellow.bold(`${args.sourceLabel} -[${args.relationshipType}]-> ${args.targetLabel}`));
+      const res = await addCustomRelationshipTool({
+        sourceLabel: args.sourceLabel,
+        sourceKey: args.sourceKey,
+        sourceValue: args.sourceValue,
+        targetLabel: args.targetLabel,
+        targetKey: args.targetKey,
+        targetValue: args.targetValue,
+        relationshipType: args.relationshipType
+      });
+      result = JSON.stringify(res);
+    }
     else result = `Unknown tool: ${name}`;
 
     if (cacheableTools.has(name) && !result.startsWith('Unknown tool')) {
@@ -623,41 +646,7 @@ async function runExtractMetadata(url: string): Promise<string> {
   const interesting = Object.keys(result.interestingFields).length
   if (result.error) {
     console.log(chalk.red(`   ❌ ${result.error}`))
-  } else if (name === 'add_custom_node') {
-            console.log(colors.cyan + '    [Tool] ' + colors.reset + `Özel düğüm ekleniyor: ${args.label}`);
-            const res = await addCustomNodeTool(args.label, args.properties);
-            console.log(colors.green + '    [Success] ' + colors.reset + 'Düğüm eklendi.');
-            toolResponses.push({
-              tool_call_id: toolCall.id,
-              role: "tool",
-              name: name,
-              content: JSON.stringify(res)
-            });
-          } else if (name === 'delete_custom_node') {
-            console.log(colors.cyan + '    [Tool] ' + colors.reset + `Özel düğüm siliniyor: ${args.label} (${args.matchKey}: ${args.matchValue})`);
-            const res = await deleteCustomNodeTool(args.label, args.matchKey, args.matchValue);
-            console.log(colors.yellow + '    [Action] ' + colors.reset + 'Düğüm silindi.');
-            toolResponses.push({
-              tool_call_id: toolCall.id,
-              role: "tool",
-              name: name,
-              content: JSON.stringify(res)
-            });
-          } else if (name === 'add_custom_relationship') {
-            console.log(colors.cyan + '    [Tool] ' + colors.reset + `Özel ilişki ekleniyor: ${args.relationshipType}`);
-            const res = await addCustomRelationshipTool(
-              args.sourceLabel, args.sourceKey, args.sourceValue,
-              args.targetLabel, args.targetKey, args.targetValue,
-              args.relationshipType
-            );
-            console.log(colors.green + '    [Success] ' + colors.reset + 'İlişki kuruldu.');
-            toolResponses.push({
-              tool_call_id: toolCall.id,
-              role: "tool",
-              name: name,
-              content: JSON.stringify(res)
-            });
-          } else {
+  } else {
     console.log(chalk.green(`   ✅ ${Object.keys(result.fields).length} metadata alanı bulundu (${interesting} OSINT-relevant)`))
   }
   return formatMetadata(result)
