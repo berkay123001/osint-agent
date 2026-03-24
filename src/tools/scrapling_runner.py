@@ -40,7 +40,7 @@ def extract_osint(text: str, links: list[str]) -> dict:
     }
 
 
-def scrape(url: str, mode: str, css_selector: str | None) -> dict:
+def scrape(url: str, mode: str, css_selector: str | None, deep_read: bool = False) -> dict:
     try:
         if mode == "stealth":
             from scrapling.fetchers import StealthyFetcher
@@ -84,8 +84,8 @@ def scrape(url: str, mode: str, css_selector: str | None) -> dict:
             pass
 
         # CSS selector ile hedefli içerik veya body metni
-        # 50K karakter — akademik makaleler için yeterli (model 1M context destekliyor)
-        MAX_TEXT = 50000
+        # deep_read=True → 50K (akademik makaleler), aksi halde 8K
+        MAX_TEXT = 50000 if deep_read else 8000
         if css_selector:
             try:
                 elements = page.css(css_selector)
@@ -139,9 +139,10 @@ def scrape(url: str, mode: str, css_selector: str | None) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Scrapling stealth fetcher")
     parser.add_argument("url", help="Hedef URL")
-    parser.add_argument("--stealth",  action="store_true", help="Patchright StealthyFetcher kullan")
-    parser.add_argument("--dynamic",  action="store_true", help="Playwright DynamicFetcher kullan")
-    parser.add_argument("--css",      default=None,  help="CSS selector (opsiyonel)")
+    parser.add_argument("--stealth",    action="store_true", help="Patchright StealthyFetcher kullan")
+    parser.add_argument("--dynamic",    action="store_true", help="Playwright DynamicFetcher kullan")
+    parser.add_argument("--css",        default=None,  help="CSS selector (opsiyonel)")
+    parser.add_argument("--deep-read",  action="store_true", help="Akademik deep-read modu: 50K char limit (varsayılan: 8K)")
     args = parser.parse_args()
 
     if args.stealth:
@@ -151,7 +152,7 @@ def main():
     else:
         mode = "http"
 
-    result = scrape(args.url, mode, args.css)
+    result = scrape(args.url, mode, args.css, deep_read=args.deep_read)
     print(json.dumps(result, ensure_ascii=False))
 
 

@@ -208,7 +208,7 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'search_web',
       description:
-        'Tavily AI arama motoru üzerinden web araması yapar. İsim, email, dork (site:example.com), kurum araması vb. için kullan. BULUNAN SONUÇLARI DOĞRUDAN KABUL ETME: Sonuçların hedefin bilinen diğer tanımlayıcılarıyla (email, username vb.) örtüşüp örtüşmediğini çapraz kontrol et.',
+        'Brave Search (öncelikli) veya Tavily AI (fallback) ile web araması yapar. İsim, email, dork (site:example.com), kurum araması vb. için kullan. BULUNAN SONUÇLARI DOĞRUDAN KABUL ETME: Sonuçların hedefin bilinen diğer tanımlayıcılarıyla (email, username vb.) örtüşüp örtüşmediğini çapraz kontrol et.',
       parameters: {
         type: 'object',
         properties: {
@@ -789,8 +789,11 @@ async function runWebFetch(url: string): Promise<string> {
 
   console.log(chalk.green(`   ✅ ${result.contentType} (HTTP ${result.statusCode})`))
   if (result.textContent) {
-    // 50K karakter — ar5iv/akademik makaleler için yeterli (model 1M context destekliyor)
-    return result.textContent.slice(0, 50000)
+    // Akademik URL'ler için deep-read modu: 50K — diğerleri için 8K
+    const isDeepReadUrl = /ar5iv\.|arxiv\.org\/(abs|pdf)|doi\.org|dergipark\.org\.tr|ncbi\.nlm\.nih\.gov|pubmed\.|semanticscholar\.org/.test(url)
+    const limit = isDeepReadUrl ? 50000 : 8000
+    if (isDeepReadUrl) console.log(chalk.blue(`   📖 Deep-read modu aktif (${limit.toLocaleString()} char)`))
+    return result.textContent.slice(0, limit)
   }
   return `Binary dosya indirildi: ${result.savedTo} (${result.contentType})`
 }
