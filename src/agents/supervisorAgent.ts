@@ -2,6 +2,7 @@ import type { Message, AgentConfig } from './types.js';
 import { runAgentLoop } from './baseAgent.js';
 import { runIdentityAgent } from './identityAgent.js';
 import { runMediaAgent } from './mediaAgent.js';
+import { runAcademicAgent } from './academicAgent.js';
 import { tools, executeTool } from '../lib/toolRegistry.js';
 import type OpenAI from 'openai';
 import chalk from 'chalk';
@@ -9,7 +10,6 @@ import chalk from 'chalk';
 const SUPERVISOR_TOOLS = [
   'query_graph', 'list_graph_nodes', 'graph_stats', 'clear_graph', 
   'search_web', 'web_fetch', 'scrape_profile', 'remove_false_positive',
-  'search_academic_papers',
 ];
 
 const supervisorNativeTools = tools.filter((t: any) => t.type === 'function' && SUPERVISOR_TOOLS.includes(t.function.name));
@@ -45,6 +45,21 @@ const supervisorMetaTools: OpenAI.Chat.ChatCompletionTool[] = [
         required: ['query']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ask_academic_agent',
+      description: 'Akademik konu araştırması, makale/yayın taraması, araştırmacı profili, citation analizi gerektiğinde Akademik Araştırma uzmanına başvurur. Örn: "LLM\'lerde RL eğitimi üzerine en güncel makaleler", "Attention is All You Need sonrası ne çalışılıyor?"',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Akademik araştırma görevi (Örn: "reinforcement learning from human feedback 2025 makaleleri")' },
+          context: { type: 'string', description: 'Ek bağlam (araştırmacı ismi, kurum vb.)' }
+        },
+        required: ['query']
+      }
+    }
   }
 ];
 
@@ -53,6 +68,8 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
     return await runIdentityAgent(args.query, args.context);
   } else if (name === 'ask_media_agent') {
     return await runMediaAgent(args.query, args.context);
+  } else if (name === 'ask_academic_agent') {
+    return await runAcademicAgent(args.query, args.context);
   } else {
     // Normal araçlar (graf, search_web vs.) için ortak registry kullan
     return await executeTool(name, args);
@@ -72,8 +89,9 @@ Kullanıcıyla doğrudan sen muhatap olursun.
 KARAR AĞACI — Kullanıcının isteğine göre hemen şunu yap:
 1. Kişi/username/email araştırması → HEMEN ask_identity_agent çağır. Kendi başına sadece search_web yapma.
 2. Görsel/video/haber doğrulama → HEMEN ask_media_agent çağır.
-3. Graf sorgusu (bağlantılar, istatistik) → query_graph, list_graph_nodes, graph_stats kullan.
-4. Genel soru → Araç kullanmadan doğrudan yanıt ver.
+3. Akademik araştırma (makale, konu, yayın, araştırmacı, citation) → HEMEN ask_academic_agent çağır.
+4. Graf sorgusu (bağlantılar, istatistik) → query_graph, list_graph_nodes, graph_stats kullan.
+5. Genel soru → Araç kullanmadan doğrudan yanıt ver.
 🚨 ÇOKLU KİMLİK UYARISI:
 Aynı ad-soyadda birden fazla kişi bulunursa (örn. hem akademisyen hem öğrenci), bunları ASLA otomatik olarak birleştirme.
 - IdentityAgent raporunda "[BAĞLANTI DOĞRULANAMADI]" ifadesi varsa bunu kullanıcıya açıkça belirt.
