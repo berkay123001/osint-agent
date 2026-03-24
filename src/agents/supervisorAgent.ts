@@ -10,6 +10,7 @@ import chalk from 'chalk';
 const SUPERVISOR_TOOLS = [
   'query_graph', 'list_graph_nodes', 'graph_stats', 'clear_graph', 
   'search_web', 'web_fetch', 'scrape_profile', 'remove_false_positive',
+  'generate_report',
 ];
 
 const supervisorNativeTools = tools.filter((t: any) => t.type === 'function' && SUPERVISOR_TOOLS.includes(t.function.name));
@@ -94,7 +95,8 @@ KARAR AĞACI — Kullanıcının isteğine göre hemen şunu yap:
 2. Görsel/video/haber doğrulama → HEMEN ask_media_agent çağır.
 3. Akademik araştırma (makale, konu, yayın, araştırmacı, citation) → HEMEN ask_academic_agent çağır.
 4. Graf sorgusu (bağlantılar, istatistik) → query_graph, list_graph_nodes, graph_stats kullan.
-5. Genel soru → Araç kullanmadan doğrudan yanıt ver.
+5. Rapor isteği ("rapor oluştur", "rapor ver", "raporu kaydet") → HEMEN generate_report çağır.
+6. Genel soru → Araç kullanmadan doğrudan yanıt ver.
 🚨 ÇOKLU KİMLİK UYARISI:
 Aynı ad-soyadda birden fazla kişi bulunursa (örn. hem akademisyen hem öğrenci), bunları ASLA otomatik olarak birleştirme.
 - IdentityAgent raporunda "[BAĞLANTI DOĞRULANAMADI]" ifadesi varsa bunu kullanıcıya açıkça belirt.
