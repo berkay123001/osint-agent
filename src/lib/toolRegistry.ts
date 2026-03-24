@@ -27,6 +27,7 @@ import { writeFactCheckToGraph } from './neo4jFactCheck.js';
 import { searchReverseImage, formatReverseImageResult } from '../tools/reverseImageTool.js';
 import { searchPerson, formatPersonSearchResult } from '../tools/personSearchTool.js'
 import { searchAcademicPapers, formatAcademicResult, writeAcademicPapersToGraph, searchAuthorPapers, formatAuthorResult } from '../tools/academicSearchTool.js'
+import { generateOsintReport } from '../tools/reportTool.js'
 import os from 'os'
 import { writeFile, unlink } from 'fs/promises'
 
@@ -471,6 +472,24 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'generate_report',
+      description:
+        'Araştırma tamamlandıktan sonra tüm bulguları yapılandırılmış Markdown raporu olarak dosyaya kaydeder.\n\nreportType seçenekleri:\n- "osint" (varsayılan): Kişi/username araştırması — Neo4j grafından profil/email/sızıntı/platform verisini çeker.\n- "academic": Makale/konu araştırması — sadece additionalFindings içeriğini kullanır, Neo4j\'e bakmaz. AcademicAgent raporu bittikten sonra kullan.\n- "factcheck": Haber/görsel doğrulama — MediaAgent raporu bittikten sonra kullan.\n\nKullanıcı "rapor oluştur" / "rapor ver" / "kaydet" dediğinde ya da bir alt-ajan tamamlandığında HEMEN çağır.',
+      parameters: {
+        type: 'object',
+        properties: {
+          subject: { type: 'string', description: 'Araştırılan konu, kişi veya entity (username, makale konusu, iddia metni vb.)' },
+          reportType: { type: 'string', enum: ['osint', 'academic', 'factcheck'], description: 'Rapor tipi. Makale/akademik çalışma için "academic", görsel/haber doğrulama için "factcheck", kişi OSINT için "osint" (varsayılan).' },
+          title: { type: 'string', description: 'Opsiyonel rapor başlığı' },
+          additionalFindings: { type: 'string', description: 'Ajan raporunun tam metni veya analist notları. Academic/Factcheck modunda bu alan tüm raporu taşır.' },
+        },
+        required: ['subject'],
+      },
+    },
+  },
 ]
 
 // ─── Tool Executors ──────────────────────────────────────────────────
@@ -661,6 +680,31 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
    👤 Araştırmacı Arama (Semantic Scholar): `) + chalk.yellow.bold(args.name))
       const authorResult = await searchAuthorPapers(args.name, args.affiliation)
       result = formatAuthorResult(authorResult)
+    }
+    else if (name === 'generate_report') {
+      console.log(chalk.cyan(`\n   📄 Rapor oluşturuluyor [${args.reportType || 'osint'}]: `) + chalk.yellow.bold(args.subject))
+      try {
+        const reportResult = await generateOsintReport({
+          subject: args.subject,
+          reportType: (args.reportType as 'osint' | 'academic' | 'factcheck') ?? 'osint',
+          title: args.title,
+          additionalFindings: args.additionalFindings,
+        })
+        console.log(chalk.green(`   ✅ Rapor kaydedildi: `) + chalk.gray(reportResult.filePath))
+        result = [
+          `✅ **Rapor başarıyla oluşturuldu!**`,
+          ``,
+          `📁 **Dosya:** \`${reportResult.filePath}\``,
+          ``,
+          `---`,
+          ``,
+          reportResult.markdown,
+        ].join('\n')
+      } catch (e) {
+        const msg = (e as Error).message
+        console.log(chalk.red(`   ❌ Rapor hatası: ${msg}`))
+        result = `❌ Rapor oluşturma hatası: ${msg}`
+      }
     }
     else if (name === 'search_academic_papers') {
       const maxResults = parseInt(args.maxResults ?? '10') || 10
