@@ -110,8 +110,10 @@ export function formatAcademicResult(result: AcademicSearchResult): string {
     lines.push(`   📅 Yayın: ${p.publishedDate} | 🆔 arXiv: ${p.arxivId}`)
     lines.push(`   👥 Yazarlar: ${p.authors.slice(0, 5).join(', ')}${p.authors.length > 5 ? ` +${p.authors.length - 5}` : ''}`)
     lines.push(`   🏷️  Kategoriler: ${p.categories.slice(0, 3).join(', ')}`)
-    lines.push(`   📝 Özet: ${p.abstract.slice(0, 300)}...`)
-    lines.push(`   🔗 PDF: ${p.pdfUrl}`)
+    lines.push(`   📝 Özet: ${p.abstract.slice(0, 800)}${p.abstract.length > 800 ? '...' : ''}`)
+    lines.push(`   🔗 Abstract: https://arxiv.org/abs/${p.arxivId}`)
+    lines.push(`   📄 HTML: https://ar5iv.labs.arxiv.org/html/${p.arxivId}`)
+    lines.push(`   📥 PDF: ${p.pdfUrl}`)
     lines.push('')
   }
 

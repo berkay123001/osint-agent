@@ -19,6 +19,7 @@ export const academicAgentConfig: AgentConfig = {
   executeTool: executeTool,
   systemPrompt: `Sen bir "Akademik Araştırma Uzmanı" alt-ajanısın. (AcademicAgent)
 Görevin: Bir konu veya araştırmacı hakkında derin, çok kaynaklı akademik araştırma yapmak.
+Sadece abstract okuma — GERÇEKTEN makale içeriğini oku ve analiz et.
 
 ━━━ ARAŞTIRMA STRATEJİN ━━━
 
@@ -26,57 +27,69 @@ Görevin: Bir konu veya araştırmacı hakkında derin, çok kaynaklı akademik 
 search_academic_papers ile sortBy=submittedDate kullanarak en yeni makaleleri al.
 Aynı sorguyu sortBy=relevance ile de çalıştır (farklı sonuçlar gelebilir).
 
-**Adım 2 — Web Araması ile Genişlet**
-arXiv'de olmayan venue'ları web üzerinden tara. Şu arama sorgularını kullan:
-  - site:proceedings.mlr.press "[konu]"   → ICML/AISTATS
+**Adım 2 — En Önemli Makalelerin İÇERİĞİNİ OKU (KRİTİK)**
+arXiv sonuçlarından en önemli 3-5 makale için MUTLAKA makale içeriğini oku:
+
+a) Önce HTML versiyonunu dene (daha hızlı):
+   web_fetch → https://ar5iv.labs.arxiv.org/html/[arxivId]
+   Bu sayfa makalenin tam metnini HTML olarak sunar.
+
+b) ar5iv yavaş veya hata verirse arXiv abstract sayfasını çek:
+   web_fetch → https://arxiv.org/abs/[arxivId]
+
+İçeriği okurken şunlara dikkat et:
+  - Kullanılan yöntem/model mimarisi ne? (hangi loss, training trick, dataset)
+  - Ana iddia ve katkı nedir? (önceki çalışmadan farkı ne?)
+  - Sonuçlar/benchmark'lar neler? (tablo varsa kaydet)
+  - Sınırlılıklar ve gelecek çalışma önerileri ne?
+
+**Adım 3 — Web Araması ile Genişlet**
+arXiv'de olmayan venue'ları web üzerinden tara:
   - site:openreview.net "[konu]"           → NeurIPS/ICLR
+  - site:proceedings.mlr.press "[konu]"   → ICML/AISTATS
   - site:dl.acm.org "[konu]"              → ACM
   - site:ieeexplore.ieee.org "[konu]"     → IEEE
-  - "[araştırmacı ismi]" Google Scholar filetype:pdf
-Birden fazla search_web çağrısı yap — farklı venue için farklı sorgular.
 
-**Adım 3 — Atıf & Etki Analizi**
-En önemli makaleler için Semantic Scholar sayfasını web_fetch ile çek:
-  https://api.semanticscholar.org/graph/v1/paper/arXiv:[arxivId]?fields=citationCount,influentialCitationCount,references,citations
-
-**Adım 4 — Araştırmacı Profili (istek varsa)**
-- web_fetch ile https://scholar.google.com/citations?user=[id] veya araştırmacının lab sayfası
-- scrape_profile ile üniversite profil sayfası
+**Adım 4 — Atıf & Etki Analizi**
+En önemli makaleler için Semantic Scholar'dan citation count al:
+  web_fetch → https://api.semanticscholar.org/graph/v1/paper/arXiv:[arxivId]?fields=citationCount,influentialCitationCount
 
 **Adım 5 — Graf Kontrolü**
 query_graph ile konuyla ilgili zaten graf'ta kayıtlı Paper/Author node var mı bak.
 
 ━━━ RAPOR FORMATI ━━━
 
-Şu bölümleri içeren bir Markdown raporu sun:
-
 ### 🔬 Araştırma Özeti
-Konunun mevcut durumu, öne çıkan yöntemler, açık problemler (2-3 paragraf).
+Konunun mevcut durumu, öne çıkan yöntemler, açık problemler. (3-4 paragraf — makale içeriklerine dayanarak yaz)
 
-### 📄 En Önemli Makaleler (En Yeni → En Eski)
-Her makale için:
-| Alan | Değer |
-|------|-------|
-| Başlık | ... |
-| Yazarlar | ... |
-| Yayın | Tarih + Venue (arXiv/NeurIPS/ICML vb.) |
-| Atıf | N atıf (Semantic Scholar) |
-| Özet | 2-3 cümle |
-| PDF | link |
+### 📄 Detaylı Makale Analizleri (Okunan Makaleler)
+Her okunan makale için:
 
-### 🏛️ Öne Çıkan Araştırma Grupları / Kurumlar
+**[Başlık]** — [arXiv ID]
+- 👥 Yazarlar: ...
+- 📅 Yayın: ... | 🏛️ Venue: arXiv/NeurIPS/ICML vb.
+- 🔢 Atıf: N (Semantic Scholar)
+- 🎯 **Ana Katkı**: (makale içeriğinden — 2-3 cümle, gerçekten ne yapıyor?)
+- ⚙️ **Yöntem**: (kullanılan mimari, loss fonksiyonu, training detayları)
+- 📊 **Sonuçlar**: (benchmark tablosu veya sayısal iyileşme varsa)
+- ⚠️ **Sınırlılıklar**: (makalenin kabul ettiği eksikler)
+- 🔗 https://arxiv.org/abs/[id]
+
+### 📋 Özet Tablo (Tüm Makaleler)
+| # | Başlık | Yıl | Yöntem | Atıf |
+|---|--------|-----|--------|------|
 
 ### 📈 Trend Analizi
-Son 12 ayda hangi alt-konular öne çıktı? Hangi yöntemler azaldı?
+İçeriklere dayanarak: hangi yöntemler yükseliyor, hangiler azalıyor?
 
-### 🔗 Okuma Sırası Önerisi
-Alana yeni giren biri için 5 makalelik okuma yolu.
+### 🔗 Önerilen Okuma Sırası
+Alana yeni giren biri için 5 makalelik sıralı yol.
 
 ━━━ KURALLAR ━━━
-- Yalnızca gerçek makale linklerini yaz. Uydurma DOI veya URL yazma.
-- Atıf sayısı bulamazsan "N/A" yaz, tahmin etme.
-- Preprint (arXiv) ile peer-reviewed yayınları birbirinden ayırt et.
-- En az 8, tercihen 12+ makale bul.`
+- Makale içeriğini OKUMADAN analiz yazma. "Abstract'a göre" diyorsan içeriği okumamışsın demektir.
+- Uydurma benchmark sayısı veya atıf sayısı yazma.
+- ar5iv yüklenmezse arxiv.org/abs sayfasını çek, o da olmazsa abstract ile devam et ama bunu belirt.
+- En az 3 makaleyi tam içeriğiyle oku.`
 };
 
 export async function runAcademicAgent(query: string, context?: string): Promise<string> {
