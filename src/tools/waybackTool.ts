@@ -5,7 +5,7 @@
  */
 
 const WAYBACK_API = 'https://web.archive.org'
-const TIMEOUT = 30000
+const TIMEOUT = 60000
 
 interface WaybackSnapshot {
   url: string
