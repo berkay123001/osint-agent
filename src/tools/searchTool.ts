@@ -8,13 +8,57 @@ export interface SearchToolResponse {
   query: string;
   results: SearchResult[];
   error?: string;
+  provider?: string;
 }
 
 /**
- * Tavily API üzerinden web'de arama yapar.
+ * Brave Search API üzerinden web araması yapar.
+ */
+async function searchBrave(query: string, limit: number = 10): Promise<SearchToolResponse> {
+  const apiKey = process.env.BRAVE_SEARCH_API_KEY
+  if (!apiKey) {
+    return { query, results: [], error: 'BRAVE_SEARCH_API_KEY tanımlı değil.' }
+  }
+
+  try {
+    const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${limit}`
+    const response = await fetch(url, {
+      headers: {
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip',
+        'X-Subscription-Token': apiKey,
+      }
+    })
+
+    if (!response.ok) {
+      const errText = await response.text()
+      return { query, results: [], error: `Brave API hatası (HTTP ${response.status}): ${errText}` }
+    }
+
+    const data = await response.json()
+    const webResults = data?.web?.results ?? []
+
+    if (!Array.isArray(webResults) || webResults.length === 0) {
+      return { query, results: [], error: 'Brave API sonuç döndürmedi.' }
+    }
+
+    const results: SearchResult[] = webResults.map((r: any) => ({
+      title: r.title || 'Başlıksız',
+      snippet: (r.description || '').slice(0, 400).replace(/\n+/g, ' ').trim(),
+      url: r.url || ''
+    }))
+
+    return { query, results, provider: 'Brave Search' }
+  } catch (error) {
+    return { query, results: [], error: `Brave arama hatası: ${(error as Error).message}` }
+  }
+}
+
+/**
+ * Tavily API üzerinden web araması yapar.
  * Yapay zeka ajanları için optimize edilmiş gelişmiş arama sonuçları döndürür.
  */
-export async function searchWeb(query: string, limit: number = 10): Promise<SearchToolResponse> {
+async function searchTavily(query: string, limit: number = 10): Promise<SearchToolResponse> {
   const apiKey = process.env.TAVILY_API_KEY
   if (!apiKey) {
     return { query, results: [], error: 'TAVILY_API_KEY .env dosyasında tanımlı değil.' }
@@ -29,7 +73,7 @@ export async function searchWeb(query: string, limit: number = 10): Promise<Sear
       body: JSON.stringify({
         api_key: apiKey,
         query: query,
-        search_depth: 'advanced', // Daha derin ve kaliteli sonuçlar için "advanced"
+        search_depth: 'advanced',
         max_results: limit,
         include_answer: false,
         include_images: false,
@@ -54,10 +98,33 @@ export async function searchWeb(query: string, limit: number = 10): Promise<Sear
       url: r.url || ''
     }));
 
-    return { query, results };
+    return { query, results, provider: 'Tavily' };
   } catch (error) {
-    return { query, results: [], error: `Arama hatası: ${(error as Error).message}` };
+    return { query, results: [], error: `Tavily arama hatası: ${(error as Error).message}` };
   }
+}
+
+/**
+ * Brave Search öncelikli (Tavily fallback) web araması.
+ * Her iki API anahtarı da yoksa hata döndürür.
+ */
+export async function searchWeb(query: string, limit: number = 10): Promise<SearchToolResponse> {
+  // 1) Brave Search (primary)
+  if (process.env.BRAVE_SEARCH_API_KEY) {
+    const braveResult = await searchBrave(query, limit)
+    if (!braveResult.error && braveResult.results.length > 0) {
+      return braveResult
+    }
+    // Brave başarısız ise sessizce Tavily'ye düş
+    console.warn(`[SearchTool] Brave başarısız: ${braveResult.error} — Tavily fallback deneniyor...`)
+  }
+
+  // 2) Tavily (fallback)
+  if (process.env.TAVILY_API_KEY) {
+    return await searchTavily(query, limit)
+  }
+
+  return { query, results: [], error: 'Arama API anahtarı bulunamadı. BRAVE_SEARCH_API_KEY veya TAVILY_API_KEY .env\'e ekleyin.' }
 }
 
 export function formatSearchResult(response: SearchToolResponse): string {
@@ -66,11 +133,12 @@ export function formatSearchResult(response: SearchToolResponse): string {
   }
 
   if (response.results.length === 0) {
-    return `🔍 "${response.query}" için Tavily sonuç bulamadı.`;
+    return `🔍 "${response.query}" için sonuç bulunamadı.`;
   }
 
+  const provider = response.provider ?? 'Web Arama'
   const lines = [
-    `🔍 Web Arama Sonuçları (Tavily AI): "${response.query}"`,
+    `🔍 Web Arama Sonuçları (${provider}): "${response.query}"`,
     `Bulunan: ${response.results.length} sonuç.`,
     ``,
     `⚠️ SİSTEM NOTU: Bu sonuçları doğrudan %100 doğru kabul etmeyin. Hedefin bilinen diğer bilgileriyle (email, username vb.) kesişen (cross-validate) sonuçlara odaklanın.`,
