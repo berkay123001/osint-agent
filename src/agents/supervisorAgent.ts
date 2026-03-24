@@ -65,11 +65,14 @@ const supervisorMetaTools: OpenAI.Chat.ChatCompletionTool[] = [
 
 async function supervisorExecuteTool(name: string, args: Record<string, string>): Promise<string> {
   if (name === 'ask_identity_agent') {
-    return await runIdentityAgent(args.query, args.context);
+    const r = await runIdentityAgent(args.query, args.context);
+    return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.`;
   } else if (name === 'ask_media_agent') {
-    return await runMediaAgent(args.query, args.context);
+    const r = await runMediaAgent(args.query, args.context);
+    return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.`;
   } else if (name === 'ask_academic_agent') {
-    return await runAcademicAgent(args.query, args.context);
+    const r = await runAcademicAgent(args.query, args.context);
+    return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.`;
   } else {
     // Normal araçlar (graf, search_web vs.) için ortak registry kullan
     return await executeTool(name, args);
@@ -103,7 +106,13 @@ Kendi Kullanabileceğin Temel Araçlar:
 
 Uzmanlardan gelen raporları değerlendir, analiz et ve kullanıcıya harika bir Markdown formatında (emojiler, listeler, tablolar kullanarak) özetleyerek sun.
 Asla doğrudan API/JSON dökümü gösterme. Cevabın net, okunabilir ve profesyonel olsun.
-ASLA BOŞTA BIRAKMA — her zaman bir yanıt üret.`
+ASLA BOŞTA BIRAKMA — her zaman bir yanıt üret.
+
+🔁 DÖNGÜ YASAĞI — KRİTİK:
+- Alt-ajanlar (ask_identity_agent, ask_media_agent, ask_academic_agent) yalnızca BİR KEZ çağrılır.
+- Ajan yanıt döndürdükten sonra — sonuç yetersiz görünse bile — TEKRAR aynı ajanı çağırma.
+- [AGENT_DONE] etiketi gördüğünde o araştırma kapanmıştır. Mevcut raporla kullanıcıya yanıt ver.
+- Başka bir konuyu araştırmak gerekiyorsa farklı bir alt-ajan veya kendi araçlarını kullan.`
 };
 
 function formatAgentOutput(text: string): string {

@@ -33,6 +33,11 @@ export async function runMediaAgent(query: string, context?: string): Promise<st
     { role: 'user', content: context ? `Context:\n${context}\n\nTask:\n${query}` : query }
   ];
   const result = await runAgentLoop(history, mediaAgentConfig);
-  console.log(chalk.green(`\n✅ MediaAgent Raporu Tamamlandı.`));
-  return result.finalResponse;
+  const toolSummary = Object.entries(result.toolsUsed)
+    .map(([tool, count]) => `${tool}×${count}`)
+    .join(', ');
+  console.log(chalk.green(`\n✅ MediaAgent Raporu Tamamlandı.`) +
+    chalk.gray(` [${result.toolCallCount} araç çağrısı: ${toolSummary || 'yok'}]`));
+  const meta = `\n\n---\n**[META] MediaAgent araç istatistikleri:** ${toolSummary || 'araç kullanılmadı'} (toplam: ${result.toolCallCount})`;
+  return result.finalResponse + meta;
 }

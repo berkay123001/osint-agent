@@ -27,6 +27,7 @@ export async function runAgentLoop(
 ): Promise<AgentResult> {
   let toolCallCount = 0;
   let emptyRetries = 0;
+  const toolsUsed: Record<string, number> = {};
   
   while (true) {
     const toolChoice: 'auto' | 'none' = toolCallCount >= MAX_TOOL_CALLS_PER_TURN ? 'none' : 'auto';
@@ -75,24 +76,27 @@ export async function runAgentLoop(
         
       return {
         finalResponse: finalText,
-        toolCallCount
+        toolCallCount,
+        toolsUsed,
       };
     }
 
     for (const toolCall of message.tool_calls) {
       if (toolCall.type !== 'function') continue;
       let result = '';
+      const toolName = toolCall.function.name;
       try {
         const args = JSON.parse(toolCall.function.arguments) as Record<string, string>;
-        result = await config.executeTool(toolCall.function.name, args);
+        result = await config.executeTool(toolName, args);
       } catch (error) {
-        result = `Tool hatası (${toolCall.function.name}): ${(error as Error).message}`;
+        result = `Tool hatası (${toolName}): ${(error as Error).message}`;
       }
       history.push({
         role: 'tool',
         tool_call_id: toolCall.id,
         content: normalizeToolContent(result),
       });
+      toolsUsed[toolName] = (toolsUsed[toolName] ?? 0) + 1;
       toolCallCount++;
     }
   }

@@ -15,4 +15,5 @@ export type Message = OpenAI.Chat.ChatCompletionMessageParam;
 export interface AgentResult {
   finalResponse: string;
   toolCallCount: number;
+  toolsUsed: Record<string, number>; // tool_name -> kaç kez çağrıldı
 }

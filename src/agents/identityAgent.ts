@@ -45,6 +45,11 @@ export async function runIdentityAgent(query: string, context?: string): Promise
     { role: 'user', content: context ? `Context:\n${context}\n\nTask:\n${query}` : query }
   ];
   const result = await runAgentLoop(history, identityAgentConfig);
-  console.log(chalk.green(`\n✅ IdentityAgent Raporu Tamamlandı.`));
-  return result.finalResponse;
+  const toolSummary = Object.entries(result.toolsUsed)
+    .map(([tool, count]) => `${tool}×${count}`)
+    .join(', ');
+  console.log(chalk.green(`\n✅ IdentityAgent Raporu Tamamlandı.`) +
+    chalk.gray(` [${result.toolCallCount} araç çağrısı: ${toolSummary || 'yok'}]`));
+  const meta = `\n\n---\n**[META] IdentityAgent araç istatistikleri:** ${toolSummary || 'araç kullanılmadı'} (toplam: ${result.toolCallCount})`;
+  return result.finalResponse + meta;
 }

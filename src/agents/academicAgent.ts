@@ -172,7 +172,17 @@ export async function runAcademicAgent(query: string, context?: string): Promise
     { role: 'user', content: context ? `Context:\n${context}\n\nAraştırma Görevi:\n${query}` : query }
   ];
   const result = await runAgentLoop(history, academicAgentConfig);
-  console.log(chalk.green(`\n✅ AcademicAgent Raporu Tamamlandı.`));
-  return result.finalResponse;
+  
+  // Gerçek kullanım istatistikleri — halüsinasyona karşı
+  const toolSummary = Object.entries(result.toolsUsed)
+    .map(([tool, count]) => `${tool}×${count}`)
+    .join(', ');
+  
+  console.log(chalk.green(`\n✅ AcademicAgent Raporu Tamamlandı.`) +
+    chalk.gray(` [${result.toolCallCount} araç çağrısı: ${toolSummary || 'yok'}]`));
+  
+  // Meta veriyi rapora ekle — Supervisor'ın özeleştiri sorusuna doğru yanıt verebilmesi için
+  const meta = `\n\n---\n**[META] AcademicAgent araç istatistikleri:** ${toolSummary || 'araç kullanılmadı'} (toplam: ${result.toolCallCount})`;
+  return result.finalResponse + meta;
 }
 
