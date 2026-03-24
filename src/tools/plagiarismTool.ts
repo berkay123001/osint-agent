@@ -36,12 +36,28 @@ export interface SimilarityMatch {
   type: 'exact' | 'paraphrase' | 'self_plagiarism' | 'citation_manipulation'
 }
 
+export interface OriginalityDimension {
+  score: number           // 0–1 arası (1 = tamamen özgün)
+  verdict: string         // insan okunabilir değerlendirme
+  evidence: string[]      // kanıtlar
+}
+
+export interface OriginalityReport {
+  temporalPriority: OriginalityDimension    // Aynı fikir daha önce yayınlandı mı?
+  conceptNovelty: OriginalityDimension      // Literatürde egemen mi, yeni mi?
+  journalCredibility: OriginalityDimension  // Dergi güvenilirliği (predatory risk)
+  citationPattern: OriginalityDimension     // Atıf manipülasyonu / self-citation loop
+  overallOriginality: 'high' | 'medium' | 'low' | 'suspect'
+  priorArtPapers: Publication[]             // Önceki sanat eserleri (prior art)
+}
+
 export interface PlagiarismReport {
   subject: string
   checkedAt: string
   inputPublication?: Publication
   matches: SimilarityMatch[]
   overallRisk: 'clean' | 'low' | 'medium' | 'high' | 'critical'
+  originality?: OriginalityReport
   neo4jSaved: boolean
   markdown: string
 }
@@ -301,6 +317,242 @@ function comparePaperSets(
   return matches.sort((a, b) => b.score - a.score).slice(0, 10)
 }
 
+// ─── Özgünlük Değerlendirmesi ─────────────────────────────────────────────────
+
+/**
+ * TF-IDF benzeri anahtar terim çıkarımı.
+ * Stop word'leri eler, en frekans terimlerini döndürür.
+ */
+function extractKeyTerms(text: string, topN = 10): string[] {
+  const stopWords = new Set([
+    'the','a','an','this','that','these','those','is','are','was','were',
+    'be','been','being','have','has','had','do','does','did','will','would',
+    'could','should','may','might','shall','can','need','dare','ought',
+    'of','in','to','for','on','with','at','by','from','up','about','into',
+    'through','during','before','after','above','below','between','out',
+    'and','but','or','nor','so','yet','both','either','neither','not',
+    'we','our','their','its','it','they','he','she','his','her','us','them',
+    'paper','study','work','method','approach','result','results','analysis',
+    'based','using','used','proposed','proposed','show','shows','shown',
+    'bir','bu','ve','ile','için','olan','de','da','ki','ne','bu','şu','o',
+  ])
+  const freq = new Map<string, number>()
+  text.toLowerCase()
+    .replace(/[^a-züğışçöa-z\s]/gi, ' ')
+    .split(/\s+/)
+    .filter(t => t.length > 3 && !stopWords.has(t))
+    .forEach(t => freq.set(t, (freq.get(t) ?? 0) + 1))
+
+  return [...freq.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, topN)
+    .map(([term]) => term)
+}
+
+/**
+ * Semantic Scholar'dan bir makalenin citation count ve prior art tarihini çeker.
+ */
+async function fetchPaperDetails(doi: string): Promise<{ citationCount: number; year?: number } | null> {
+  try {
+    const url = `https://api.semanticscholar.org/graph/v1/paper/DOI:${encodeURIComponent(doi)}?fields=citationCount,year`
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'OSINT-Academic-Checker/1.0' },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!resp.ok) return null
+    const data = await resp.json()
+    return { citationCount: data.citationCount ?? 0, year: data.year }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * DOAJ (Directory of Open Access Journals) üzerinden dergi güvenilirliği kontrolü.
+ * DOAJ'da olan dergiler peer-review sürecine tabidir.
+ */
+async function checkJournalInDOAJ(journalName: string): Promise<boolean> {
+  try {
+    const url = `https://doaj.org/api/search/journals/${encodeURIComponent(journalName)}?pageSize=1`
+    const resp = await fetch(url, { signal: AbortSignal.timeout(6000) })
+    if (!resp.ok) return false
+    const data = await resp.json()
+    return (data?.total ?? 0) > 0
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Makale başlığı ile Beall's list üstü arama (web tabanlı heuristic).
+ * Tam Beall's list API olmadığı için web araması ile sinyal üretir.
+ */
+async function checkPredatoryJournalSignals(journalName: string): Promise<{ isPredatory: boolean; signals: string[] }> {
+  const signals: string[] = []
+  try {
+    const searchResult = await searchWeb(`"${journalName}" predatory journal OR "beall's list" OR "fake journal"`, 5)
+    const hits = searchResult.results.filter(r =>
+      r.snippet.toLowerCase().includes('predatory') ||
+      r.snippet.toLowerCase().includes('beall') ||
+      r.snippet.toLowerCase().includes('fake') ||
+      r.title.toLowerCase().includes('predatory')
+    )
+    if (hits.length > 0) {
+      hits.forEach(h => signals.push(`${h.title}: ${h.url}`))
+    }
+    // Kırmızı bayrak: dergi adında "International Journal of..." + çok genel alan + çok kısa review süresi iddiası
+    if (/international journal of (advanced|novel|innovative|emerging)/i.test(journalName)) {
+      signals.push('Dergi adı predatory dergiler için yaygın kalıpla eşleşiyor')
+    }
+    return { isPredatory: hits.length >= 2, signals }
+  } catch {
+    return { isPredatory: false, signals: [] }
+  }
+}
+
+async function assessOriginality(
+  inputPub: Publication,
+  text: string,
+  comparePool: Publication[],
+): Promise<OriginalityReport> {
+  const keyTerms = extractKeyTerms(text)
+  const inputYear = inputPub.year ?? new Date().getFullYear()
+
+  // ── 1. Temporal Priority (Zaman önceliği) ────────────────────────────────────
+  const priorArt = comparePool.filter(p => p.year && p.year < inputYear)
+  const priorArtWithSameConcepts = priorArt.filter(p => {
+    const pText = [p.title, p.abstract ?? ''].join(' ').toLowerCase()
+    const matches = keyTerms.filter(t => pText.includes(t))
+    return matches.length >= Math.min(3, keyTerms.length * 0.3)
+  })
+
+  const temporalScore = priorArtWithSameConcepts.length === 0
+    ? 1.0
+    : Math.max(0, 1 - priorArtWithSameConcepts.length * 0.15)
+
+  const temporalPriority: OriginalityDimension = {
+    score: temporalScore,
+    verdict: priorArtWithSameConcepts.length === 0
+      ? 'Aynı anahtar kavramları kullanan önceki yayın bulunamadı.'
+      : `${priorArtWithSameConcepts.length} önceki çalışma bazı benzer kavramlara değiniyor.`,
+    evidence: priorArtWithSameConcepts.slice(0, 5).map(p =>
+      `${p.title} (${p.year}) — ${p.url ?? p.doi ?? 'URL yok'}`
+    ),
+  }
+
+  // ── 2. Concept Novelty (Kavramsal yenilik) ────────────────────────────────────
+  const corpusText = comparePool.map(p => [p.title, p.abstract ?? ''].join(' ')).join(' ')
+  const corpusTermFreq = new Map<string, number>()
+  corpusText.toLowerCase().split(/\s+/).forEach(t => {
+    if (keyTerms.includes(t)) corpusTermFreq.set(t, (corpusTermFreq.get(t) ?? 0) + 1)
+  })
+  const dominatedTerms = keyTerms.filter(t => (corpusTermFreq.get(t) ?? 0) > 3)
+  const novelTerms = keyTerms.filter(t => (corpusTermFreq.get(t) ?? 0) <= 1)
+
+  const conceptScore = novelTerms.length / Math.max(keyTerms.length, 1)
+  const conceptNovelty: OriginalityDimension = {
+    score: conceptScore,
+    verdict: conceptScore > 0.6
+      ? `Anahtar terimlerin %${(conceptScore * 100).toFixed(0)}'i literatürde nadir — yüksek kavramsal özgünlük.`
+      : `Anahtar terimlerin %${((1 - conceptScore) * 100).toFixed(0)}'i literatürde zaten yaygın.`,
+    evidence: [
+      novelTerms.length > 0 ? `Özgün terimler: ${novelTerms.slice(0, 5).join(', ')}` : 'Özgün terim bulunamadı',
+      dominatedTerms.length > 0 ? `Yaygın terimler: ${dominatedTerms.slice(0, 5).join(', ')}` : '',
+    ].filter(Boolean),
+  }
+
+  // ── 3. Journal Credibility (Dergi güvenilirliği) ──────────────────────────────
+  let journalScore = 0.5 // bilinmiyorsa nötr
+  const journalEvidence: string[] = []
+  let journalVerdict = 'Dergi bilgisi verilmedi — değerlendirilemedi.'
+
+  if (inputPub.journal) {
+    const [inDOAJ, predatoryCheck] = await Promise.all([
+      checkJournalInDOAJ(inputPub.journal),
+      checkPredatoryJournalSignals(inputPub.journal),
+    ])
+    if (inDOAJ) {
+      journalScore = 0.9
+      journalEvidence.push(`✅ DOAJ'da kayıtlı — peer-review onaylı dergi`)
+      journalVerdict = `"${inputPub.journal}" DOAJ listesinde. Güvenilir.`
+    } else if (predatoryCheck.isPredatory) {
+      journalScore = 0.1
+      journalEvidence.push(...predatoryCheck.signals)
+      journalVerdict = `⚠️ "${inputPub.journal}" predatory dergi sinyalleri taşıyor!`
+    } else {
+      journalScore = 0.5
+      journalEvidence.push('DOAJ listesinde bulunamadı — manuel doğrulama önerilir')
+      journalVerdict = `"${inputPub.journal}" DOAJ'da değil. Bağımsız doğrulama gerekebilir.`
+      if (predatoryCheck.signals.length > 0) {
+        journalEvidence.push(...predatoryCheck.signals)
+      }
+    }
+  }
+
+  const journalCredibility: OriginalityDimension = {
+    score: journalScore,
+    verdict: journalVerdict,
+    evidence: journalEvidence,
+  }
+
+  // ── 4. Citation Pattern (Atıf pattern analizi) ────────────────────────────────
+  let citationScore = 0.8 // varsayılan iyi
+  const citationEvidence: string[] = []
+  let citationVerdict = 'Atıf verisi analiz için yeterli değil.'
+
+  if (inputPub.doi) {
+    const details = await fetchPaperDetails(inputPub.doi)
+    if (details) {
+      const ageYears = new Date().getFullYear() - (details.year ?? inputYear)
+      const citPerYear = ageYears > 0 ? details.citationCount / ageYears : details.citationCount
+      citationEvidence.push(`${details.citationCount} atıf (${ageYears} yılda, yılda ~${citPerYear.toFixed(1)})`)
+
+      if (details.citationCount === 0 && ageYears >= 3) {
+        citationScore = 0.4
+        citationVerdict = '3+ yıllık makale hiç atıf almamış — etkisi sınırlı olabilir.'
+      } else {
+        citationVerdict = `${details.citationCount} atıf alınmış — etki mevcut.`
+      }
+    }
+  }
+
+  // Self-citation oranı: yazarın kendi makalelerine oranla dış atıf
+  const authorPubs = comparePool.filter(p =>
+    p.authors.some(a =>
+      inputPub.authors.some(ia =>
+        ia.toLowerCase().split(' ').pop() === a.toLowerCase().split(' ').pop()
+      )
+    )
+  )
+  if (authorPubs.length > 5) {
+    citationScore = Math.max(0.3, citationScore - 0.2)
+    citationEvidence.push(`Aynı yazarın ${authorPubs.length} makalesi karşılaştırma havuzunda — self-citation loop riski`)
+    citationVerdict += ` Self-citation oranı yüksek olabilir.`
+  }
+
+  const citationPattern: OriginalityDimension = {
+    score: citationScore,
+    verdict: citationVerdict,
+    evidence: citationEvidence,
+  }
+
+  // ── Genel Özgünlük Skoru ──────────────────────────────────────────────────────
+  const avgScore = (temporalScore + conceptScore + journalScore + citationScore) / 4
+  const overallOriginality: OriginalityReport['overallOriginality'] =
+    avgScore >= 0.7 ? 'high' :
+    avgScore >= 0.5 ? 'medium' :
+    avgScore >= 0.3 ? 'low' : 'suspect'
+
+  return {
+    temporalPriority,
+    conceptNovelty,
+    journalCredibility,
+    citationPattern,
+    overallOriginality,
+    priorArtPapers: priorArtWithSameConcepts.slice(0, 5),
+  }
+}
+
 // ─── Risk hesaplama ───────────────────────────────────────────────────────────
 
 function calcRisk(matches: SimilarityMatch[]): PlagiarismReport['overallRisk'] {
@@ -379,6 +631,58 @@ function buildMarkdown(report: PlagiarismReport): string {
     )
   }
 
+  if (report.originality) {
+    const o = report.originality
+    const origIcon: Record<OriginalityReport['overallOriginality'], string> = {
+      high: '🟢', medium: '🟡', low: '🔴', suspect: '🚨',
+    }
+    lines.push(
+      ``,
+      `---`,
+      `# 🔭 Özgünlük Değerlendirmesi`,
+      `**Genel Özgünlük:** ${origIcon[o.overallOriginality]} ${o.overallOriginality.toUpperCase()}`,
+      ``,
+      `## ⏳ Zaman Önceliği (Temporal Priority)`,
+      `**Skor:** ${(o.temporalPriority.score * 100).toFixed(0)}%  `,
+      `**Değerlendirme:** ${o.temporalPriority.verdict}`,
+      ...(o.temporalPriority.evidence.length > 0
+        ? ['**Önceki Çalışmalar:**', ...o.temporalPriority.evidence.map(e => `- ${e}`)]
+        : []),
+      ``,
+      `## 💡 Kavramsal Yenilik (Concept Novelty)`,
+      `**Skor:** ${(o.conceptNovelty.score * 100).toFixed(0)}%  `,
+      `**Değerlendirme:** ${o.conceptNovelty.verdict}`,
+      ...(o.conceptNovelty.evidence.length > 0
+        ? o.conceptNovelty.evidence.map(e => `- ${e}`)
+        : []),
+      ``,
+      `## 📰 Dergi Güvenilirliği (Journal Credibility)`,
+      `**Skor:** ${(o.journalCredibility.score * 100).toFixed(0)}%  `,
+      `**Değerlendirme:** ${o.journalCredibility.verdict}`,
+      ...(o.journalCredibility.evidence.length > 0
+        ? o.journalCredibility.evidence.map(e => `- ${e}`)
+        : []),
+      ``,
+      `## 🔗 Atıf Pattern Analizi`,
+      `**Skor:** ${(o.citationPattern.score * 100).toFixed(0)}%  `,
+      `**Değerlendirme:** ${o.citationPattern.verdict}`,
+      ...(o.citationPattern.evidence.length > 0
+        ? o.citationPattern.evidence.map(e => `- ${e}`)
+        : []),
+    )
+
+    if (o.priorArtPapers.length > 0) {
+      lines.push(``, `## 📚 Prior Art (Önceki Sanat Eserleri)`)
+      o.priorArtPapers.forEach((p, i) => {
+        lines.push(
+          `${i + 1}. **${p.title}** (${p.year ?? '?'})`,
+          `   - Yazarlar: ${p.authors.join(', ') || 'Bilinmiyor'}`,
+          p.url ? `   - URL: ${p.url}` : '',
+        )
+      })
+    }
+  }
+
   return lines.filter(l => l !== undefined).join('\n')
 }
 
@@ -395,10 +699,17 @@ export interface PlagiarismInput {
   doi?: string
   /** Wording araması için ek bağlam */
   context?: string
+  /**
+   * Analiz modu:
+   * - 'plagiarism': Sadece metin kopyası / intihal tespiti (varsayılan)
+   * - 'originality': Sadece özgünlük değerlendirmesi (zaman önceliği, kavramsal yenilik, dergi güvenilirliği)
+   * - 'full': Her ikisi birden
+   */
+  mode?: 'plagiarism' | 'originality' | 'full'
 }
 
 export async function checkPlagiarism(input: PlagiarismInput): Promise<PlagiarismReport> {
-  const { text, author, title, doi } = input
+  const { text, author, title, doi, mode = 'plagiarism' } = input
   const subject = title ?? doi ?? (author ? `${author} makaleleri` : 'İsimsiz metin')
 
   // 1. Parmak izi
@@ -425,48 +736,51 @@ export async function checkPlagiarism(input: PlagiarismInput): Promise<Plagiaris
   // 3. Karşılaştırma havuzu oluştur
   const comparePool: Publication[] = []
 
-  // 3a. CrossRef'ten benzer makaleler
   const crossRefQuery = [title, author].filter(Boolean).join(' ')
   if (crossRefQuery) {
     const cr = await fetchCrossRef(crossRefQuery)
     comparePool.push(...cr)
   }
 
-  // 3b. Semantic Scholar'dan benzer makaleler
   const s2Query = [title, author, text.slice(0, 200)].filter(Boolean).join(' ')
   const s2results = await fetchSemanticScholar(s2Query.slice(0, 300))
   comparePool.push(...s2results)
 
-  // 3c. Neo4j hafızasındaki mevcut yayınlar (daha önce eklenen)
   if (author) {
     const graphPubs = await queryExistingPublications(author).catch(() => [])
     comparePool.push(...graphPubs)
   }
 
-  // 4. Karşılaştırma yapılandırılmış
-  const apiMatches = inputPub
-    ? comparePaperSets(inputPub, comparePool, inputShingles)
-    : []
+  // 4. Mod'a göre analiz
+  let allMatches: SimilarityMatch[] = []
 
-  // 5. Web exact-phrase araması (pasaj bazlı)
-  const webMatches = passages.length > 0
-    ? await detectWebMatches(passages, inputShingles)
-    : []
+  if (mode === 'plagiarism' || mode === 'full') {
+    const apiMatches = inputPub
+      ? comparePaperSets(inputPub, comparePool, inputShingles)
+      : []
+    const webMatches = passages.length > 0
+      ? await detectWebMatches(passages, inputShingles)
+      : []
 
-  // 6. Tüm eşleşmeleri birleştir — URL'ye göre deduplicate
-  const allMatchesMap = new Map<string, SimilarityMatch>()
-  for (const m of [...apiMatches, ...webMatches]) {
-    const key = m.evidence
-    const existing = allMatchesMap.get(key)
-    if (!existing || m.score > existing.score) {
-      allMatchesMap.set(key, m)
+    const allMatchesMap = new Map<string, SimilarityMatch>()
+    for (const m of [...apiMatches, ...webMatches]) {
+      const existing = allMatchesMap.get(m.evidence)
+      if (!existing || m.score > existing.score) {
+        allMatchesMap.set(m.evidence, m)
+      }
     }
+    allMatches = [...allMatchesMap.values()]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 15)
   }
-  const allMatches = [...allMatchesMap.values()]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 15)
 
-  // 7. Neo4j'e kaydet
+  // 5. Özgünlük değerlendirmesi (mode: originality | full)
+  let originality: OriginalityReport | undefined
+  if ((mode === 'originality' || mode === 'full') && inputPub) {
+    originality = await assessOriginality(inputPub, text, comparePool)
+  }
+
+  // 6. Neo4j'e kaydet
   let neo4jSaved = false
   try {
     const inputNodeId = inputPub
@@ -488,18 +802,35 @@ export async function checkPlagiarism(input: PlagiarismInput): Promise<Plagiaris
         )
       }
     }
+    // Özgünlük analizi: prior art paper'ları da grafa ekle
+    if (originality && inputNodeId) {
+      for (const priorPub of originality.priorArtPapers) {
+        const priorNodeId = await upsertPublicationNode({
+          ...priorPub,
+          authors: priorPub.authors.length > 0 ? priorPub.authors : ['Bilinmiyor'],
+        })
+        await createSimilarityRelation(
+          priorNodeId,
+          inputNodeId,
+          originality.temporalPriority.score < 0.7 ? 0.4 : 0.2,
+          'prior_art_temporal',
+          'citation_manipulation',
+        )
+      }
+    }
     neo4jSaved = true
   } catch {
     // Neo4j bağlantısı yoksa sessizce devam et
   }
 
-  // 8. Rapor
+  // 7. Rapor
   const report: PlagiarismReport = {
     subject,
     checkedAt: new Date().toISOString(),
     inputPublication: inputPub,
     matches: allMatches,
     overallRisk: calcRisk(allMatches),
+    originality,
     neo4jSaved,
     markdown: '',
   }

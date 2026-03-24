@@ -478,11 +478,12 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'check_plagiarism',
       description:
-        'Akademik metin, makale bölümü veya abstract üzerinde intihal/şatekarlık analizi yapar. CrossRef ve Semantic Scholar API\'lerinden benzer yayınları çeker, web\'de exact phrase araması yapar, Jaccard benzerlik skoru hesaplar. Bulgular Neo4j\'e (:Publication)-[:SIMILAR_TO {score}]->(:Publication) ilişkisi olarak kaydedilir. "Bu makale intihal mi?", "Bu yazarın self-plagiarism var mı?", "Bu pasaj başka bir yerde yayınlandı mı?" sorularında kullan.',
+        'Akademik metin, makale bölümü veya abstract üzerinde intihal/şatekarlık analizi ve/veya özgünlük değerlendirmesi yapar.\n\nmod seçenekleri:\n- "plagiarism" (varsayılan): Metin kopyası tespiti — Jaccard benzerlik, CrossRef/Semantic Scholar karşılaştırması, web exact-phrase arama.\n- "originality": Özgünlük değerlendirmesi — zaman önceliği (prior art), kavramsal yenilik (TF-IDF), dergi güvenilirliği (DOAJ/predatory kontrolü), atıf pattern analizi.\n- "full": İntihal + özgünlük birlikte.\n\nBulgular Neo4j\'e (:Publication)-[:SIMILAR_TO {score}]->(:Publication) olarak kaydedilir. "Bu makale intihal mi?", "Bu makale özgün mü?", "Bu dergi güvenilir mi?", "Bu yazar self-plagiarism yapıyor mu?" sorularında kullan.',
       parameters: {
         type: 'object',
         properties: {
           text: { type: 'string', description: 'İncelenecek metin (abstract, makale bölümü veya tam metin)' },
+          mode: { type: 'string', enum: ['plagiarism', 'originality', 'full'], description: 'Analiz modu. Varsayılan: "plagiarism". Özgünlük için "originality", her ikisi için "full".' },
           author: { type: 'string', description: 'Yazar adı soyadı — self-plagiarism tespiti için (opsiyonel)' },
           title: { type: 'string', description: 'Makalenin başlığı — CrossRef metadata araması için (opsiyonel)' },
           doi: { type: 'string', description: 'Makalenin DOI\'si — metadata araması için (opsiyonel, Örn: "10.1016/j.jss.2023.111234")' },
@@ -731,6 +732,7 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       try {
         const report = await checkPlagiarism({
           text: args.text,
+          mode: (args.mode as 'plagiarism' | 'originality' | 'full') ?? 'plagiarism',
           author: args.author,
           title: args.title,
           doi: args.doi,
