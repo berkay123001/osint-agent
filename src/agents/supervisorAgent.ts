@@ -8,7 +8,8 @@ import chalk from 'chalk';
 
 const SUPERVISOR_TOOLS = [
   'query_graph', 'list_graph_nodes', 'graph_stats', 'clear_graph', 
-  'search_web', 'web_fetch', 'scrape_profile', 'remove_false_positive'
+  'search_web', 'web_fetch', 'scrape_profile', 'remove_false_positive',
+  'search_academic_papers',
 ];
 
 const supervisorNativeTools = tools.filter((t: any) => t.type === 'function' && SUPERVISOR_TOOLS.includes(t.function.name));

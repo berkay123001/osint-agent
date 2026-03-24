@@ -150,13 +150,19 @@ export async function verifyProfile(
 
     let isAvatarMatch = false;
     if (known.avatarHash && scrapeResult.avatarUrl) {
-      const scrapedAvatarHash = await fetchAndHashImage(scrapeResult.avatarUrl);
-      if (scrapedAvatarHash) {
-        const distance = calculateHammingDistance(known.avatarHash, scrapedAvatarHash);
-        // Distance 10'dan küçükse (maksimum 64), aynı resmin farklı boyut/sıkıştırılmış hali kabul edilir
-        if (distance <= 10) {
-          isAvatarMatch = true;
-          matches.push(`avatar: Görsel Eşleşmesi (Mesafe: ${distance}/64)`);
+      // Harf/identicon tabanlı otomatik avatarları atla (false positive üretir)
+      const isGeneratedAvatar = /\/identicon\/|ui-avatars\.com|avatars\.githubusercontent\.com.*\.png\?/.test(scrapeResult.avatarUrl);
+      if (!isGeneratedAvatar) {
+        const scrapedAvatarHash = await fetchAndHashImage(scrapeResult.avatarUrl);
+        if (scrapedAvatarHash) {
+          const distance = calculateHammingDistance(known.avatarHash, scrapedAvatarHash);
+          // ≤6: güçlü eşleşme (aynı fotoğrafın farklı boyutu), 7-10: belirsiz (harf avatarı çakışabilir)
+          if (distance <= 6) {
+            isAvatarMatch = true;
+            matches.push(`avatar: Görsel Eşleşmesi (Mesafe: ${distance}/64)`);
+          } else if (distance <= 10) {
+            matches.push(`avatar_weak: Kısmi Benzerlik (Mesafe: ${distance}/64, harf avatarı olabilir)`);
+          }
         }
       }
     } else if (known.avatarUrl && scrapeResult.avatarUrl && known.avatarUrl === scrapeResult.avatarUrl) {
@@ -165,11 +171,18 @@ export async function verifyProfile(
     }
 
     if (matches.length > 0 || isAvatarMatch) {
+      // Avatar eşleşmesi tek başına HIGH vermez — başka somut kanıt da gerekir
+      const hasNonAvatarEvidence = matches.some(m => !m.startsWith('avatar'));
+      const confidence: 'high' | 'medium' | 'low' = hasNonAvatarEvidence && matches.length > 1
+        ? 'high'
+        : hasNonAvatarEvidence
+          ? 'medium'
+          : 'low';
       return {
         platform,
         url,
-        verified: true,
-        confidence: isAvatarMatch ? 'high' : (matches.length > 1 ? 'high' : 'medium'),
+        verified: hasNonAvatarEvidence,  // avatar tek başına doğrulama sayılmaz
+        confidence,
         matchedIndicators: matches,
         scrapedBio: bio,
       }

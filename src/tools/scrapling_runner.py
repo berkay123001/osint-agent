@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pyright: reportMissingImports=false
 """
 scrapling_runner.py — Scrapling tabanlı stealth web scraper
 ──────────────────────────────────────────────────────────────

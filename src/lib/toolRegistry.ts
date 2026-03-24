@@ -26,6 +26,7 @@ import { compareImages } from '../tools/phashCompareTool.js';
 import { writeFactCheckToGraph } from './neo4jFactCheck.js';
 import { searchReverseImage, formatReverseImageResult } from '../tools/reverseImageTool.js';
 import { searchPerson, formatPersonSearchResult } from '../tools/personSearchTool.js'
+import { searchAcademicPapers, formatAcademicResult, writeAcademicPapersToGraph } from '../tools/academicSearchTool.js'
 import os from 'os'
 import { writeFile, unlink } from 'fs/promises'
 
@@ -152,6 +153,22 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
           confirm: { type: 'boolean', description: 'Silme işlemini onaylamak için true gönder' },
         },
         required: ['confirm'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_academic_papers',
+      description: 'arXiv üzerinden güncel akademik makaleleri arar. "LLM RL eğitimi", "transformer mimarisi" gibi araştırma konuları için kullan. Sonuçları otomatik olarak Neo4j graf veritabanına kaydeder (Paper→Author, Paper→Topic).',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Araştırma sorgusu (Örn: "reinforcement learning large language models 2024")' },
+          maxResults: { type: 'string', description: 'Kaç makale getirilsin? (varsayılan: 10, max: 50)' },
+          sortBy: { type: 'string', description: '"submittedDate" (en yeni) veya "relevance" (en alakalı). Varsayılan: submittedDate.' },
+        },
+        required: ['query'],
       },
     },
   },
@@ -623,6 +640,27 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
         relationshipType: args.relationshipType
       });
       result = JSON.stringify(res);
+    }
+    else if (name === 'search_academic_papers') {
+      const maxResults = parseInt(args.maxResults ?? '10') || 10
+      const sortBy = (args.sortBy as 'relevance' | 'submittedDate' | 'lastUpdatedDate') ?? 'submittedDate'
+      console.log(chalk.cyan(`\n   🔬 Akademik Araştırma (arXiv): `) + chalk.yellow.bold(args.query))
+      const searchResult = await searchAcademicPapers(args.query, maxResults, sortBy)
+      result = formatAcademicResult(searchResult)
+      // Graf'a yaz
+      try {
+        const { getDriver } = await import('./neo4j.js')
+        const driver = getDriver()
+        const neo4jWrite = async (query: string, params: Record<string, unknown>) => {
+          const session = driver.session()
+          try { await session.run(query, params) } finally { await session.close() }
+        }
+        const stats = await writeAcademicPapersToGraph(searchResult.papers, args.query, neo4jWrite)
+        console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.papersCreated} makale, ${stats.authorsLinked} yazar bağlantısı`))
+        result += `\n\n💾 Neo4j Graf: ${stats.papersCreated} Paper node, ${stats.authorsLinked} AUTHORED_BY ilişkisi oluşturuldu.`
+      } catch {
+        console.log(chalk.gray(`   ⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)`))
+      }
     }
     else result = `Unknown tool: ${name}`;
 
