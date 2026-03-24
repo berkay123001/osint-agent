@@ -1,4 +1,15 @@
 import { extractMetadataFromUrl, formatMetadata } from './metadataTool.js'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
+import * as path from 'path'
+import { fileURLToPath } from 'url'
+
+const execFileAsync = promisify(execFile)
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+// Scrapling conda ortamındaki Python executable
+const SCRAPLING_PYTHON = '/home/berkayhsrt/anaconda3/envs/scrapling/bin/python'
+const SCRAPLING_RUNNER = path.join(__dirname, 'scrapling_runner.py')
 
 /**
  * Firecrawl tabanlı profil scraping tool.
@@ -147,6 +158,72 @@ async function fallbackPuppeteerScrape(url: string): Promise<ScrapeResult> {
       metadataAlerts: await processMetadataForLinks(uniqueLinks),
     };
   } catch (err: any) {
+    console.log(`[Scrape] Puppeteer başarısız (${(err as Error).message}), Scrapling kullanılıyor...`)
+    return await fallbackScraplingFetch(url)
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+  }
+}
+
+async function fallbackScraplingFetch(url: string): Promise<ScrapeResult> {
+  try {
+    // Twitter/X ve Instagram için --dynamic (JS rendering), diğerleri için --stealth
+    const mode = (url.includes('twitter.com') || url.includes('x.com') || url.includes('instagram.com'))
+      ? '--dynamic'
+      : '--stealth'
+
+    console.log(`[Scrape] Scrapling (${mode}) kullanılıyor: ${url}`)
+    const { stdout, stderr } = await execFileAsync(
+      SCRAPLING_PYTHON,
+      [SCRAPLING_RUNNER, url, mode],
+      { timeout: 60000 }
+    )
+
+    if (stderr && stderr.trim()) {
+      console.warn(`[Scrapling] stderr: ${stderr.slice(0, 200)}`)
+    }
+
+    const result = JSON.parse(stdout.trim()) as {
+      markdown: string
+      title: string
+      links: string[]
+      emails: string[]
+      cryptoWallets: string[]
+      usernameHints: string[]
+      avatarUrl?: string
+      status: number
+      error?: string
+    }
+
+    if (result.error) {
+      return {
+        url,
+        markdown: '',
+        title: '',
+        description: '',
+        links: [],
+        emails: [],
+        cryptoWallets: [],
+        usernameHints: [],
+        error: `Scrapling Error: ${result.error}`,
+      }
+    }
+
+    return {
+      url,
+      markdown: result.markdown.slice(0, 4000),
+      title: result.title,
+      description: 'Scraped via Scrapling StealthyFetcher/DynamicFetcher (3rd fallback)',
+      links: result.links.slice(0, 30),
+      emails: result.emails,
+      cryptoWallets: result.cryptoWallets,
+      usernameHints: result.usernameHints,
+      avatarUrl: result.avatarUrl,
+      metadataAlerts: await processMetadataForLinks(result.links),
+    }
+  } catch (err: any) {
     return {
       url,
       markdown: '',
@@ -156,12 +233,7 @@ async function fallbackPuppeteerScrape(url: string): Promise<ScrapeResult> {
       emails: [],
       cryptoWallets: [],
       usernameHints: [],
-      avatarUrl: undefined,
-      error: `Puppeteer Fallback Error: ${err.message}`,
-    };
-  } finally {
-    if (browser) {
-      await browser.close().catch(() => {});
+      error: `Scrapling Fallback Error: ${(err as Error).message}`,
     }
   }
 }
