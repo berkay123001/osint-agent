@@ -28,6 +28,7 @@ import { searchReverseImage, formatReverseImageResult } from '../tools/reverseIm
 import { searchPerson, formatPersonSearchResult } from '../tools/personSearchTool.js'
 import { searchAcademicPapers, formatAcademicResult, writeAcademicPapersToGraph, searchAuthorPapers, formatAuthorResult } from '../tools/academicSearchTool.js'
 import { generateOsintReport } from '../tools/reportTool.js'
+import { checkPlagiarism } from '../tools/plagiarismTool.js'
 import os from 'os'
 import { writeFile, unlink } from 'fs/promises'
 
@@ -475,6 +476,24 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'check_plagiarism',
+      description:
+        'Akademik metin, makale bölümü veya abstract üzerinde intihal/şatekarlık analizi yapar. CrossRef ve Semantic Scholar API\'lerinden benzer yayınları çeker, web\'de exact phrase araması yapar, Jaccard benzerlik skoru hesaplar. Bulgular Neo4j\'e (:Publication)-[:SIMILAR_TO {score}]->(:Publication) ilişkisi olarak kaydedilir. "Bu makale intihal mi?", "Bu yazarın self-plagiarism var mı?", "Bu pasaj başka bir yerde yayınlandı mı?" sorularında kullan.',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: 'İncelenecek metin (abstract, makale bölümü veya tam metin)' },
+          author: { type: 'string', description: 'Yazar adı soyadı — self-plagiarism tespiti için (opsiyonel)' },
+          title: { type: 'string', description: 'Makalenin başlığı — CrossRef metadata araması için (opsiyonel)' },
+          doi: { type: 'string', description: 'Makalenin DOI\'si — metadata araması için (opsiyonel, Örn: "10.1016/j.jss.2023.111234")' },
+        },
+        required: ['text'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'generate_report',
       description:
         'Araştırma tamamlandıktan sonra tüm bulguları yapılandırılmış Markdown raporu olarak dosyaya kaydeder.\n\nreportType seçenekleri:\n- "osint" (varsayılan): Kişi/username araştırması — Neo4j grafından profil/email/sızıntı/platform verisini çeker.\n- "academic": Makale/konu araştırması — sadece additionalFindings içeriğini kullanır, Neo4j\'e bakmaz. AcademicAgent raporu bittikten sonra kullan.\n- "factcheck": Haber/görsel doğrulama — MediaAgent raporu bittikten sonra kullan.\n\nKullanıcı "rapor oluştur" / "rapor ver" / "kaydet" dediğinde ya da bir alt-ajan tamamlandığında HEMEN çağır.',
@@ -704,6 +723,25 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
         const msg = (e as Error).message
         console.log(chalk.red(`   ❌ Rapor hatası: ${msg}`))
         result = `❌ Rapor oluşturma hatası: ${msg}`
+      }
+    }
+    else if (name === 'check_plagiarism') {
+      const label = args.title ?? args.doi ?? args.author ?? 'metin'
+      console.log(chalk.cyan(`\n   🔬 İntihal Analizi: `) + chalk.yellow.bold(label))
+      try {
+        const report = await checkPlagiarism({
+          text: args.text,
+          author: args.author,
+          title: args.title,
+          doi: args.doi,
+        })
+        const riskEmoji = { clean: '🟢', low: '🔵', medium: '🟡', high: '🔴', critical: '🚨' }[report.overallRisk]
+        console.log(chalk.green(`   ✅ Analiz tamamlandı: `) + chalk.yellow(`${riskEmoji} ${report.overallRisk.toUpperCase()} — ${report.matches.length} eşleşme`))
+        result = report.markdown
+      } catch (e) {
+        const msg = (e as Error).message
+        console.log(chalk.red(`   ❌ İntihal analizi hatası: ${msg}`))
+        result = `❌ İntihal analizi hatası: ${msg}`
       }
     }
     else if (name === 'search_academic_papers') {

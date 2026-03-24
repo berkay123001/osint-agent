@@ -6,6 +6,7 @@ import chalk from 'chalk';
 const ACADEMIC_TOOLS = [
   'search_researcher_papers', // Semantic Scholar Author API — araştırmacı profili ve tüm makale listesi
   'search_academic_papers',   // arXiv API — konu bazlı makale arama (au: prefix desteği dahil)
+  'check_plagiarism',         // İntihal/şatekarlık analizi — benzerlik skoru + Neo4j graf kaydı
   'search_web',               // ResearchGate, DergiPark, ORCID, üniversite sayfası, web dork
   'web_fetch',                // ar5iv tam metin, arxiv.org/abs, DOI sayfası, journal sayfası
   'scrape_profile',           // üniversite profil sayfaları, kişisel lab sayfası
