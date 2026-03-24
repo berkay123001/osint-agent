@@ -84,17 +84,19 @@ def scrape(url: str, mode: str, css_selector: str | None) -> dict:
             pass
 
         # CSS selector ile hedefli içerik veya body metni
+        # 50K karakter — akademik makaleler için yeterli (model 1M context destekliyor)
+        MAX_TEXT = 50000
         if css_selector:
             try:
                 elements = page.css(css_selector)
-                text = " ".join(el.get_all_text(separator="\n") for el in elements)[:6000]
+                text = " ".join(el.get_all_text(separator="\n") for el in elements)[:MAX_TEXT]
             except Exception:
-                text = page.get_all_text(separator="\n")[:6000] if hasattr(page, "get_all_text") else str(page.html_content or "")[:6000]
+                text = page.get_all_text(separator="\n")[:MAX_TEXT] if hasattr(page, "get_all_text") else str(page.html_content or "")[:MAX_TEXT]
         else:
             try:
-                text = page.get_all_text(separator="\n")[:6000]
+                text = page.get_all_text(separator="\n")[:MAX_TEXT]
             except Exception:
-                text = str(getattr(page, 'html_content', '') or "")[:6000]
+                text = str(getattr(page, 'html_content', '') or "")[:MAX_TEXT]
 
         # Linkler
         links = []

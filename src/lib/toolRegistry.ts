@@ -789,7 +789,8 @@ async function runWebFetch(url: string): Promise<string> {
 
   console.log(chalk.green(`   ✅ ${result.contentType} (HTTP ${result.statusCode})`))
   if (result.textContent) {
-    return result.textContent.slice(0, 5000)
+    // 50K karakter — ar5iv/akademik makaleler için yeterli (model 1M context destekliyor)
+    return result.textContent.slice(0, 50000)
   }
   return `Binary dosya indirildi: ${result.savedTo} (${result.contentType})`
 }
