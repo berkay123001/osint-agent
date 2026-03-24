@@ -26,7 +26,7 @@ import { compareImages } from '../tools/phashCompareTool.js';
 import { writeFactCheckToGraph } from './neo4jFactCheck.js';
 import { searchReverseImage, formatReverseImageResult } from '../tools/reverseImageTool.js';
 import { searchPerson, formatPersonSearchResult } from '../tools/personSearchTool.js'
-import { searchAcademicPapers, formatAcademicResult, writeAcademicPapersToGraph } from '../tools/academicSearchTool.js'
+import { searchAcademicPapers, formatAcademicResult, writeAcademicPapersToGraph, searchAuthorPapers, formatAuthorResult } from '../tools/academicSearchTool.js'
 import os from 'os'
 import { writeFile, unlink } from 'fs/promises'
 
@@ -169,6 +169,21 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
           sortBy: { type: 'string', description: '"submittedDate" (en yeni) veya "relevance" (en alakalı). Varsayılan: submittedDate.' },
         },
         required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_researcher_papers',
+      description: 'Semantic Scholar Author API üzerinden bir araştırmacının tüm yayınlarını, h-index değerini ve atıf sayılarını getirir. Kişi adı + kurum kombinasyonuyla çalışır. arXiv\'de olmayan Türk akademisyenler için de idealdir.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Araştırmacının adı soyadı (Örn: "Bihter Daş" veya "Bihter Das")' },
+          affiliation: { type: 'string', description: 'Kurum adı — doğru kişiyi seçmek için kullanılır (Örn: "Fırat Üniversitesi" veya "Firat University")' },
+        },
+        required: ['name'],
       },
     },
   },
@@ -640,6 +655,12 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
         relationshipType: args.relationshipType
       });
       result = JSON.stringify(res);
+    }
+    else if (name === 'search_researcher_papers') {
+      console.log(chalk.cyan(`
+   👤 Araştırmacı Arama (Semantic Scholar): `) + chalk.yellow.bold(args.name))
+      const authorResult = await searchAuthorPapers(args.name, args.affiliation)
+      result = formatAuthorResult(authorResult)
     }
     else if (name === 'search_academic_papers') {
       const maxResults = parseInt(args.maxResults ?? '10') || 10

@@ -1,8 +1,147 @@
 /**
  * academicSearchTool.ts
- * arXiv API + Semantic Scholar üzerinden akademik makale araştırması.
+ * arXiv API + Semantic Scholar Author API üzerinden akademik araştırma.
  * Sonuçları Neo4j'ye Paper → Author, Paper → Topic olarak kaydeder.
  */
+
+// ─── Semantic Scholar Author API ────────────────────────────────────
+
+export interface AuthorPaper {
+  paperId: string
+  title: string
+  year: number | null
+  citationCount: number
+  arxivId: string | null
+  doi: string | null
+}
+
+export interface AuthorProfile {
+  authorId: string
+  name: string
+  affiliations: string[]
+  paperCount: number
+  hIndex: number
+  papers: AuthorPaper[]
+}
+
+export async function searchAuthorPapers(
+  name: string,
+  affiliation?: string,
+): Promise<{ author: AuthorProfile | null; allMatches: AuthorProfile[]; error?: string }> {
+  const SEMANTIC_API_KEY = process.env.SEMANTIC_SCHOLAR_API_KEY
+
+  const fetchWithRetry = async (url: string): Promise<Response> => {
+    const headers: Record<string, string> = { 'User-Agent': 'osint-agent/1.0 (research tool)' }
+    if (SEMANTIC_API_KEY) headers['x-api-key'] = SEMANTIC_API_KEY
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) })
+    if (res.status === 429) {
+      // Tek retry — 3 saniye bekle
+      await new Promise(resolve => setTimeout(resolve, 3000))
+      return fetch(url, { headers, signal: AbortSignal.timeout(15000) })
+    }
+    return res
+  }
+
+  try {
+    const encoded = encodeURIComponent(name)
+    const fields = 'name,affiliations,paperCount,hIndex,papers,papers.paperId,papers.title,papers.year,papers.citationCount,papers.externalIds'
+    const url = `https://api.semanticscholar.org/graph/v1/author/search?query=${encoded}&fields=${fields}&limit=5`
+
+    const res = await fetchWithRetry(url)
+
+    if (!res.ok) {
+      return { author: null, allMatches: [], error: `Semantic Scholar HTTP ${res.status}` }
+    }
+
+    const data = await res.json() as { data: any[] }
+    const raw = data.data ?? []
+    if (raw.length === 0) {
+      return { author: null, allMatches: [], error: 'Araştırmacı bulunamadı' }
+    }
+
+    // Kurum adıyla en iyi eşleşmeyi seç
+    const toProfile = (m: any): AuthorProfile => ({
+      authorId: m.authorId ?? '',
+      name: m.name ?? '',
+      affiliations: (m.affiliations ?? []).map((a: any) => (typeof a === 'string' ? a : a.name ?? '')),
+      paperCount: m.paperCount ?? 0,
+      hIndex: m.hIndex ?? 0,
+      papers: (m.papers ?? [])
+        .map((p: any): AuthorPaper => ({
+          paperId: p.paperId ?? '',
+          title: p.title ?? '',
+          year: p.year ?? null,
+          citationCount: p.citationCount ?? 0,
+          arxivId: p.externalIds?.ArXiv ?? null,
+          doi: p.externalIds?.DOI ?? null,
+        }))
+        .sort((a: AuthorPaper, b: AuthorPaper) => b.citationCount - a.citationCount),
+    })
+
+    const profiles = raw.map(toProfile)
+
+    let selected = profiles[0]
+    if (affiliation) {
+      const affilLower = affiliation.toLowerCase()
+      const words = affilLower.split(/\s+/).filter(w => w.length > 3)
+      const match = profiles.find(p =>
+        p.affiliations.some(a =>
+          a.toLowerCase().includes(affilLower) ||
+          words.some(w => a.toLowerCase().includes(w)),
+        ),
+      )
+      if (match) selected = match
+    }
+
+    return { author: selected, allMatches: profiles }
+  } catch (err: any) {
+    return { author: null, allMatches: [], error: `bağlantı hatası: ${err.message}` }
+  }
+}
+
+export function formatAuthorResult(result: {
+  author: AuthorProfile | null
+  allMatches: AuthorProfile[]
+  error?: string
+}): string {
+  if (result.error || !result.author) {
+    return `❌ Araştırmacı arama hatası: ${result.error ?? 'Bulunamadı'}`
+  }
+
+  const { author } = result
+  const lines: string[] = [
+    `👤 Araştırmacı: **${author.name}**`,
+    `🏛️  Kurum: ${author.affiliations.join(' | ') || 'Belirtilmemiş'}`,
+    `📊 h-index: ${author.hIndex} | Toplam Makale: ${author.paperCount}`,
+    `🔗 Semantic Scholar: https://www.semanticscholar.org/author/${author.authorId}`,
+    '',
+    `📚 Makaleler (atıf sayısına göre en yüksekten):`,
+    '',
+  ]
+
+  for (const [i, p] of author.papers.entries()) {
+    lines.push(`${i + 1}. **${p.title}** (${p.year ?? '?'}) — ${p.citationCount} atıf`)
+    if (p.arxivId) {
+      lines.push(`   🔗 arXiv: https://arxiv.org/abs/${p.arxivId}`)
+      lines.push(`   📄 HTML: https://ar5iv.labs.arxiv.org/html/${p.arxivId}`)
+    }
+    if (p.doi) {
+      lines.push(`   🔗 DOI: https://doi.org/${p.doi}`)
+    }
+  }
+
+  if (result.allMatches.length > 1) {
+    lines.push('')
+    lines.push('⚠️ Diğer olası eşleşmeler (kurum kontrolü yap):')
+    for (const m of result.allMatches.slice(1)) {
+      lines.push(`  - ${m.name} | ${m.affiliations.join(', ') || 'kurum bilinmiyor'} | ${m.paperCount} makale | h-index: ${m.hIndex}`)
+    }
+  }
+
+  return lines.join('\n')
+}
+
+// ─── arXiv API ───────────────────────────────────────────────────────
 
 export interface AcademicPaper {
   arxivId: string
