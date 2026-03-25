@@ -30,6 +30,11 @@ export interface HoleheResult {
  * Pivot noktası olarak kullanılır: Email → Platform bağlantısı kurar.
  */
 export async function checkEmailRegistrations(email: string): Promise<HoleheResult> {
+  // Güvenlik: geçersiz email subprocess'e geçmesin
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { email, services: [], totalChecked: 0, error: `Geçersiz e-posta formatı: ${email}` }
+  }
+
   try {
     const { stdout, stderr } = await execFileAsync(
       PYTHON,

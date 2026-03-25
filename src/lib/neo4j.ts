@@ -614,36 +614,47 @@ export async function exportGraphForVisualization(): Promise<{
 }> {
   const session = getDriver().session()
   try {
-    // Tüm node'ları çek
+    // Tüm node'ları çek — elementId'yi her zaman sakla
     const nodesResult = await session.run(
       `MATCH (n) RETURN labels(n)[0] AS label, properties(n) AS props, elementId(n) AS eid`
     )
     const nodeMap = new Map<string, GraphNode>()
+    const eidToId = new Map<string, string>()  // elementId → görsel ID eşlemesi
     for (const record of nodesResult.records) {
       const props = record.get('props') as Record<string, unknown>
-      const value = String(props.value ?? '')
+      const eid = record.get('eid') as string
       const label = record.get('label') as string
-      const id = value || record.get('eid') as string
+      // value yoksa id, text, name sırasıyla dene; hiçbiri yoksa elementId kullan
+      const value = String(props.value ?? props.id ?? props.name ?? props.text ?? '').slice(0, 80)
+      const id = value || eid
       const cleanProps: Record<string, string> = {}
       for (const [k, v] of Object.entries(props)) {
-        if (v != null) cleanProps[k] = String(v)
+        if (v != null) cleanProps[k] = String(v).slice(0, 500)
       }
       nodeMap.set(id, { id, label, properties: cleanProps })
+      eidToId.set(eid, id)
     }
 
-    // Tüm edge'leri çek
+    // Tüm edge'leri çek — elementId tabanlı, value bağımsız
     const edgesResult = await session.run(
       `MATCH (a)-[r]->(b)
-       RETURN a.value AS fromVal, b.value AS toVal, type(r) AS relType,
-              r.confidence AS confidence, r.source AS sourceTool`
+       RETURN elementId(a) AS fromEid, elementId(b) AS toEid,
+              type(r) AS relType, r.confidence AS confidence, r.source AS sourceTool`
     )
-    const edges: GraphEdge[] = edgesResult.records.map((r) => ({
-      source: String(r.get('fromVal') ?? ''),
-      target: String(r.get('toVal') ?? ''),
-      type: r.get('relType') as string,
-      confidence: (r.get('confidence') as string) ?? undefined,
-      source_tool: (r.get('sourceTool') as string) ?? undefined,
-    }))
+    const edges: GraphEdge[] = edgesResult.records
+      .map((r) => {
+        const src = eidToId.get(r.get('fromEid') as string)
+        const tgt = eidToId.get(r.get('toEid') as string)
+        if (!src || !tgt) return null
+        return {
+          source: src,
+          target: tgt,
+          type: r.get('relType') as string,
+          confidence: (r.get('confidence') as string) ?? undefined,
+          source_tool: (r.get('sourceTool') as string) ?? undefined,
+        } as GraphEdge
+      })
+      .filter((e): e is GraphEdge => e !== null)
 
     return { nodes: Array.from(nodeMap.values()), edges }
   } finally {
