@@ -3,7 +3,7 @@ import { runAgentLoop } from './baseAgent.js';
 import { runIdentityAgent } from './identityAgent.js';
 import { runMediaAgent } from './mediaAgent.js';
 import { runAcademicAgent } from './academicAgent.js';
-import { tools, executeTool } from '../lib/toolRegistry.js';
+import { tools, executeTool, setReportContentBuffer } from '../lib/toolRegistry.js';
 import type OpenAI from 'openai';
 import chalk from 'chalk';
 
@@ -67,12 +67,15 @@ const supervisorMetaTools: OpenAI.Chat.ChatCompletionTool[] = [
 async function supervisorExecuteTool(name: string, args: Record<string, string>): Promise<string> {
   if (name === 'ask_identity_agent') {
     const r = await runIdentityAgent(args.query, args.context);
+    setReportContentBuffer(r);
     return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.`;
   } else if (name === 'ask_media_agent') {
     const r = await runMediaAgent(args.query, args.context);
+    setReportContentBuffer(r);
     return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.`;
   } else if (name === 'ask_academic_agent') {
     const r = await runAcademicAgent(args.query, args.context);
+    setReportContentBuffer(r);
     return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.`;
   } else {
     // Normal araçlar (graf, search_web vs.) için ortak registry kullan

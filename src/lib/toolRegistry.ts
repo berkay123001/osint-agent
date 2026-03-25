@@ -36,6 +36,14 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 const PYTHON = process.env.PYTHON_PATH || '/home/berkayhsrt/anaconda3/bin/python'
+
+// ─── Report Content Buffer ────────────────────────────────────────────────────
+// Supervisor sub-agent raporlarını buraya yazar. generate_report additionalFindings
+// yoksa bu buffer'ı kullanır (model JSON'a encode edemiyorsa fallback).
+let _reportContentBuffer: string = '';
+export function setReportContentBuffer(content: string): void { _reportContentBuffer = content; }
+export function clearReportContentBuffer(): void { _reportContentBuffer = ''; }
+
 // ─── Tool Definitions ────────────────────────────────────────────────
 export const tools: OpenAI.Chat.ChatCompletionTool[] = [
   {
@@ -731,12 +739,17 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     }
     else if (name === 'generate_report') {
       console.log(chalk.cyan(`\n   📄 Rapor oluşturuluyor [${args.reportType || 'osint'}]: `) + chalk.yellow.bold(args.subject))
+      // additionalFindings yoksa buffer'dan oku (model JSON encode edemediyse fallback)
+      const findings = args.additionalFindings || _reportContentBuffer || undefined;
+      if (!args.additionalFindings && _reportContentBuffer) {
+        console.log(chalk.gray(`   ℹ️  additionalFindings argümanı yoktu — dahili buffer kullanıldı (${_reportContentBuffer.length} karakter)`));
+      }
       try {
         const reportResult = await generateOsintReport({
           subject: args.subject,
           reportType: (args.reportType as 'osint' | 'academic' | 'factcheck') ?? 'osint',
           title: args.title,
-          additionalFindings: args.additionalFindings,
+          additionalFindings: findings,
         })
         console.log(chalk.green(`   ✅ Rapor kaydedildi: `) + chalk.gray(reportResult.filePath))
         result = [

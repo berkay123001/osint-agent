@@ -27,6 +27,7 @@ export async function runAgentLoop(
 ): Promise<AgentResult> {
   let toolCallCount = 0;
   let emptyRetries = 0;
+  let correctionRetries = 0;
   const toolsUsed: Record<string, number> = {};
   const maxToolCalls = config.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
   
@@ -71,13 +72,25 @@ export async function runAgentLoop(
     if (!response?.choices?.[0]) {
       if (respAny['error']) {
         const upstreamErr = JSON.stringify(respAny['error']);
-        // Geçersiz JSON argümanı hatası → modele düzeltme fırsatı ver
+        // Geçersiz JSON argümanı hatası → modele düzeltme fırsatı ver (maks 3 deneme)
         if (upstreamErr.includes('function.arguments') || upstreamErr.includes('InvalidParameter')) {
-          console.log(chalk.yellow(`\n   ⚠️  [${config.name}] Model geçersiz JSON üretmişti, düzeltme isteniyor...`));
-          history.push({
-            role: 'user',
-            content: 'Önceki araç çağrısında JSON formatı hatalıydı. Lütfen araç argümanlarını geçerli JSON formatında yeniden üret.',
-          });
+          correctionRetries++;
+          console.log(chalk.yellow(`\n   ⚠️  [${config.name}] Model geçersiz JSON üretmişti, düzeltme isteniyor... (deneme ${correctionRetries}/3)`));
+          if (correctionRetries >= 3) {
+            correctionRetries = 0;
+            history.push({
+              role: 'user',
+              content:
+                'JSON argümanı 3 kez düzeltilemedi. ' +
+                'Eğer generate_report çağırıyordun: SADECE subject ve reportType gönder; additionalFindings\'i tamamen çıkar — içerik zaten dahili olarak taşınıyor. ' +
+                'Eğer başka bir araç çağırıyordun: argümanları çok kısa tut veya aracı iptal edip text yanıt ver.',
+            });
+          } else {
+            history.push({
+              role: 'user',
+              content: 'Önceki araç çağrısında JSON formatı hatalıydı. Lütfen araç argümanlarını geçerli JSON formatında yeniden üret.',
+            });
+          }
           continue;
         }
         throw new Error(`Upstream API hatası: ${upstreamErr}`);
