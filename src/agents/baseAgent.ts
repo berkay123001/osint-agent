@@ -36,17 +36,53 @@ export async function runAgentLoop(
       console.log(chalk.yellow(`\n   ⚠️  [${config.name}] Maksimum araç çağrısı aşıldı, özet isteniyor...`));
     }
 
-    console.log(chalk.gray(`\n   ⚙️  [${config.name}] Düşünüyor...`));
-    const response = await client.chat.completions.create({
-      model: config.model ?? DEFAULT_MODEL,
-      messages: sanitizeHistoryForProvider(history),
-      tools: config.tools.length > 0 ? config.tools : undefined,
-      tool_choice: config.tools.length > 0 ? toolChoice : undefined,
-      max_tokens: 4096,
-    });
+    console.log(chalk.gray(`\n   \u2699\ufe0f  [${config.name}] Düşünüyor...`));
+    
+    // Upstream API hatalarını (502, geçersiz JSON argümanlar) yakala ve yönet
+    let response: Awaited<ReturnType<typeof client.chat.completions.create>>;
+    try {
+      response = await client.chat.completions.create({
+        model: config.model ?? DEFAULT_MODEL,
+        messages: sanitizeHistoryForProvider(history),
+        tools: config.tools.length > 0 ? config.tools : undefined,
+        tool_choice: config.tools.length > 0 ? toolChoice : undefined,
+        max_tokens: 4096,
+      });
+    } catch (apiError: unknown) {
+      const msg = apiError instanceof Error ? apiError.message : String(apiError);
+      // Alibaba/OpenRouter'dan gelen geçici hatalar için bir kez retry
+      if (msg.includes('502') || msg.includes('529') || msg.includes('InternalError')) {
+        console.log(chalk.yellow(`\n   🔄 [${config.name}] API geçici hata (${msg.slice(0, 60)}...), 3s bekleyip tekrar deneniyor...`));
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        response = await client.chat.completions.create({
+          model: config.model ?? DEFAULT_MODEL,
+          messages: sanitizeHistoryForProvider(history),
+          tools: config.tools.length > 0 ? config.tools : undefined,
+          tool_choice: config.tools.length > 0 ? toolChoice : undefined,
+          max_tokens: 4096,
+        });
+      } else {
+        throw apiError;
+      }
+    }
 
-    if (!response || !response.choices || !response.choices[0]) {
-      throw new Error(`Geçersiz API yanıtı alındı: ${JSON.stringify(response)}`);
+    // OpenRouter bazen hata durumunda choices olmaksızın obje döndürür
+    const respAny = response as unknown as Record<string, unknown>;
+    if (!response?.choices?.[0]) {
+      if (respAny['error']) {
+        const upstreamErr = JSON.stringify(respAny['error']);
+        // Geçersiz JSON argümanı hatası → modele düzeltme fırsatı ver
+        if (upstreamErr.includes('function.arguments') || upstreamErr.includes('InvalidParameter')) {
+          console.log(chalk.yellow(`\n   ⚠️  [${config.name}] Model geçersiz JSON üretmişti, düzeltme isteniyor...`));
+          history.push({
+            role: 'user',
+            content: 'Önceki araç çağrısında JSON formatı hatalıydı. Lütfen araç argümanlarını geçerli JSON formatında yeniden üret.',
+          });
+          continue;
+        }
+        throw new Error(`Upstream API hatası: ${upstreamErr}`);
+      }
+      throw new Error(`Geçersiz API yanıtı: choices yok. Yanıt: ${JSON.stringify(response)}`);
     }
 
     const message = response.choices[0].message;

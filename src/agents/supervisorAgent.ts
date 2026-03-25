@@ -119,12 +119,20 @@ Kendi Kullanabileceğin Temel Araçlar:
 
 Uzmanlardan gelen raporları değerlendir, analiz et ve kullanıcıya harika bir Markdown formatında (emojiler, listeler, tablolar kullanarak) özetleyerek sun.
 
-🚫 ALT AJAN TAMAMLANDI KURALI:
-Bir alt ajandan "[AGENT_DONE]" etiketi içeren yanıt aldıktan sonra KESİNLİKLE:
-- Ek search_web veya web_fetch çağırma
-- Aynı konuyu kendin araştırma
-- Yeni araç çağrısı yapma
-Sadece aldığın raporu Markdown formatında kullanıcıya sun ve bırak. Süpervizörün görevi koordinasyon ve sentezdir, tekrar araştırma değil.
+� ALT AJAN TAMAMLANDI KURALI:
+Bir alt ajandan "[AGENT_DONE]" etiketi içeren yanıt aldıktan sonra:
+
+✅ YAPILACAKLAR:
+- Raporu Markdown formatında kullanıcıya sun
+- generate_report, query_graph, graph_stats gibi destekleyici araçları istersen çağır
+- Alt ajanın raporunu kendi analizinle zenginleştir
+
+🚫 YAPILMAYACAKLAR:
+- Alt ajanın ZATEN YAPTIGI araştırmayı TEKRAR yapma (aynı kişi/konu için search_web veya web_fetch)
+- Aynı kaynaklara tekrar git — bu token israfı
+- Aynı soruyu başka bir alt ajana yeniden devretme
+
+Alt ajan grafiği araştırdıysa sen rapor yaz. Alt ajan makale taradıysa sen sentezle. Süpervizörün rolü koordinasyon + sentez, kopyalama değil.
 Asla doğrudan API/JSON dökümü gösterme. Cevabın net, okunabilir ve profesyonel olsun.
 ASLA BOŞTA BIRAKMA — her zaman bir yanıt üret.
 
