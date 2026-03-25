@@ -24,16 +24,21 @@ export interface NitterProfile {
 }
 
 // Aktif Nitter instance'ları — en stabilleri ilk sırada
+// Not: Instance'lar sık değişir; çalışmayan olursa listeden kaldırılabilir.
 const NITTER_INSTANCES = [
+  'https://nitter.poast.org',
+  'https://nitter.privacydna.ru',
+  'https://nitter.tiekoetter.com',
+  'https://nitter.it',
+  'https://nitter.cz',
+  'https://nitter.unixfox.eu',
+  'https://xcancel.com',
   'https://nitter.net',
   'https://nitter.privacydev.net',
-  'https://nitter.poast.org',
-  'https://nitter.cz',
   'https://nitter.1d4.us',
-  'https://xcancel.com',
 ]
 
-const REQUEST_TIMEOUT = 12000
+const REQUEST_TIMEOUT = 6000 // 6s — hızlı fail, sonraki instance'a geç
 
 async function fetchWithTimeout(url: string, timeout = REQUEST_TIMEOUT): Promise<Response> {
   const controller = new AbortController()

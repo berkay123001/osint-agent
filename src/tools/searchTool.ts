@@ -12,6 +12,20 @@ export interface SearchToolResponse {
 }
 
 /**
+ * Brave Search saat basında 1 req/sn sınırı var (Free plan).
+ * Eş zamanlı çağrılarda 429 almamak için global throttle.
+ */
+let _lastBraveCallAt = 0
+const BRAVE_MIN_INTERVAL_MS = 1100 // 1.1s — free plan: 1 req/sec
+
+async function throttleBrave(): Promise<void> {
+  const now = Date.now()
+  const wait = BRAVE_MIN_INTERVAL_MS - (now - _lastBraveCallAt)
+  if (wait > 0) await new Promise(r => setTimeout(r, wait))
+  _lastBraveCallAt = Date.now()
+}
+
+/**
  * Brave Search API üzerinden web araması yapar.
  */
 async function searchBrave(query: string, limit: number = 10): Promise<SearchToolResponse> {
@@ -19,6 +33,8 @@ async function searchBrave(query: string, limit: number = 10): Promise<SearchToo
   if (!apiKey) {
     return { query, results: [], error: 'BRAVE_SEARCH_API_KEY tanımlı değil.' }
   }
+
+  await throttleBrave()
 
   try {
     const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${limit}`
