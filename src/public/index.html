@@ -65,6 +65,7 @@
       transition: all 0.2s;
     }
     .btn:hover { background: #222e50; color: #00d4ff; border-color: #00d4ff; }
+    .btn-toggle.active { background: #0a2d4a; color: #00d4ff; border-color: #00d4ff; }
 
     /* ─── SVG Canvas ──────────────────────────── */
     #graph-container {
@@ -287,6 +288,7 @@
     <input type="text" id="search-box" placeholder="Node ara... (Ctrl+K)" />
     <button class="btn" id="btn-refresh" title="Verileri yenile">⟳ Yenile</button>
     <button class="btn" id="btn-reset" title="Görünümü sıfırla">⊡ Sıfırla</button>
+    <button class="btn btn-toggle active" id="btn-hide-isolated" title="Hiç bağlantısı olmayan node'ları gizle/göster">⊗ Bağlantısız Gizle</button>
   </div>
 
   <div id="graph-container">
@@ -371,6 +373,7 @@
     let simulation, svg, g, linkGroup, nodeGroup, labelGroup
     let activeFilters = new Set()
     let selectedNode = null
+    let hideIsolated = true  // Varsayılan: bağlantısız node'ları gizle
 
     // ─── Init ────────────────────────────────────
     async function init() {
@@ -383,6 +386,13 @@
       document.getElementById('btn-refresh').addEventListener('click', refresh)
       document.getElementById('btn-reset').addEventListener('click', resetView)
       document.getElementById('panel-close').addEventListener('click', closePanel)
+      document.getElementById('btn-hide-isolated').addEventListener('click', () => {
+        hideIsolated = !hideIsolated
+        const btn = document.getElementById('btn-hide-isolated')
+        btn.classList.toggle('active', hideIsolated)
+        btn.textContent = hideIsolated ? '⊗ Bağlantısız Gizle' : '⊕ Bağlantısız Göster'
+        render()
+      })
     }
 
     async function fetchGraph() {
@@ -483,10 +493,20 @@
         nodeIds.has(e.source?.id ?? e.source) && nodeIds.has(e.target?.id ?? e.target)
       )
 
+      // İzole node filtresi: edge'i olmayan node'ları çıkar
+      const connectedIds = new Set()
+      filteredEdges.forEach(e => {
+        connectedIds.add(typeof e.source === 'object' ? e.source.id : e.source)
+        connectedIds.add(typeof e.target === 'object' ? e.target.id : e.target)
+      })
+      const visibleNodes = hideIsolated
+        ? filteredNodes.filter(n => connectedIds.has(n.id))
+        : filteredNodes
+
       // Simulation
       if (simulation) simulation.stop()
 
-      simulation = d3.forceSimulation(filteredNodes)
+      simulation = d3.forceSimulation(visibleNodes)
         .force('link', d3.forceLink(filteredEdges)
           .id(d => d.id)
           .distance(d => {
@@ -497,9 +517,11 @@
         )
         .force('charge', d3.forceManyBody()
           .strength(d => d.label === 'Profile' ? -80 : -250)
+          .distanceMax(400)
         )
         .force('center', d3.forceCenter(width / 2, height / 2))
         .force('collision', d3.forceCollide().radius(d => getSize(d) + 5))
+        .alphaDecay(0.028)
 
       // ─── Links ─────
       linkGroup.selectAll('*').remove()
@@ -523,7 +545,7 @@
       nodeGroup.selectAll('*').remove()
 
       const nodes = nodeGroup.selectAll('circle')
-        .data(filteredNodes)
+        .data(visibleNodes)
         .join('circle')
         .attr('r', d => getSize(d))
         .attr('fill', d => getColor(d))
@@ -544,7 +566,7 @@
       labelGroup.selectAll('*').remove()
 
       const labels = labelGroup.selectAll('text')
-        .data(filteredNodes)
+        .data(visibleNodes)
         .join('text')
         .text(d => truncate(d.properties.value || d.id, 20))
         .attr('fill', d => d3.color(getColor(d)).brighter(1.2))
