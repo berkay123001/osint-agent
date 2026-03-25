@@ -36,12 +36,12 @@ const supervisorMetaTools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'ask_media_agent',
-      description: 'Görsel doğrulama, exif analizi, tersine görsel arama, yalan haber/iddia doğrulama gerektiğinde Media uzmanına başvurur.',
+      description: 'Görsel doğrulama, exif analizi, tersine görsel arama, yalan haber/iddia doğrulama gerektiğinde Media uzmanına başvurur. Haber/iddia doğrulamada MediaAgent Supervisor\'ın özetine değil HAM VERİYE dayanır — context\'e mutlaka ham URL listesi ve alıntı geç.',
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: 'Media uzmanına verilecek görev/komut (Örn: "Şu görselin kaynağını bul")' },
-          context: { type: 'string', description: 'Ek bağlam (görsel url, vs.)' }
+          query: { type: 'string', description: 'Media uzmanına verilecek görev/komut (Örn: "Şu görselin kaynağını bul" veya "İran gaz kesintisi iddiasını doğrula — aşağıdaki URL\'leri kendi araçlarınla tara")' },
+          context: { type: 'string', description: 'HAM VERİ paketi — Supervisor\'ın topladığı URL\'ler, ham alıntılar ve çelişkili noktalar. Örnek format: "URL1: https://... | Alıntı: \'Bakan: akış devam ediyor\'\nURL2: https://... | Alıntı: \'Bloomberg: ihracat durduruldu\'\nÇELİŞKİ: Türk resmi kaynaklar vs uluslararası medya"\nMediaAgent bu URL\'leri kendi web_fetch/scrape araçlarıyla bağımsız olarak doğrular. ÖZET DEĞİL — HAM URL VER.' }
         },
         required: ['query']
       }
@@ -92,11 +92,22 @@ Kullanıcıyla doğrudan sen muhatap olursun.
 
 KARAR AĞACI — Kullanıcının isteğine göre hemen şunu yap:
 1. Kişi/username/email araştırması → HEMEN ask_identity_agent çağır. Kendi başına sadece search_web yapma.
-2. Görsel/video/haber doğrulama → HEMEN ask_media_agent çağır.
+2. Görsel/video/haber doğrulama → Önce search_web ile ilgili haberleri ve URL'leri topla. Sonra ask_media_agent çağır — context field'ına topladığın URL'leri ve ham alıntıları yaz. ASLA sadece özet geçme.
 3. Akademik araştırma (makale, konu, yayın, araştırmacı, citation) → HEMEN ask_academic_agent çağır.
 4. Graf sorgusu (bağlantılar, istatistik) → query_graph, list_graph_nodes, graph_stats kullan.
 5. Rapor isteği ("rapor oluştur", "rapor ver", "raporu kaydet") → HEMEN generate_report çağır.
 6. Genel soru → Araç kullanmadan doğrudan yanıt ver.
+
+📋 HABER DOĞRULAMA İÇİN BRIEF FORMATI — ask_media_agent çağırırken context'i şöyle doldur:
+"""
+TOPLADIĞIM URL'LER:
+- [kaynak 1 adı]: [URL] | Ham alıntı: "[sayfadan kopyaladığın cümle]"
+- [kaynak 2 adı]: [URL] | Ham alıntı: "[sayfadan kopyaladığın cümle]"
+
+ÇELİŞKİ NOKTASI: [Hangi iki kaynak/iddia birbirine zıt?]
+DOĞRULANMASI GEREKEN İDDİA: [Net soru]
+"""
+MediaAgent bu URL'leri kendi araçlarıyla bağımsız olarak kontrol edecek.
 🚨 ÇOKLU KİMLİK UYARISI:
 Aynı ad-soyadda birden fazla kişi bulunursa (örn. hem akademisyen hem öğrenci), bunları ASLA otomatik olarak birleştirme.
 - IdentityAgent raporunda "[BAĞLANTI DOĞRULANAMADI]" ifadesi varsa bunu kullanıcıya açıkça belirt.
