@@ -121,18 +121,40 @@ async function searchTavily(query: string, limit: number = 10): Promise<SearchTo
 }
 
 /**
+ * Brave'in zayıf olduğu sorgu tipleri — doğrudan Tavily'ye git.
+ * - site:x.com / site:twitter.com — Brave sosyal medyayı indekslemiyor
+ * - site:instagram.com, site:linkedin.com — aynı durum
+ * - site:reddit.com — kısmi destek, Tavily daha iyi
+ */
+const TAVILY_PREFERRED_PATTERNS = [
+  /\bsite:(x\.com|twitter\.com|instagram\.com|linkedin\.com|reddit\.com|facebook\.com)\b/i,
+]
+
+function preferTavily(query: string): boolean {
+  return TAVILY_PREFERRED_PATTERNS.some(p => p.test(query))
+}
+
+/**
  * Brave Search öncelikli (Tavily fallback) web araması.
  * Her iki API anahtarı da yoksa hata döndürür.
  */
 export async function searchWeb(query: string, limit: number = 10): Promise<SearchToolResponse> {
+  // Bazı sorgu tipleri için direkt Tavily (Brave bu alanlarda zayıf)
+  if (process.env.TAVILY_API_KEY && preferTavily(query)) {
+    return await searchTavily(query, limit)
+  }
+
   // 1) Brave Search (primary)
   if (process.env.BRAVE_SEARCH_API_KEY) {
     const braveResult = await searchBrave(query, limit)
     if (!braveResult.error && braveResult.results.length > 0) {
       return braveResult
     }
-    // Brave başarısız ise sessizce Tavily'ye düş
-    console.warn(`[SearchTool] Brave başarısız: ${braveResult.error} — Tavily fallback deneniyor...`)
+    // Brave 0 sonuç veya hata — Tavily'ye geç
+    const reason = braveResult.error?.includes('429')
+      ? `429 rate limit`
+      : `sonuç bulunamadı (Brave index'i küçük)`
+    console.warn(`[SearchTool] Brave: ${reason} — Tavily'ye geçiliyor...`)
   }
 
   // 2) Tavily (fallback)
