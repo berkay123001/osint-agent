@@ -121,48 +121,104 @@ async function searchTavily(query: string, limit: number = 10): Promise<SearchTo
 }
 
 /**
- * Brave'in zayıf olduğu sorgu tipleri — doğrudan Tavily'ye git.
- * - site:x.com / site:twitter.com — Brave sosyal medyayı indekslemiyor
- * - site:instagram.com, site:linkedin.com — aynı durum
- * - site:reddit.com — kısmi destek, Tavily daha iyi
+ * Google Custom Search API üzerinden web araması yapar.
+ * GOOGLE_SEARCH_API_KEY + GOOGLE_SEARCH_CX (.env) gereklidir.
+ * Ücretsiz limit: 100 sorgu/gün. Ücretli: $5/1000 sorgu.
  */
-const TAVILY_PREFERRED_PATTERNS = [
-  /\bsite:(x\.com|twitter\.com|instagram\.com|linkedin\.com|reddit\.com|facebook\.com)\b/i,
-]
+async function searchGoogle(query: string, limit: number = 10): Promise<SearchToolResponse> {
+  const apiKey = process.env.GOOGLE_SEARCH_API_KEY
+  const cx = process.env.GOOGLE_SEARCH_CX
+  if (!apiKey || !cx) {
+    return { query, results: [], error: 'GOOGLE_SEARCH_API_KEY veya GOOGLE_SEARCH_CX tanımlı değil.' }
+  }
 
-function preferTavily(query: string): boolean {
-  return TAVILY_PREFERRED_PATTERNS.some(p => p.test(query))
+  try {
+    // Google CSE max 10 sonuç döndürür — limit>10 ise iki istek at
+    const fetchPage = async (start: number, num: number): Promise<any[]> => {
+      const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&q=${encodeURIComponent(query)}&num=${Math.min(num, 10)}&start=${start}`
+      const res = await fetch(url, { signal: AbortSignal.timeout(10000) })
+      if (!res.ok) {
+        const err = await res.text()
+        throw new Error(`Google CSE HTTP ${res.status}: ${err}`)
+      }
+      const data = await res.json()
+      return data?.items ?? []
+    }
+
+    let items: any[] = await fetchPage(1, Math.min(limit, 10))
+    if (limit > 10 && items.length === 10) {
+      const page2 = await fetchPage(11, limit - 10).catch(() => [])
+      items = [...items, ...page2]
+    }
+
+    if (items.length === 0) {
+      return { query, results: [], error: 'Google CSE sonuç döndürmedi.' }
+    }
+
+    const results: SearchResult[] = items.map((r: any) => ({
+      title: r.title || 'Başlıksız',
+      snippet: (r.snippet || '').replace(/\n+/g, ' ').trim().slice(0, 400),
+      url: r.link || '',
+    }))
+
+    return { query, results, provider: 'Google Search' }
+  } catch (error) {
+    return { query, results: [], error: `Google CSE hatası: ${(error as Error).message}` }
+  }
 }
 
 /**
- * Brave Search öncelikli (Tavily fallback) web araması.
- * Her iki API anahtarı da yoksa hata döndürür.
+ * Brave'in zayıf olduğu sorgu tipleri — doğrudan Google/Tavily'ye git.
+ * - site:x.com / site:twitter.com — Brave sosyal medyayı indekslemiyor
+ * - site:instagram.com, site:linkedin.com — aynı durum
+ * - site:reddit.com — kısmi destek
+ */
+const BRAVE_WEAK_PATTERNS = [
+  /\bsite:(x\.com|twitter\.com|instagram\.com|linkedin\.com|reddit\.com|facebook\.com)\b/i,
+]
+
+function braveIsWeak(query: string): boolean {
+  return BRAVE_WEAK_PATTERNS.some(p => p.test(query))
+}
+
+/**
+ * Çok katmanlı arama zinciri:
+ *   Brave → Google CSE → Tavily
+ *
+ * - Brave: hız ve genel web için birincil
+ * - Google CSE: Brave'in index'inin düştüğü durumlar için yedek
+ * - Tavily: son çare (kredi koruması)
  */
 export async function searchWeb(query: string, limit: number = 10): Promise<SearchToolResponse> {
-  // Bazı sorgu tipleri için direkt Tavily (Brave bu alanlarda zayıf)
-  if (process.env.TAVILY_API_KEY && preferTavily(query)) {
-    return await searchTavily(query, limit)
-  }
-
-  // 1) Brave Search (primary)
-  if (process.env.BRAVE_SEARCH_API_KEY) {
+  // 1) Brave Search (primary) — Brave'in zayıf olduğu sosyal medya sorgularında atla
+  if (process.env.BRAVE_SEARCH_API_KEY && !braveIsWeak(query)) {
     const braveResult = await searchBrave(query, limit)
     if (!braveResult.error && braveResult.results.length > 0) {
       return braveResult
     }
-    // Brave 0 sonuç veya hata — Tavily'ye geç
-    const reason = braveResult.error?.includes('429')
-      ? `429 rate limit`
-      : `sonuç bulunamadı (Brave index'i küçük)`
-    console.warn(`[SearchTool] Brave: ${reason} — Tavily'ye geçiliyor...`)
+    const reason = braveResult.error?.includes('429') ? '429 rate limit' : 'index eksik / sonuç yok'
+    console.warn(`[SearchTool] Brave: ${reason} — Google CSE'ye geçiliyor...`)
   }
 
-  // 2) Tavily (fallback)
+  // 2) Google Custom Search (secondary) — büyük index, güvenilir kapsama alanı
+  if (process.env.GOOGLE_SEARCH_API_KEY && process.env.GOOGLE_SEARCH_CX) {
+    const googleResult = await searchGoogle(query, limit)
+    if (!googleResult.error && googleResult.results.length > 0) {
+      return googleResult
+    }
+    console.warn(`[SearchTool] Google CSE: ${googleResult.error} — Tavily'ye geçiliyor...`)
+  }
+
+  // 3) Tavily (son çare — kredi koruması)
   if (process.env.TAVILY_API_KEY) {
     return await searchTavily(query, limit)
   }
 
-  return { query, results: [], error: 'Arama API anahtarı bulunamadı. BRAVE_SEARCH_API_KEY veya TAVILY_API_KEY .env\'e ekleyin.' }
+  return {
+    query,
+    results: [],
+    error: 'Arama API anahtarı bulunamadı. BRAVE_SEARCH_API_KEY, GOOGLE_SEARCH_API_KEY+GOOGLE_SEARCH_CX veya TAVILY_API_KEY .env\'e ekleyin.',
+  }
 }
 
 export function formatSearchResult(response: SearchToolResponse): string {
