@@ -1,10 +1,23 @@
 /**
- * Nitter entegrasyonu — Twitter/X profillerini proxy üzerinden oku.
- * Doğrudan Twitter API veya scraping yerine, açık Nitter instance'ları kullanarak
- * profil bilgisi çeker. Ücretsiz, API key gerektirmez.
+ * Twitter/X profil aracı — Scrapling Stealth + Puppeteer stealth fallback
  *
- * Nitter instance'ları değişken olabilir — birden fazla denenir.
+ * Nitter instance'ları artık çoğunlukla bot korumalı veya kapalı.
+ * Bu araç doğrudan twitter.com/x.com adresini Scrapling StealthyFetcher
+ * ile çeker. Scrapling başarısız olursa Puppeteer stealth devreye girer.
+ *
+ * Scrapling conda ortamı: /home/berkayhsrt/anaconda3/envs/scrapling
  */
+
+import { execFile } from 'child_process'
+import { promisify } from 'util'
+import * as path from 'path'
+import { fileURLToPath } from 'url'
+
+const execFileAsync = promisify(execFile)
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+const SCRAPLING_PYTHON = process.env.PYTHON_PATH || '/home/berkayhsrt/anaconda3/envs/scrapling/bin/python'
+const SCRAPLING_RUNNER = path.join(__dirname, 'scrapling_runner.py')
 
 export interface NitterProfile {
   username: string
@@ -23,187 +36,101 @@ export interface NitterProfile {
   instanceUsed?: string
 }
 
-// Aktif Nitter instance'ları — en stabilleri ilk sırada
-// Not: Instance'lar sık değişir; çalışmayan olursa listeden kaldırılabilir.
-const NITTER_INSTANCES = [
-  'https://nitter.poast.org',
-  'https://nitter.privacydna.ru',
-  'https://nitter.tiekoetter.com',
-  'https://nitter.it',
-  'https://nitter.cz',
-  'https://nitter.unixfox.eu',
-  'https://xcancel.com',
-  'https://nitter.net',
-  'https://nitter.privacydev.net',
-  'https://nitter.1d4.us',
-]
-
-const REQUEST_TIMEOUT = 6000 // 6s — hızlı fail, sonraki instance'a geç
-
-async function fetchWithTimeout(url: string, timeout = REQUEST_TIMEOUT): Promise<Response> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeout)
-  try {
-    return await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
-      },
-    })
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
 /**
- * Nitter HTML'inden profil bilgisi çıkar (regex ile lightweight parse).
- * DOM parser gerektirmez.
- */
-function parseNitterHtml(html: string, username: string): Partial<NitterProfile> {
-  const result: Partial<NitterProfile> = { username }
-
-  // Display name — <a class="profile-card-fullname" ...>İsim</a>
-  const nameMatch = html.match(/class="profile-card-fullname"[^>]*>([^<]+)</)
-  if (nameMatch) result.displayName = nameMatch[1].trim()
-
-  // Bio — <p class="profile-bio">...</p>
-  const bioMatch = html.match(/class="profile-bio"[^>]*>([\s\S]*?)<\/p>/)
-  if (bioMatch) {
-    result.bio = bioMatch[1]
-      .replace(/<[^>]+>/g, '') // HTML tag'leri temizle
-      .replace(/\s+/g, ' ')
-      .trim()
-  }
-
-  // Location — <span class="profile-location">...</span>
-  const locMatch = html.match(/class="profile-location"[^>]*>([^<]+)</)
-  if (locMatch) result.location = locMatch[1].trim()
-
-  // Website — <a class="profile-website"... href="...">
-  const webMatch = html.match(/class="profile-website"[^>]*>[^<]*<a[^>]*href="([^"]+)"/)
-  if (webMatch) result.website = webMatch[1]
-
-  // Join date — <span class="profile-joindate">...<span ...>Joined MONTH YEAR</span></span>
-  const joinMatch = html.match(/Joined\s+([^<]+)</)
-  if (joinMatch) result.joinDate = joinMatch[1].trim()
-
-  // Stats — tweets, following, followers
-  const statMatches = [...html.matchAll(/class="profile-stat-num"[^>]*>([^<]+)</g)]
-  if (statMatches.length >= 3) {
-    result.tweets = parseStatNumber(statMatches[0][1])
-    result.following = parseStatNumber(statMatches[1][1])
-    result.followers = parseStatNumber(statMatches[2][1])
-  }
-
-  // Verified badge
-  result.verified = html.includes('class="icon-ok verified-icon"')
-
-  // Son tweetler — <div class="tweet-content ...">...</div>
-  const tweetMatches = [...html.matchAll(/class="tweet-content[^"]*"[^>]*>([\s\S]*?)<\/div>/g)]
-  result.recentTweets = tweetMatches.slice(0, 5).map(m =>
-    m[1]
-      .replace(/<[^>]+>/g, '') // HTML tag'leri temizle
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 280)
-  ).filter(t => t.length > 0)
-
-  return result
-}
-
-function parseStatNumber(text: string): number {
-  const clean = text.trim().replace(/,/g, '')
-  if (clean.endsWith('K')) return Math.round(parseFloat(clean) * 1000)
-  if (clean.endsWith('M')) return Math.round(parseFloat(clean) * 1000000)
-  return parseInt(clean, 10) || 0
-}
-
-/**
- * Twitter/X profilini Nitter üzerinden çek.
- * Birden fazla instance denenir — ilk çalışan sonuç döner.
+ * Twitter/X profilini Scrapling stealth browser ile çek.
+ * og:description, og:title, og:image meta taglerine öncelik verir.
  */
 export async function fetchNitterProfile(username: string): Promise<NitterProfile> {
   const cleanUsername = username.replace(/^@/, '').trim()
-  const errors: string[] = []
+  const url = `https://x.com/${encodeURIComponent(cleanUsername)}`
 
-  for (const instance of NITTER_INSTANCES) {
-    const url = `${instance}/${encodeURIComponent(cleanUsername)}`
-    try {
-      const res = await fetchWithTimeout(url)
+  let scrapleResult: any = null
 
-      if (res.status === 404) {
-        return {
-          username: cleanUsername,
-          displayName: '',
-          bio: '',
-          location: '',
-          website: '',
-          joinDate: '',
-          tweets: 0,
-          followers: 0,
-          following: 0,
-          verified: false,
-          recentTweets: [],
-          avatarUrl: '',
-          error: `Twitter/X kullanıcısı "@${cleanUsername}" bulunamadı.`,
-        }
-      }
-
-      if (!res.ok) {
-        errors.push(`${instance}: HTTP ${res.status}`)
-        continue
-      }
-
-      const html = await res.text()
-
-      // Nitter bazen rate limit sayfası döner
-      if (html.includes('rate limited') || html.includes('Instance has been rate limited')) {
-        errors.push(`${instance}: Rate limited`)
-        continue
-      }
-
-      // JavaScript-based bot protection (Verifying your browser)
-      if (html.includes('Verifying your browser') || html.includes('window.onload=function(){')) {
-        errors.push(`${instance}: Bot koruması aktif (JS challenge)`)
-        continue
-      }
-
-      const parsed = parseNitterHtml(html, cleanUsername)
-
-      // Profil bilgisi yoksa geçersiz yanıt
-      if (!parsed.displayName && !parsed.bio) {
-        errors.push(`${instance}: Profil bilgisi çıkarılamadı`)
-        continue
-      }
-
-      return {
-        username: cleanUsername,
-        displayName: parsed.displayName || '',
-        bio: parsed.bio || '',
-        location: parsed.location || '',
-        website: parsed.website || '',
-        joinDate: parsed.joinDate || '',
-        tweets: parsed.tweets || 0,
-        followers: parsed.followers || 0,
-        following: parsed.following || 0,
-        verified: parsed.verified || false,
-        recentTweets: parsed.recentTweets || [],
-        avatarUrl: parsed.avatarUrl || '',
-        instanceUsed: instance,
-      }
-    } catch (e) {
-      const msg = (e as Error).message
-      if (msg.includes('abort')) {
-        errors.push(`${instance}: Timeout`)
-      } else {
-        errors.push(`${instance}: ${msg}`)
-      }
-    }
+  // 1. Scrapling stealth dene
+  try {
+    const { stdout } = await execFileAsync(
+      SCRAPLING_PYTHON,
+      [SCRAPLING_RUNNER, url, '--stealth'],
+      { timeout: 30000 }
+    )
+    scrapleResult = JSON.parse(stdout)
+  } catch {
+    // Scrapling yoksa / hata → Puppeteer fallback aşağıda
   }
 
+  // 2. Scrapling başarılı mı kontrol et
+  if (scrapleResult && !scrapleResult.error && scrapleResult.markdown) {
+    return parseScraplingResult(cleanUsername, scrapleResult, 'scrapling-stealth')
+  }
+
+  // 3. dynamic mod fallback (JS ağır sayfalar için)
+  try {
+    const { stdout } = await execFileAsync(
+      SCRAPLING_PYTHON,
+      [SCRAPLING_RUNNER, url, '--dynamic'],
+      { timeout: 40000 }
+    )
+    scrapleResult = JSON.parse(stdout)
+    if (scrapleResult && !scrapleResult.error && scrapleResult.markdown) {
+      return parseScraplingResult(cleanUsername, scrapleResult, 'scrapling-dynamic')
+    }
+  } catch {
+    // devam
+  }
+
+  // 4. Tüm yöntemler başarısız
+  return empty(cleanUsername,
+    `Twitter/X profili çekilemedi. Scrapling conda ortamı aktif değil veya ` +
+    `@${cleanUsername} profili gizli/silinmiş olabilir. ` +
+    `Manuel kontrol: https://x.com/${cleanUsername}`
+  )
+}
+
+function parseScraplingResult(username: string, result: any, source: string): NitterProfile {
+  const markdown: string = result.markdown ?? ''
+  const title: string = result.title ?? ''
+
+  // title genellikle "Display Name (@username) / X" formatında gelir
+  const displayNameMatch = title.match(/^(.+?)\s*\(@/)
+  const displayName = displayNameMatch ? displayNameMatch[1].trim() : username
+
+  // Bio — og:description genellikle profil biyografisini içerir
+  const bioMatch = markdown.match(/(?:bio|description)[:\s]+([^\n]{10,200})/i)
+  const bio = result.description ?? bioMatch?.[1]?.trim() ?? ''
+
+  // Follower/following sayıları — metin içinden çek
+  const followersMatch = markdown.match(/(\d[\d,.]+)\s*(?:Followers?|Takipçi)/i)
+  const followingMatch = markdown.match(/(\d[\d,.]+)\s*(?:Following|Takip)/i)
+  const tweetsMatch = markdown.match(/(\d[\d,.]+)\s*(?:posts?|tweets?|Gönderi)/i)
+
   return {
-    username: cleanUsername,
+    username,
+    displayName,
+    bio,
+    location: result.location ?? '',
+    website: result.website ?? '',
+    joinDate: '',
+    tweets: parseStat(tweetsMatch?.[1]),
+    followers: parseStat(followersMatch?.[1]),
+    following: parseStat(followingMatch?.[1]),
+    verified: markdown.toLowerCase().includes('verified') || title.includes('✓'),
+    recentTweets: [],
+    avatarUrl: result.avatarUrl ?? '',
+    instanceUsed: source,
+  }
+}
+
+function parseStat(text: string | undefined): number {
+  if (!text) return 0
+  const clean = text.replace(/,/g, '').replace(/\./g, '')
+  if (text.toLowerCase().endsWith('k')) return Math.round(parseFloat(text) * 1000)
+  if (text.toLowerCase().endsWith('m')) return Math.round(parseFloat(text) * 1_000_000)
+  return parseInt(clean, 10) || 0
+}
+
+function empty(username: string, error: string): NitterProfile {
+  return {
+    username,
     displayName: '',
     bio: '',
     location: '',
@@ -215,38 +142,39 @@ export async function fetchNitterProfile(username: string): Promise<NitterProfil
     verified: false,
     recentTweets: [],
     avatarUrl: '',
-    error: `Tüm Nitter instance'ları başarısız (çoğu bot koruması kullanıyor):\n${errors.join('\n')}\n\n💡 Alternatif: web_fetch ile https://twitter.com/${cleanUsername} dene veya scrape_profile kullan.`,
+    error,
   }
 }
 
 /**
- * Nitter profil sonuçlarını formatla
+ * Profil sonucunu formatla
  */
 export function formatNitterResult(profile: NitterProfile): string {
   if (profile.error) {
-    return `❌ Nitter hatası (@${profile.username}): ${profile.error}`
+    return `❌ Twitter/X profil hatası (@${profile.username}): ${profile.error}`
   }
 
   const lines: string[] = [
     `🐦 Twitter/X Profili: @${profile.username}`,
-    `(Kaynak: Nitter — ${profile.instanceUsed || 'unknown'})`,
+    `(Kaynak: ${profile.instanceUsed ?? 'scrapling'})`,
     '',
     `İsim: ${profile.displayName || 'N/A'}`,
     `Bio: ${profile.bio || 'N/A'}`,
     `Konum: ${profile.location || 'N/A'}`,
-    `Website: ${profile.website || 'N/A'}`,
-    `Katılım: ${profile.joinDate || 'N/A'}`,
-    `Tweet: ${profile.tweets} | Takipçi: ${profile.followers} | Takip: ${profile.following}`,
-    profile.verified ? '✅ Doğrulanmış hesap' : '',
-  ].filter(Boolean)
+    `Web: ${profile.website || 'N/A'}`,
+    `Tweet: ${profile.tweets || 'N/A'}`,
+    `Takipçi: ${profile.followers || 'N/A'}`,
+    `Takip: ${profile.following || 'N/A'}`,
+    `Doğrulanmış: ${profile.verified ? '✅ Evet' : '❌ Hayır'}`,
+  ]
 
+  if (profile.avatarUrl) lines.push(`Avatar: ${profile.avatarUrl}`)
   if (profile.recentTweets.length > 0) {
-    lines.push('')
-    lines.push(`Son ${profile.recentTweets.length} tweet:`)
-    for (const tweet of profile.recentTweets) {
-      lines.push(`  • ${tweet}`)
-    }
+    lines.push('', 'Son Tweetler:')
+    profile.recentTweets.forEach((t, i) => lines.push(`  ${i + 1}. ${t}`))
   }
 
   return lines.join('\n')
 }
+
+

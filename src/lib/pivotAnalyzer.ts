@@ -6,14 +6,14 @@
  * 1. Email bulundu ama check_email_registrations yapılmadı
  * 2. Email bulundu ama check_breaches yapılmadı
  * 3. Website/blog var ama scrape edilmedi
- * 4. Twitter kullanıcısı var ama nitter_profile yapılmadı
+ * 4. Twitter kullanıcısı var ama profil çekilmedi (nitter_profile/scrape_profile)
  * 5. Doğrulanmamış Sherlock profilleri — verify_profiles yapılmadı
  */
 
 import { getConnections, findLinkedIdentifiers } from './neo4j.js'
 
 export interface PivotSuggestion {
-  type: 'email_registration' | 'email_breach' | 'scrape_website' | 'nitter_profile' | 'verify_profiles' | 'deep_github'
+  type: 'email_registration' | 'email_breach' | 'scrape_website' | 'twitter_profile' | 'verify_profiles' | 'deep_github'
   target: string
   tool: string
   priority: 'high' | 'medium' | 'low'
@@ -123,14 +123,14 @@ export async function findUnexploredPivots(username: string): Promise<PivotAnaly
     .map(c => c.to)
 
   for (const handle of twitterHandles) {
-    // Nitter ile profil çekilmiş mi?
+    // Twitter profili çekilmiş mi? (scrapling stealth)
     const handleConnections = await getConnections(handle)
-    const hasNitterData = handleConnections.some(c =>
-      c.source === 'nitter'
+    const hasTwitterData = handleConnections.some(c =>
+      c.source === 'nitter' || c.source === 'scrapling-stealth' || c.source === 'scrapling-dynamic'
     )
-    if (!hasNitterData) {
+    if (!hasTwitterData) {
       suggestions.push({
-        type: 'nitter_profile',
+        type: 'twitter_profile',
         target: handle,
         tool: 'nitter_profile',
         priority: 'medium',

@@ -1075,7 +1075,7 @@ async function runVerifyProfiles(username: string): Promise<string> {
 }
 
 async function runNitterProfile(username: string): Promise<string> {
-  console.log(chalk.cyan(`\n   🐦 Twitter/X profil çekiliyor (Nitter): `) + chalk.yellow.bold(username) + chalk.cyan(`...`))
+  console.log(chalk.cyan(`\n   🐦 Twitter/X profil çekiliyor (Scrapling Stealth): `) + chalk.yellow.bold(username) + chalk.cyan(`...`))
   const result = await fetchNitterProfile(username)
 
   if (result.error) {
