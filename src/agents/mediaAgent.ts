@@ -37,7 +37,9 @@ Context'te URL varsa MUTLAKA kendi araçlarınla doğrula:
 2. Çektiğin ham içeriklerdeki çelişkili ifadeleri tespit et
 3. search_web ile bağımsız kaynaklar bul (fact-check siteleri, Reuters, AP)
 4. wayback_search ile haber geçmişini incele (silinmiş/değiştirilmiş içerik)
-5. fact_check_to_graph ile sonuçları Neo4j'e kaydet
+5. fact_check_to_graph ile sonuçları Neo4j'e kaydet — **YALNIZCA BİR KEZ, tüm araştırma bittikten sonra**
+
+⛔ fact_check_to_graph'ı birden fazla kez ÇAĞIRMA. Her araç çağrısından sonra değil, tüm doğrulama tamamlandığında tek çağrı yap.
 
 ━━━ DİNAMİK GÜVEN SKORU HESAPLAMA ━━━
 
