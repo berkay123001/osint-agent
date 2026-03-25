@@ -6,7 +6,7 @@ import type { Message, AgentConfig, AgentResult } from './types.js';
 const DEFAULT_MODEL = 'qwen/qwen3.5-flash-02-23';
 const SUPERVISOR_MODEL = 'qwen/qwen3.5-plus-02-15';
 export { DEFAULT_MODEL, SUPERVISOR_MODEL };
-const MAX_TOOL_CALLS_PER_TURN = 30;
+const DEFAULT_MAX_TOOL_CALLS = 30;
 
 const client = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -28,9 +28,10 @@ export async function runAgentLoop(
   let toolCallCount = 0;
   let emptyRetries = 0;
   const toolsUsed: Record<string, number> = {};
+  const maxToolCalls = config.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
   
   while (true) {
-    const toolChoice: 'auto' | 'none' = toolCallCount >= MAX_TOOL_CALLS_PER_TURN ? 'none' : 'auto';
+    const toolChoice: 'auto' | 'none' = toolCallCount >= maxToolCalls ? 'none' : 'auto';
     if (toolChoice === 'none') {
       console.log(chalk.yellow(`\n   ⚠️  [${config.name}] Maksimum araç çağrısı aşıldı, özet isteniyor...`));
     }

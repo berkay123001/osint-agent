@@ -8,6 +8,7 @@ export interface AgentConfig {
   tools: OpenAI.Chat.ChatCompletionTool[];
   executeTool: ToolExecutor;
   model?: string;
+  maxToolCalls?: number; // default 30; derin araştırma yapan ajanlar için artırılabilir
 }
 
 export type Message = OpenAI.Chat.ChatCompletionMessageParam;

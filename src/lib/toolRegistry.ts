@@ -620,7 +620,7 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     
     if (cacheableTools.has(name) && toolCache.has(cacheKey)) {
       console.log(chalk.yellow(`   ⚡ [Cache Hit] ${name} (${JSON.stringify(args)}) hafızadan getirildi. Tekrar çalıştırılmadı.`));
-      return toolCache.get(cacheKey)!;
+      return `[⚡ ZATEN OKUNDU — Bu araç daha önce aynı parametrelerle çağrıldı. Aşağıdaki sonuç hafızadan geldi, tekrar çağırman gerekmez — bu veriyi kullanarak ilerle.]\n\n` + toolCache.get(cacheKey)!;
     }
 
     let result = '';
@@ -700,6 +700,34 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
    👤 Araştırmacı Arama (Semantic Scholar): `) + chalk.yellow.bold(args.name))
       const authorResult = await searchAuthorPapers(args.name, args.affiliation)
       result = formatAuthorResult(authorResult)
+      // Graf'a yaz — AuthorPaper'ı AcademicPaper formatına çevir
+      if (authorResult.author && authorResult.author.papers.length > 0) {
+        try {
+          const { getDriver } = await import('./neo4j.js')
+          const driver = getDriver()
+          const neo4jWrite = async (query: string, params: Record<string, unknown>) => {
+            const session = driver.session()
+            try { await session.run(query, params) } finally { await session.close() }
+          }
+          const papers = authorResult.author.papers.map((p) => ({
+            arxivId: p.arxivId ?? p.paperId,
+            title: p.title,
+            authors: [authorResult.author!.name],
+            abstract: '',
+            publishedDate: p.year ? `${p.year}-01-01` : '',
+            updatedDate: '',
+            categories: [],
+            pdfUrl: p.doi ? `https://doi.org/${p.doi}` : '',
+            htmlUrl: p.arxivId ? `https://arxiv.org/abs/${p.arxivId}` : '',
+            totalCitations: p.citationCount,
+          }))
+          const stats = await writeAcademicPapersToGraph(papers, args.name, neo4jWrite)
+          console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.papersCreated} makale, ${stats.authorsLinked} yazar bağlantısı`))
+          result += `\n\n💾 Neo4j Graf: ${stats.papersCreated} Paper node, ${stats.authorsLinked} AUTHORED_BY ilişkisi oluşturuldu.`
+        } catch {
+          console.log(chalk.gray(`   ⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)`))
+        }
+      }
     }
     else if (name === 'generate_report') {
       console.log(chalk.cyan(`\n   📄 Rapor oluşturuluyor [${args.reportType || 'osint'}]: `) + chalk.yellow.bold(args.subject))
