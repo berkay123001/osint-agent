@@ -28,6 +28,7 @@ export async function runAgentLoop(
   let toolCallCount = 0;
   let emptyRetries = 0;
   let correctionRetries = 0;
+  let totalCorrectionAttempts = 0; // Global cap — sonsuz döngüyü önler
   const toolsUsed: Record<string, number> = {};
   const maxToolCalls = config.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
   
@@ -75,7 +76,25 @@ export async function runAgentLoop(
         // Geçersiz JSON argümanı hatası → modele düzeltme fırsatı ver (maks 3 deneme)
         if (upstreamErr.includes('function.arguments') || upstreamErr.includes('InvalidParameter')) {
           correctionRetries++;
-          console.log(chalk.yellow(`\n   ⚠️  [${config.name}] Model geçersiz JSON üretmişti, düzeltme isteniyor... (deneme ${correctionRetries}/3)`));
+          totalCorrectionAttempts++;
+          console.log(chalk.yellow(`\n   ⚠️  [${config.name}] Model geçersiz JSON üretmişti, düzeltme isteniyor... (deneme ${correctionRetries}/3, toplam: ${totalCorrectionAttempts})`));
+          
+          // Global cap: 6 toplam denemeden sonra zorla metin yanıt al
+          if (totalCorrectionAttempts >= 6) {
+            console.log(chalk.red(`\n   🚫 [${config.name}] JSON düzeltme 6 kez başarısız — araç çağrısı devre dışı bırakılıyor.`));
+            history.push({
+              role: 'user',
+              content:
+                'ARAÇ ÇAĞRISI DEVRE DIŞI. Topladığın tüm bilgileri kullanarak doğrudan Markdown metin olarak yanıt ver. ' +
+                'Herhangi bir araç çağırma — sadece metin yaz.',
+            });
+            // toolChoice'ı 'none' yapmak için maxToolCalls'ı aşıldı hisset
+            toolCallCount = maxToolCalls + 1;
+            correctionRetries = 0;
+            totalCorrectionAttempts = 0;
+            continue;
+          }
+          
           if (correctionRetries >= 3) {
             correctionRetries = 0;
             history.push({
