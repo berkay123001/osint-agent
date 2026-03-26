@@ -75,6 +75,16 @@ export async function runAgentLoop(
         const upstreamErr = JSON.stringify(respAny['error']);
         // Geçersiz JSON argümanı hatası → modele düzeltme fırsatı ver (maks 3 deneme)
         if (upstreamErr.includes('function.arguments') || upstreamErr.includes('InvalidParameter')) {
+          // Zaten cap'e ulaşıldıysa: araç çağrısı kalıcı olarak devre dışı, döngüyü kır
+          if (totalCorrectionAttempts >= 6) {
+            console.log(chalk.red(`\n   🚫 [${config.name}] Araç çağrısı zaten devre dışı ama model hâlâ hata üretiyor — çıkılıyor.`));
+            return {
+              finalResponse: 'Model geçersiz JSON üretmeye devam ediyor, yanıt üretilemiyor. Toplanan veriler session dosyasına kaydedildi.',
+              toolCallCount,
+              toolsUsed,
+            };
+          }
+
           correctionRetries++;
           totalCorrectionAttempts++;
           console.log(chalk.yellow(`\n   ⚠️  [${config.name}] Model geçersiz JSON üretmişti, düzeltme isteniyor... (deneme ${correctionRetries}/3, toplam: ${totalCorrectionAttempts})`));
@@ -89,9 +99,9 @@ export async function runAgentLoop(
                 'Herhangi bir araç çağırma — sadece metin yaz.',
             });
             // toolChoice'ı 'none' yapmak için maxToolCalls'ı aşıldı hisset
+            // totalCorrectionAttempts SIFIRLANMIYOR — bir sonraki JSON hatasında anında döner
             toolCallCount = maxToolCalls + 1;
             correctionRetries = 0;
-            totalCorrectionAttempts = 0;
             continue;
           }
           
