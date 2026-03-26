@@ -621,7 +621,7 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       'run_sherlock', 'run_github_osint', 'cross_reference', 'extract_metadata',
       'parse_gpg_key', 'wayback_search', 'web_fetch', 'check_email_registrations',
       'check_breaches', 'search_web', 'scrape_profile', 'verify_profiles',
-      'nitter_profile', 'search_person'
+      'nitter_profile', 'search_person', 'fact_check_to_graph'
     ]);
 
     const cacheKey = `${name}:${JSON.stringify(args)}`;
