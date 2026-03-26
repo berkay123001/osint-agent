@@ -102,10 +102,24 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
     return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.\n📄 Follow-up sorular için (hangi makaleler, linkleri neler vb.) read_session_file aracını kullan — AcademicAgent\'ı TEKRAR çağırma.`;
   } else if (name === 'read_session_file') {
     try {
-      const sessionFile = path.resolve(__dirname, '../../.osint-sessions/academic-last-session.md');
+      const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
       const { readFile } = await import('fs/promises');
-      const content = await readFile(sessionFile, 'utf-8');
-      return content;
+      const reportFile = path.join(sessionDir, 'academic-last-session.md');
+      const knowledgeFile = path.join(sessionDir, 'academic-knowledge.md');
+      
+      const [report, knowledge] = await Promise.allSettled([
+        readFile(reportFile, 'utf-8'),
+        readFile(knowledgeFile, 'utf-8'),
+      ]);
+
+      const parts: string[] = [];
+      if (report.status === 'fulfilled') parts.push(`# 📋 AcademicAgent Raporu\n\n${report.value}`);
+      if (knowledge.status === 'fulfilled') parts.push(knowledge.value);
+      
+      if (parts.length === 0) {
+        return '⚠️ Henüz kaydedilmiş bir akademik araştırma oturumu yok. Önce ask_academic_agent çağırın.';
+      }
+      return parts.join('\n\n---\n\n');
     } catch {
       return '⚠️ Henüz kaydedilmiş bir akademik araştırma oturumu yok. Önce ask_academic_agent çağırın.';
     }

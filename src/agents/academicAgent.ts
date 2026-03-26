@@ -2,6 +2,81 @@ import type { Message, AgentConfig } from './types.js';
 import { runAgentLoop } from './baseAgent.js';
 import { tools, executeTool } from '../lib/toolRegistry.js';
 import chalk from 'chalk';
+import { writeFile, mkdir } from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+/** History'den araç call+result pair'larını çıkarır, raw knowledge olarak kaydeder */
+async function saveKnowledgeFromHistory(history: Message[], query: string): Promise<void> {
+  // tool_call_id → { name, args, result } mapping kur
+  const toolResultMap = new Map<string, string>();
+  for (const msg of history) {
+    if (msg.role === 'tool') {
+      const toolMsg = msg as { role: 'tool'; tool_call_id: string; content: string };
+      const content = Array.isArray(toolMsg.content)
+        ? toolMsg.content.map((c: { text?: string }) => c.text ?? '').join('')
+        : (toolMsg.content as string) ?? '';
+      toolResultMap.set(toolMsg.tool_call_id, content);
+    }
+  }
+
+  // Assistant mesajlarındaki tool_calls ile sonuçları eşleştir
+  const calls: { name: string; args: string; result: string }[] = [];
+  for (const msg of history) {
+    const assistantMsg = msg as { role: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] };
+    if (assistantMsg.role !== 'assistant' || !assistantMsg.tool_calls) continue;
+    for (const tc of assistantMsg.tool_calls) {
+      const result = toolResultMap.get(tc.id) ?? '(sonuç yok)';
+      calls.push({ name: tc.function.name, args: tc.function.arguments, result });
+    }
+  }
+
+  if (calls.length === 0) return;
+
+  // Gruplara böl
+  const groups: Record<string, { name: string; args: string; result: string }[]> = {};
+  for (const c of calls) {
+    if (!groups[c.name]) groups[c.name] = [];
+    groups[c.name].push(c);
+  }
+
+  const MAX_RESULT_CHARS = 3000; // Her araç sonucu için max karakter
+  let md = `# 📚 Akademik Araştırma Ham Bilgi Tabanı\n\n`;
+  md += `**Sorgu:** ${query}\n**Tarih:** ${new Date().toISOString()}\n**Toplam araç çağrısı:** ${calls.length}\n\n---\n\n`;
+
+  for (const [toolName, toolCalls] of Object.entries(groups)) {
+    const emoji: Record<string, string> = {
+      search_academic_papers: '🔬',
+      search_researcher_papers: '👤',
+      search_web: '🌐',
+      web_fetch: '📄',
+      scrape_profile: '👁️',
+      wayback_search: '🕰️',
+      query_graph: '🗃️',
+    };
+    md += `## ${emoji[toolName] ?? '🔧'} ${toolName} (${toolCalls.length} çağrı)\n\n`;
+    for (let i = 0; i < toolCalls.length; i++) {
+      let args: Record<string, string> = {};
+      try { args = JSON.parse(toolCalls[i].args); } catch { /* ignore */ }
+      const argStr = Object.entries(args).map(([k, v]) => `${k}="${v}"`).join(', ');
+      const result = toolCalls[i].result;
+      const truncated = result.length > MAX_RESULT_CHARS
+        ? result.slice(0, MAX_RESULT_CHARS) + `\n... [${result.length - MAX_RESULT_CHARS} karakter kesildi]`
+        : result;
+      md += `### Çağrı ${i + 1}: \`${argStr}\`\n\`\`\`\n${truncated}\n\`\`\`\n\n`;
+    }
+  }
+
+  try {
+    const dir = path.resolve(__dirname, '../../.osint-sessions');
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'academic-knowledge.md'), md, 'utf-8');
+    console.log(chalk.gray(`   🧠 Ham bilgi tabanı kaydedildi → .osint-sessions/academic-knowledge.md (${calls.length} araç sonucu)`));
+  } catch { /* sessizce geç */ }
+}
 
 const ACADEMIC_TOOLS = [
   'search_researcher_papers', // Semantic Scholar Author API — araştırmacı profili ve tüm makale listesi
@@ -198,6 +273,9 @@ export async function runAcademicAgent(query: string, context?: string): Promise
     { role: 'user', content: context ? `Context:\n${context}\n\nAraştırma Görevi:\n${query}` : query }
   ];
   const result = await runAgentLoop(history, academicAgentConfig);
+  
+  // Ham bilgiyi history'den çıkar ve kaydet (Supervisor follow-up soruları için)
+  await saveKnowledgeFromHistory(history, query);
   
   // Gerçek kullanım istatistikleri — halüsinasyona karşı
   const toolSummary = Object.entries(result.toolsUsed)
