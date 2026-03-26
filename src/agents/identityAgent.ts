@@ -2,6 +2,68 @@ import type { Message, AgentConfig } from './types.js';
 import { runAgentLoop } from './baseAgent.js';
 import { tools, executeTool } from '../lib/toolRegistry.js';
 import chalk from 'chalk';
+import { writeFile, mkdir } from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+async function saveKnowledgeFromHistory(history: Message[], query: string): Promise<void> {
+  const toolResultMap = new Map<string, string>();
+  for (const msg of history) {
+    if (msg.role === 'tool') {
+      const toolMsg = msg as { role: 'tool'; tool_call_id: string; content: string };
+      const content = Array.isArray(toolMsg.content)
+        ? toolMsg.content.map((c: { text?: string }) => c.text ?? '').join('')
+        : (toolMsg.content as string) ?? '';
+      toolResultMap.set(toolMsg.tool_call_id, content);
+    }
+  }
+  const calls: { name: string; args: string; result: string }[] = [];
+  for (const msg of history) {
+    const assistantMsg = msg as { role: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] };
+    if (assistantMsg.role !== 'assistant' || !assistantMsg.tool_calls) continue;
+    for (const tc of assistantMsg.tool_calls) {
+      const result = toolResultMap.get(tc.id) ?? '(sonuç yok)';
+      calls.push({ name: tc.function.name, args: tc.function.arguments, result });
+    }
+  }
+  if (calls.length === 0) return;
+  const groups: Record<string, { name: string; args: string; result: string }[]> = {};
+  for (const c of calls) {
+    if (!groups[c.name]) groups[c.name] = [];
+    groups[c.name].push(c);
+  }
+  const MAX_RESULT_CHARS = 3000;
+  let md = `# 🕵️ Kimlik Araştırması Ham Bilgi Tabanı\n\n`;
+  md += `**Sorgu:** ${query}\n**Tarih:** ${new Date().toISOString()}\n**Toplam araç çağrısı:** ${calls.length}\n\n---\n\n`;
+  const emoji: Record<string, string> = {
+    run_sherlock: '🔍', run_github_osint: '🐙', check_email_registrations: '📧',
+    check_breaches: '🔓', search_person: '👤', cross_reference: '🔗',
+    verify_profiles: '✅', nitter_profile: '🐦', search_web: '🌐',
+    web_fetch: '📄', scrape_profile: '👁️',
+  };
+  for (const [toolName, toolCalls] of Object.entries(groups)) {
+    md += `## ${emoji[toolName] ?? '🔧'} ${toolName} (${toolCalls.length} çağrı)\n\n`;
+    for (let i = 0; i < toolCalls.length; i++) {
+      let args: Record<string, string> = {};
+      try { args = JSON.parse(toolCalls[i].args); } catch { /* ignore */ }
+      const argStr = Object.entries(args).map(([k, v]) => `${k}="${v}"`).join(', ');
+      const result = toolCalls[i].result;
+      const truncated = result.length > MAX_RESULT_CHARS
+        ? result.slice(0, MAX_RESULT_CHARS) + `\n... [${result.length - MAX_RESULT_CHARS} karakter kesildi]`
+        : result;
+      md += `### Çağrı ${i + 1}: \`${argStr}\`\n\`\`\`\n${truncated}\n\`\`\`\n\n`;
+    }
+  }
+  try {
+    const dir = path.resolve(__dirname, '../../.osint-sessions');
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'identity-knowledge.md'), md, 'utf-8');
+    console.log(chalk.gray(`   🧠 Kimlik ham bilgi tabanı kaydedildi → .osint-sessions/identity-knowledge.md (${calls.length} araç sonucu)`));
+  } catch { /* sessizce geç */ }
+}
 
 const IDENTITY_TOOLS = [
   'run_sherlock', 'run_github_osint', 'parse_gpg_key', 
@@ -45,6 +107,7 @@ export async function runIdentityAgent(query: string, context?: string): Promise
     { role: 'user', content: context ? `Context:\n${context}\n\nTask:\n${query}` : query }
   ];
   const result = await runAgentLoop(history, identityAgentConfig);
+  await saveKnowledgeFromHistory(history, query);
   const toolSummary = Object.entries(result.toolsUsed)
     .map(([tool, count]) => `${tool}×${count}`)
     .join(', ');

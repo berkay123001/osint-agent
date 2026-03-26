@@ -82,11 +82,25 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
   if (name === 'ask_identity_agent') {
     const r = await runIdentityAgent(args.query, args.context);
     setReportContentBuffer(r);
-    return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.`;
+    try {
+      const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
+      await mkdir(sessionDir, { recursive: true });
+      const header = `# Kimlik Araştırması Oturum Dosyası\n\n**Sorgu:** ${args.query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`;
+      await writeFile(path.join(sessionDir, 'identity-last-session.md'), header + r, 'utf-8');
+      console.log(chalk.gray(`   📝 Kimlik session kaydedildi → .osint-sessions/identity-last-session.md`));
+    } catch { /* sessizce geç */ }
+    return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.\n📄 Follow-up sorular için read_session_file aracını kullan — IdentityAgent\'ı TEKRAR çağırma.`;
   } else if (name === 'ask_media_agent') {
     const r = await runMediaAgent(args.query, args.context);
     setReportContentBuffer(r);
-    return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.`;
+    try {
+      const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
+      await mkdir(sessionDir, { recursive: true });
+      const header = `# Medya Araştırması Oturum Dosyası\n\n**Sorgu:** ${args.query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`;
+      await writeFile(path.join(sessionDir, 'media-last-session.md'), header + r, 'utf-8');
+      console.log(chalk.gray(`   📝 Medya session kaydedildi → .osint-sessions/media-last-session.md`));
+    } catch { /* sessizce geç */ }
+    return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.\n📄 Follow-up sorular için read_session_file aracını kullan — MediaAgent\'ı TEKRAR çağırma.`;
   } else if (name === 'ask_academic_agent') {
     const r = await runAcademicAgent(args.query, args.context);
     setReportContentBuffer(r);
@@ -104,24 +118,27 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
     try {
       const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
       const { readFile } = await import('fs/promises');
-      const reportFile = path.join(sessionDir, 'academic-last-session.md');
-      const knowledgeFile = path.join(sessionDir, 'academic-knowledge.md');
-      
-      const [report, knowledge] = await Promise.allSettled([
-        readFile(reportFile, 'utf-8'),
-        readFile(knowledgeFile, 'utf-8'),
-      ]);
-
+      // Tüm 3 ajan için dosyaları paralel oku
+      const files = [
+        { label: '📋 AcademicAgent Raporu', report: 'academic-last-session.md', knowledge: 'academic-knowledge.md' },
+        { label: '🕵️ IdentityAgent Raporu', report: 'identity-last-session.md', knowledge: 'identity-knowledge.md' },
+        { label: '📰 MediaAgent Raporu', report: 'media-last-session.md', knowledge: 'media-knowledge.md' },
+      ];
       const parts: string[] = [];
-      if (report.status === 'fulfilled') parts.push(`# 📋 AcademicAgent Raporu\n\n${report.value}`);
-      if (knowledge.status === 'fulfilled') parts.push(knowledge.value);
-      
+      for (const f of files) {
+        const [report, knowledge] = await Promise.allSettled([
+          readFile(path.join(sessionDir, f.report), 'utf-8'),
+          readFile(path.join(sessionDir, f.knowledge), 'utf-8'),
+        ]);
+        if (report.status === 'fulfilled') parts.push(`# ${f.label}\n\n${report.value}`);
+        if (knowledge.status === 'fulfilled') parts.push(knowledge.value);
+      }
       if (parts.length === 0) {
-        return '⚠️ Henüz kaydedilmiş bir akademik araştırma oturumu yok. Önce ask_academic_agent çağırın.';
+        return '⚠️ Henüz kaydedilmiş araştırma oturumu yok. Önce bir sub-agent çağırın (ask_academic_agent, ask_identity_agent veya ask_media_agent).';
       }
       return parts.join('\n\n---\n\n');
     } catch {
-      return '⚠️ Henüz kaydedilmiş bir akademik araştırma oturumu yok. Önce ask_academic_agent çağırın.';
+      return '⚠️ Henüz kaydedilmiş araştırma oturumu yok.';
     }
   } else {
     // Normal araçlar (graf, search_web vs.) için ortak registry kullan
@@ -140,10 +157,15 @@ Kullanıcıyla doğrudan sen muhatap olursun.
 ⚠️ KRİTİK KURAL: ASLA boş yanıt dönme. Her zaman topladığın verileri analiz edip kullanıcıya detaylı bir Markdown raporu sun.
 
 KARAR AĞACI — Kullanıcının isteğine göre hemen şunu yap:
+0. 🔑 SESSION KONTROLÜ (KRİTİK — her konuşma başında bir kez yap):
+   Eğer kullanıcı önceki bir araştırmaya atıfta bulunuyorsa ("daha önce baktık", "az önce", "peki ya", "hangi", özel isim tekrar ediyorsa):
+   → ÖNCE read_session_file çağır. Disk'te kalıcı bilgi var mı kontrol et.
+   → Varsa: sub-agent çağırmadan direkt cevap ver.
+   → Yoksa: normal KARAR AĞACI'nı uygula.
 1. Kişi/username/email araştırması → ask_identity_agent çağır. İstersen önce 1-2 hızlı search_web ile bağlam toplayabilirsin, ama toplamayı asıl sub-ajan yapar — sen koordinatörsün.
 2. Görsel/video/haber doğrulama → Önce search_web ile ilgili haberleri ve URL'leri topla. Sonra ask_media_agent çağır — context field'ına topladığın URL'leri ve ham alıntıları yaz. ASLA sadece özet geçme.
 3. Akademik araştırma (makale, konu, yayın, araştırmacı, citation) → HEMEN ask_academic_agent çağır.
-   ⚠️ FOLLOW-UP İSTİSNASI: Daha önce ask_academic_agent çağrıldıysa ve kullanıcı "hangi makaleler, linkleri neler, konuları neler" gibi follow-up soruyor ise: TEKRAR devretme. Bunun yerine:
+   ⚠️ FOLLOW-UP İSTİSNASI: Daha önce ask_academic_agent çağrıldıysa ve kullanıcı "hangi makaleler, linkleri neler" gibi follow-up soruyor ise:
    → Kendi history'ndeki [AGENT_DONE] raporundan cevap ver
    → Yeterli değilse: read_session_file aracını çağır (tam makale listesi + linkleri oradan gelir)
 4. Graf sorgusu (bağlantılar, istatistik) → query_graph, list_graph_nodes, graph_stats kullan.
