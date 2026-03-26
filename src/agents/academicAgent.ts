@@ -107,14 +107,19 @@ Her makale için içerikten şunları çıkar:
   search_web → site:dl.acm.org "[konu]"              → ACM
   search_web → site:ieeexplore.ieee.org "[konu]"     → IEEE
 
-**FAZ 3 — TOPIC MAP + ATİF KONTROLÜ**
+**FAZ 3 — TOPIC MAP + ATİF KONTROLÜ + GRUPLAMA**
   Tüm makalelerden alt-konuları çıkar.
-  En önemli 3 makale için Semantic Scholar citation çek:
+  Makaleleri YAKLAŞIMA göre gruplandır (yöntem/mimari/teknik benzerliği temel al):
+    Grup A: [Yaklaşım adı] — kaç makale, hangileri?
+    Grup B: [Yaklaşım adı] — kaç makale, hangileri?
+    ...
+  En önemli 3-5 makale için Semantic Scholar citation çek:
   web_fetch → https://api.semanticscholar.org/graph/v1/paper/arXiv:[id]?fields=citationCount,influentialCitationCount
 
-**FAZ 4 — İÇERİK OKUMA (en önemli 3-5 makale)**
+**FAZ 4 — İÇERİK OKUMA (en önemli 5-7 makale, grupları temsil edecek şekilde seç)**
   web_fetch → https://ar5iv.labs.arxiv.org/html/[arxivId]
   Fallback: web_fetch → https://arxiv.org/abs/[arxivId]
+  Her gruptan en az 1 makale oku — grubun yaklaşımını anlaman gerekiyor.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 RAPOR FORMATI
@@ -156,15 +161,34 @@ Her okunan makale için:
 - ⚠️ **Sınırlılıklar**: (makalenin kabul ettiği eksikler)
 - 🔗 Kaynak linki
 
+### ⚔️ Yaklaşımlar Arası Karşılaştırma [KONU MODUNDA — ZORUNLU]
+Bulunan makaleleri yaklaşıma göre gruplandırıp karşılaştır:
+
+| Yaklaşım | Temsilci Makale(ler) | Güçlü Yön | Zayıf Yön | Ne Zaman Öne Çıkıyor? |
+|----------|----------------------|-----------|-----------|----------------------|
+
+Tablonun altında **2-3 paragraflık sentez** yaz:
+- Hangi yaklaşım hangi problem tipinde üstün?
+- Makaleler arasında **çelişen bulgular** var mı? (varsa hangisi daha güvenilir, neden?)
+- Alandaki genel **fikir birliği nedir**, tartışma konuları nelerdir?
+
+### 🕳️ Araştırma Boşlukları [KONU MODUNDA — ZORUNLU]
+Okunan makalelerin "limitations" ve "future work" bölümlerinden sentezle:
+1. **[Boşluk adı]**: Hangi makaleler bu sorunu kabul ediyor? Neden çözülememiş?
+2. ...
+(En az 3 spesifik boşluk — "daha fazla veri gerekiyor" gibi genel ifadeler yasak)
+
 ### 📈 Trend / Genel Değerlendirme
 Araştırmacının konu evrimi VEYA alandaki genel yönelimler.
+Alan 2020'den bu yana nasıl değişti? Önceki dominant yaklaşımın yerini ne aldı?
 
 ━━━ KURALLAR ━━━
 - arXiv YOKSA başka kaynak kullan. Türk akademisyenler için Semantic Scholar + DergiPark öncelikli.
 - Makale içeriğini OKUMADAN analiz yazma. "Başlıktan anlaşıldığına göre..." yasak.
 - Atıf sayısı uydurmayacaksın — Semantic Scholar'dan al veya "bilinmiyor" yaz.
 - Bulunan TÜM makaleleri Konu Haritası ve Atıf tablosuna ekle, sadece okuduklarını değil.
-- Semantic Scholar Author API sonucu gelmezse: ORCID → ResearchGate → DergiPark → üniversite sayfası sırasıyla dene.`,
+- Semantic Scholar Author API sonucu gelmezse: ORCID → ResearchGate → DergiPark → üniversite sayfası sırasıyla dene.
+- KONU MODUNDA karşılaştırma tablosu ve araştırma boşlukları bölümleri ZORUNLUDUR — eksik bırakma.`,
 };
 
 export async function runAcademicAgent(query: string, context?: string): Promise<string> {
