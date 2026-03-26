@@ -27,6 +27,7 @@ import { writeFactCheckToGraph } from './neo4jFactCheck.js';
 import { searchReverseImage, formatReverseImageResult } from '../tools/reverseImageTool.js';
 import { searchPerson, formatPersonSearchResult } from '../tools/personSearchTool.js'
 import { searchAcademicPapers, formatAcademicResult, writeAcademicPapersToGraph, searchAuthorPapers, formatAuthorResult } from '../tools/academicSearchTool.js'
+import type { AcademicSearchResult } from '../tools/academicSearchTool.js'
 import { generateOsintReport } from '../tools/reportTool.js'
 import { checkPlagiarism } from '../tools/plagiarismTool.js'
 import os from 'os'
@@ -789,8 +790,10 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     else if (name === 'search_academic_papers') {
       const maxResults = parseInt(args.maxResults ?? '10') || 10
       const sortBy = (args.sortBy as 'relevance' | 'submittedDate' | 'lastUpdatedDate') ?? 'submittedDate'
-      console.log(chalk.cyan(`\n   🔬 Akademik Araştırma (arXiv): `) + chalk.yellow.bold(args.query))
+      console.log(chalk.cyan(`\n   🔬 Akademik Araştırma (arXiv + Semantic Scholar): `) + chalk.yellow.bold(args.query))
       const searchResult = await searchAcademicPapers(args.query, maxResults, sortBy)
+      const ssNote = (searchResult as AcademicSearchResult & { _ssNote?: string })._ssNote
+      if (ssNote) console.log(chalk.gray(ssNote))
       result = formatAcademicResult(searchResult)
       // Graf'a yaz
       try {
