@@ -505,14 +505,13 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'generate_report',
       description:
-        'Araştırma tamamlandıktan sonra tüm bulguları yapılandırılmış Markdown raporu olarak dosyaya kaydeder.\n\nreportType seçenekleri:\n- "osint" (varsayılan): Kişi/username araştırması — Neo4j grafından profil/email/sızıntı/platform verisini çeker.\n- "academic": Makale/konu araştırması — sadece additionalFindings içeriğini kullanır, Neo4j\'e bakmaz. AcademicAgent raporu bittikten sonra kullan.\n- "factcheck": Haber/görsel doğrulama — MediaAgent raporu bittikten sonra kullan.\n\nKullanıcı "rapor oluştur" / "rapor ver" / "kaydet" dediğinde ya da bir alt-ajan tamamlandığında HEMEN çağır.',
+        'Araştırma tamamlandıktan sonra tüm bulguları yapılandırılmış Markdown raporu olarak dosyaya kaydeder.\n\nreportType seçenekleri:\n- "osint" (varsayılan): Kişi/username araştırması — Neo4j grafından profil/email/sızıntı/platform verisini çeker.\n- "academic": Makale/konu araştırması — AcademicAgent raporu bittikten sonra kullan.\n- "factcheck": Haber/görsel doğrulama — MediaAgent raporu bittikten sonra kullan.\n\nKullanıcı "rapor oluştur" / "rapor ver" / "kaydet" dediğinde ya da bir alt-ajan tamamlandığında HEMEN çağır.\n⚠️ SADECE subject ve reportType gönder — içerik dahili buffer\'dan otomatik okunur, additionalFindings GÖNDERME.',
       parameters: {
         type: 'object',
         properties: {
           subject: { type: 'string', description: 'Araştırılan konu, kişi veya entity (username, makale konusu, iddia metni vb.)' },
           reportType: { type: 'string', enum: ['osint', 'academic', 'factcheck'], description: 'Rapor tipi. Makale/akademik çalışma için "academic", görsel/haber doğrulama için "factcheck", kişi OSINT için "osint" (varsayılan).' },
           title: { type: 'string', description: 'Opsiyonel rapor başlığı' },
-          additionalFindings: { type: 'string', description: 'Ajan raporunun tam metni veya analist notları. Academic/Factcheck modunda bu alan tüm raporu taşır.' },
         },
         required: ['subject'],
       },
