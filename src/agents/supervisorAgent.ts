@@ -6,6 +6,12 @@ import { runAcademicAgent } from './academicAgent.js';
 import { tools, executeTool, setReportContentBuffer } from '../lib/toolRegistry.js';
 import type OpenAI from 'openai';
 import chalk from 'chalk';
+import { writeFile, mkdir } from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const SUPERVISOR_TOOLS = [
   'query_graph', 'list_graph_nodes', 'graph_stats', 'clear_graph', 
@@ -61,6 +67,14 @@ const supervisorMetaTools: OpenAI.Chat.ChatCompletionTool[] = [
         required: ['query']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_session_file',
+      description: 'En son akademik araştırma oturumunu disk\'ten okur. ask_academic_agent tamamlandıktan sonra follow-up sorularda kullan — AcademicAgent\'ı tekrar çağırma.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
   }
 ];
 
@@ -76,7 +90,25 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
   } else if (name === 'ask_academic_agent') {
     const r = await runAcademicAgent(args.query, args.context);
     setReportContentBuffer(r);
-    return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.`;
+    // Session dosyasına yaz — follow-up sorular için Supervisor buradan okur
+    try {
+      const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
+      await mkdir(sessionDir, { recursive: true });
+      const sessionFile = path.join(sessionDir, 'academic-last-session.md');
+      const header = `# Akademik Araştırma Oturum Dosyası\n\n**Sorgu:** ${args.query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`;
+      await writeFile(sessionFile, header + r, 'utf-8');
+      console.log(chalk.gray(`   📝 Akademik session kaydedildi → .osint-sessions/academic-last-session.md`));
+    } catch { /* sessizce geç */ }
+    return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.\n📄 Follow-up sorular için (hangi makaleler, linkleri neler vb.) read_session_file aracını kullan — AcademicAgent\'ı TEKRAR çağırma.`;
+  } else if (name === 'read_session_file') {
+    try {
+      const sessionFile = path.resolve(__dirname, '../../.osint-sessions/academic-last-session.md');
+      const { readFile } = await import('fs/promises');
+      const content = await readFile(sessionFile, 'utf-8');
+      return content;
+    } catch {
+      return '⚠️ Henüz kaydedilmiş bir akademik araştırma oturumu yok. Önce ask_academic_agent çağırın.';
+    }
   } else {
     // Normal araçlar (graf, search_web vs.) için ortak registry kullan
     return await executeTool(name, args);
@@ -97,6 +129,9 @@ KARAR AĞACI — Kullanıcının isteğine göre hemen şunu yap:
 1. Kişi/username/email araştırması → ask_identity_agent çağır. İstersen önce 1-2 hızlı search_web ile bağlam toplayabilirsin, ama toplamayı asıl sub-ajan yapar — sen koordinatörsün.
 2. Görsel/video/haber doğrulama → Önce search_web ile ilgili haberleri ve URL'leri topla. Sonra ask_media_agent çağır — context field'ına topladığın URL'leri ve ham alıntıları yaz. ASLA sadece özet geçme.
 3. Akademik araştırma (makale, konu, yayın, araştırmacı, citation) → HEMEN ask_academic_agent çağır.
+   ⚠️ FOLLOW-UP İSTİSNASI: Daha önce ask_academic_agent çağrıldıysa ve kullanıcı "hangi makaleler, linkleri neler, konuları neler" gibi follow-up soruyor ise: TEKRAR devretme. Bunun yerine:
+   → Kendi history'ndeki [AGENT_DONE] raporundan cevap ver
+   → Yeterli değilse: read_session_file aracını çağır (tam makale listesi + linkleri oradan gelir)
 4. Graf sorgusu (bağlantılar, istatistik) → query_graph, list_graph_nodes, graph_stats kullan.
 5. Rapor isteği ("rapor oluştur", "rapor ver", "raporu kaydet") → HEMEN generate_report çağır.
 6. Genel soru → Araç kullanmadan doğrudan yanıt ver.
