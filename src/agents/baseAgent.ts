@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import { sanitizeHistoryForProvider, normalizeAssistantMessage, normalizeToolContent } from '../lib/chatHistory.js';
 import type { Message, AgentConfig, AgentResult } from './types.js';
 
-const DEFAULT_MODEL = 'qwen/qwen3.5-flash-02-23';
+const DEFAULT_MODEL = 'qwen/qwen3.5-plus-02-15';
 const SUPERVISOR_MODEL = 'qwen/qwen3.5-plus-02-15';
 export { DEFAULT_MODEL, SUPERVISOR_MODEL };
 const DEFAULT_MAX_TOOL_CALLS = 30;
