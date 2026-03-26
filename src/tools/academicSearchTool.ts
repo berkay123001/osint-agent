@@ -210,6 +210,43 @@ export async function searchAcademicPapers(
   maxResults = 10,
   sortBy: 'relevance' | 'submittedDate' | 'lastUpdatedDate' = 'submittedDate',
 ): Promise<AcademicSearchResult> {
+  // arXiv ve Semantic Scholar'u paralel çalıştır
+  const [arxivResult, ssResult] = await Promise.allSettled([
+    _searchArxiv(query, maxResults, sortBy),
+    _searchSemanticScholar(query, Math.min(maxResults, 10)),
+  ]);
+
+  const arxivPapers = arxivResult.status === 'fulfilled' ? arxivResult.value.papers : [];
+  const arxivTotal = arxivResult.status === 'fulfilled' ? arxivResult.value.totalFound : 0;
+  const arxivError = arxivResult.status === 'fulfilled' ? arxivResult.value.error : (arxivResult.reason as Error)?.message;
+
+  const ssPapers = ssResult.status === 'fulfilled' ? ssResult.value : [];
+
+  // SS sonuçlarını AcademicPaper formatına çevir; arXiv'de olmayanları ekle
+  const arxivIds = new Set(arxivPapers.map(p => p.arxivId));
+  const ssUnique: AcademicPaper[] = ssPapers
+    .filter(p => !p.arxivId || !arxivIds.has(p.arxivId))
+    .map(p => p as AcademicPaper);
+
+  const combined = [...arxivPapers, ...ssUnique];
+  const ssNote = ssPapers.length > 0
+    ? `\n📖 Semantic Scholar: ${ssPapers.length} ek sonuç (DOI + venue bilgisi içerir)`
+    : '';
+
+  return {
+    papers: combined,
+    query,
+    totalFound: arxivTotal + ssPapers.length,
+    error: combined.length === 0 ? (arxivError ?? 'Sonuç bulunamadı') : undefined,
+    _ssNote: ssNote,
+  } as AcademicSearchResult & { _ssNote?: string };
+}
+
+async function _searchArxiv(
+  query: string,
+  maxResults: number,
+  sortBy: 'relevance' | 'submittedDate' | 'lastUpdatedDate',
+): Promise<AcademicSearchResult> {
   try {
     const encoded = encodeURIComponent(query)
     const url = `https://export.arxiv.org/api/query?search_query=all:${encoded}&sortBy=${sortBy}&sortOrder=descending&max_results=${maxResults}`
@@ -234,25 +271,83 @@ export async function searchAcademicPapers(
   }
 }
 
-export function formatAcademicResult(result: AcademicSearchResult): string {
+interface SSPaper extends AcademicPaper {
+  doi?: string
+  venue?: string
+  year?: number
+  citationCount?: number
+  isOpenAccess?: boolean
+}
+
+async function _searchSemanticScholar(query: string, limit: number): Promise<SSPaper[]> {
+  try {
+    const SEMANTIC_API_KEY = process.env.SEMANTIC_SCHOLAR_API_KEY;
+    const headers: Record<string, string> = { 'User-Agent': 'osint-agent/1.0 (research tool)' };
+    if (SEMANTIC_API_KEY) headers['x-api-key'] = SEMANTIC_API_KEY;
+
+    const fields = 'paperId,title,authors,year,citationCount,externalIds,venue,publicationVenue,isOpenAccess,abstract';
+    const encoded = encodeURIComponent(query);
+    const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encoded}&fields=${fields}&limit=${limit}`;
+
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+    if (!res.ok) return [];
+
+    const data = await res.json() as { data: any[] };
+    const papers: SSPaper[] = (data.data ?? []).map((p: any) => {
+      const arxivId: string = p.externalIds?.ArXiv ?? '';
+      const doi: string = p.externalIds?.DOI ?? '';
+      const year: number = p.year ?? 0;
+      const venue: string = p.publicationVenue?.name ?? p.venue ?? '';
+      return {
+        arxivId,
+        doi,
+        venue,
+        year,
+        title: p.title ?? '',
+        authors: (p.authors ?? []).map((a: any) => a.name ?? ''),
+        abstract: p.abstract ?? '',
+        publishedDate: year ? `${year}-01-01` : '',
+        updatedDate: '',
+        categories: [],
+        pdfUrl: arxivId ? `https://arxiv.org/pdf/${arxivId}` : (doi ? `https://doi.org/${doi}` : ''),
+        htmlUrl: arxivId ? `https://arxiv.org/abs/${arxivId}` : (doi ? `https://doi.org/${doi}` : ''),
+        totalCitations: p.citationCount ?? 0,
+        isOpenAccess: p.isOpenAccess ?? false,
+      };
+    });
+    return papers;
+  } catch {
+    return [];
+  }
+}
+
+export function formatAcademicResult(result: AcademicSearchResult & { _ssNote?: string }): string {
   if (result.error) return `❌ Akademik arama hatası: ${result.error}`
-  if (result.papers.length === 0) return `🔬 "${result.query}" için arXiv'de sonuç bulunamadı.`
+  if (result.papers.length === 0) return `🔬 "${result.query}" için sonuç bulunamadı.`
 
   const lines: string[] = [
     `🔬 Akademik Araştırma: "${result.query}"`,
-    `📊 Toplam eşleşme: ${result.totalFound} | Gösterilen: ${result.papers.length}`,
+    `📊 Toplam eşleşme: ${result.totalFound} | Gösterilen: ${result.papers.length}${result._ssNote ?? ''}`,
     '',
   ]
 
   for (const [i, p] of result.papers.entries()) {
+    const sp = p as SSPaper;
     lines.push(`### ${i + 1}. ${p.title}`)
-    lines.push(`   📅 Yayın: ${p.publishedDate} | 🆔 arXiv: ${p.arxivId}`)
+    lines.push(`   📅 Yayın: ${p.publishedDate} | 🆔 arXiv: ${p.arxivId || '(arXiv yok)'}`)
+    if (sp.doi) lines.push(`   🔑 DOI: https://doi.org/${sp.doi}  ← peer-reviewed`)
+    if (sp.venue) lines.push(`   🏛️  Venue: ${sp.venue}`)
+    if (sp.citationCount !== undefined && sp.citationCount > 0) lines.push(`   📊 Atıf: ${sp.citationCount}`)
     lines.push(`   👥 Yazarlar: ${p.authors.slice(0, 5).join(', ')}${p.authors.length > 5 ? ` +${p.authors.length - 5}` : ''}`)
-    lines.push(`   🏷️  Kategoriler: ${p.categories.slice(0, 3).join(', ')}`)
+    lines.push(`   🏷️  Kategoriler: ${p.categories.slice(0, 3).join(', ') || '—'}`)
     lines.push(`   📝 Özet: ${p.abstract.slice(0, 800)}${p.abstract.length > 800 ? '...' : ''}`)
-    lines.push(`   🔗 Abstract: https://arxiv.org/abs/${p.arxivId}`)
-    lines.push(`   📄 HTML: https://ar5iv.labs.arxiv.org/html/${p.arxivId}`)
-    lines.push(`   📥 PDF: ${p.pdfUrl}`)
+    if (p.arxivId) {
+      lines.push(`   🔗 Abstract: https://arxiv.org/abs/${p.arxivId}`)
+      lines.push(`   📄 HTML: https://ar5iv.labs.arxiv.org/html/${p.arxivId}`)
+      lines.push(`   📥 PDF: ${p.pdfUrl}`)
+    } else if (sp.doi) {
+      lines.push(`   🔗 DOI Link: https://doi.org/${sp.doi}`)
+    }
     lines.push('')
   }
 
