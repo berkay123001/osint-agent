@@ -11,10 +11,36 @@ const OBSIDIAN_REPORTS_DIR = path.resolve(
   'Agent_Knowladges/OSINT/OSINT-Agent/04 - Araştırma Raporları',
 )
 
+/** Dosya adını temizle: Türkçe → ASCII, özel karakterler → boşluk, kısalt */
+function sanitizeFileName(subject: string, maxLength = 60): string {
+  return subject
+    .replace(/[Ğğ]/g, 'G').replace(/[Üü]/g, 'U').replace(/[Şş]/g, 'S')
+    .replace(/[İı]/g, 'I').replace(/[Öö]/g, 'O').replace(/[Çç]/g, 'C')
+    .replace(/[^a-zA-Z0-9 ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength)
+    .trim()
+}
+
+/** Tarih bazlı alt klasör + temiz dosya adı ile kaydet */
+async function saveReport(fileName: string, markdown: string): Promise<string> {
+  const now = new Date()
+  const dateDir = now.toISOString().slice(0, 10) // "2026-03-28"
+  const reportsDir = path.resolve(__dirname, '../../.osint-sessions/reports', dateDir)
+  await mkdir(reportsDir, { recursive: true })
+  const filePath = path.join(reportsDir, fileName)
+  await writeFile(filePath, markdown, 'utf-8')
+  return filePath
+}
+
 async function syncToObsidian(filePath: string): Promise<void> {
   try {
-    await mkdir(OBSIDIAN_REPORTS_DIR, { recursive: true })
-    const dest = path.join(OBSIDIAN_REPORTS_DIR, path.basename(filePath))
+    // Obsidian'da da aynı tarih klasörü yapısını koru
+    const dateDir = path.basename(path.dirname(filePath)) // "2026-03-28"
+    const destDir = path.join(OBSIDIAN_REPORTS_DIR, dateDir)
+    await mkdir(destDir, { recursive: true })
+    const dest = path.join(destDir, path.basename(filePath))
     await copyFile(filePath, dest)
   } catch {
     // Obsidian vault yoksa sessizce atla
@@ -337,12 +363,8 @@ export async function generateOsintReport(input: OsintReportInput): Promise<Osin
   if (reportType === 'academic') {
     const reportTitle = title ?? `Akademik Araştırma Raporu: ${subject}`
     const markdown = buildAcademicMarkdownReport(subject, reportTitle, additionalFindings)
-    const reportsDir = path.resolve(__dirname, '../../.osint-sessions/reports')
-    await mkdir(reportsDir, { recursive: true })
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-    const safeSubject = subject.replace(/[^a-zA-Z0-9_\-ğüşıöçĞÜŞİÖÇ]/g, '_').slice(0, 40)
-    const filePath = path.join(reportsDir, `report_academic_${safeSubject}_${timestamp}.md`)
-    await writeFile(filePath, markdown, 'utf-8')
+    const fileName = `${sanitizeFileName(subject)}.md`
+    const filePath = await saveReport(fileName, markdown)
     await syncToObsidian(filePath)
     return { filePath, markdown, summary: `Akademik rapor oluşturuldu → ${filePath}` }
   }
@@ -350,12 +372,8 @@ export async function generateOsintReport(input: OsintReportInput): Promise<Osin
   if (reportType === 'factcheck') {
     const reportTitle = title ?? `Doğrulama Raporu: ${subject}`
     const markdown = buildFactcheckMarkdownReport(subject, reportTitle, additionalFindings)
-    const reportsDir = path.resolve(__dirname, '../../.osint-sessions/reports')
-    await mkdir(reportsDir, { recursive: true })
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-    const safeSubject = subject.replace(/[^a-zA-Z0-9_\-ğüşıöçĞÜŞİÖÇ]/g, '_').slice(0, 40)
-    const filePath = path.join(reportsDir, `report_factcheck_${safeSubject}_${timestamp}.md`)
-    await writeFile(filePath, markdown, 'utf-8')
+    const fileName = `${sanitizeFileName(subject)}.md`
+    const filePath = await saveReport(fileName, markdown)
     await syncToObsidian(filePath)
     return { filePath, markdown, summary: `Fact-check raporu oluşturuldu → ${filePath}` }
   }
@@ -369,16 +387,9 @@ export async function generateOsintReport(input: OsintReportInput): Promise<Osin
   // Markdown oluştur
   const markdown = buildMarkdownReport(subject, reportTitle, graphData, additionalFindings)
 
-  // Kayıt dizini
-  const reportsDir = path.resolve(__dirname, '../../.osint-sessions/reports')
-  await mkdir(reportsDir, { recursive: true })
-
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-  const safeSubject = subject.replace(/[^a-zA-Z0-9_\-ğüşıöçĞÜŞİÖÇ]/g, '_').slice(0, 40)
-  const fileName = `report_${safeSubject}_${timestamp}.md`
-  const filePath = path.join(reportsDir, fileName)
-
-  await writeFile(filePath, markdown, 'utf-8')
+  // Kayıt
+  const fileName = `${sanitizeFileName(subject)}.md`
+  const filePath = await saveReport(fileName, markdown)
   await syncToObsidian(filePath)
 
   // Özet
