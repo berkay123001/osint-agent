@@ -5,6 +5,7 @@ import { runMediaAgent } from './mediaAgent.js';
 import { runAcademicAgent } from './academicAgent.js';
 import { tools, executeTool, setReportContentBuffer } from '../lib/toolRegistry.js';
 import type OpenAI from 'openai';
+import { logger } from '../lib/logger.js';
 import chalk from 'chalk';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
@@ -88,7 +89,7 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
       await mkdir(sessionDir, { recursive: true });
       const header = `# Kimlik Araştırması Oturum Dosyası\n\n**Sorgu:** ${args.query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`;
       await writeFile(path.join(sessionDir, 'identity-last-session.md'), header + r, 'utf-8');
-      console.log(chalk.gray(`   📝 Kimlik session kaydedildi → .osint-sessions/identity-last-session.md`));
+      logger.debug('AGENT', '📝 Kimlik session kaydedildi → .osint-sessions/identity-last-session.md');
     } catch { /* sessizce geç */ }
     return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.\n📄 Follow-up sorular için read_session_file aracını kullan — IdentityAgent\'ı TEKRAR çağırma.`;
   } else if (name === 'ask_media_agent') {
@@ -99,7 +100,7 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
       await mkdir(sessionDir, { recursive: true });
       const header = `# Medya Araştırması Oturum Dosyası\n\n**Sorgu:** ${args.query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`;
       await writeFile(path.join(sessionDir, 'media-last-session.md'), header + r, 'utf-8');
-      console.log(chalk.gray(`   📝 Medya session kaydedildi → .osint-sessions/media-last-session.md`));
+      logger.debug('AGENT', '📝 Medya session kaydedildi → .osint-sessions/media-last-session.md');
     } catch { /* sessizce geç */ }
     return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.\n📄 Follow-up sorular için read_session_file aracını kullan — MediaAgent\'ı TEKRAR çağırma.`;
   } else if (name === 'ask_academic_agent') {
@@ -112,7 +113,7 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
       const sessionFile = path.join(sessionDir, 'academic-last-session.md');
       const header = `# Akademik Araştırma Oturum Dosyası\n\n**Sorgu:** ${args.query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`;
       await writeFile(sessionFile, header + r, 'utf-8');
-      console.log(chalk.gray(`   📝 Akademik session kaydedildi → .osint-sessions/academic-last-session.md`));
+      logger.debug('AGENT', '📝 Akademik session kaydedildi → .osint-sessions/academic-last-session.md');
     } catch { /* sessizce geç */ }
     return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.\n📄 Follow-up sorular için (hangi makaleler, linkleri neler vb.) read_session_file aracını kullan — AcademicAgent\'ı TEKRAR çağırma.`;
   } else if (name === 'read_session_file') {
@@ -280,9 +281,9 @@ export async function runSupervisor(history: Message[]): Promise<void> {
   try {
     const result = await runAgentLoop(history, supervisorAgentConfig);
     const formatted = formatAgentOutput(result.finalResponse);
-    console.log(`\n${chalk.magenta.bold('🤖 Şef (Supervisor):')}\n${formatted}\n`);
+    logger.info('AGENT', `\n🤖 Şef (Supervisor):\n${formatted}\n`);
     return;
   } catch (error) {
-    console.error(chalk.red(`Supervisor Hatası:`), error);
+    logger.error('AGENT', `Supervisor Hatası: ${error instanceof Error ? error.message : String(error)}`);
   }
 }

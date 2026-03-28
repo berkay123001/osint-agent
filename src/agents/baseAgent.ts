@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
-import chalk from 'chalk';
 import { sanitizeHistoryForProvider, normalizeAssistantMessage, normalizeToolContent } from '../lib/chatHistory.js';
+import { logger } from '../lib/logger.js';
 import type { Message, AgentConfig, AgentResult } from './types.js';
 
 const DEFAULT_MODEL = 'qwen/qwen3.5-plus-02-15';
@@ -14,11 +14,11 @@ const client = new OpenAI({
 });
 
 /**
- * Qwen3 modelleri <think>...</think> etiketleri arasında reasoning yapar.
+ * Qwen3 modelleri <think/> etiketleri arasında reasoning yapar.
  * Bu etiketleri temizleyip salt kullanıcıya dönecek içeriği bırakır.
  */
 function stripThinkingTokens(text: string): string {
-  return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  return text.replace(/<think[\s\S]*?<\/think>/gi, '').trim();
 }
 
 export async function runAgentLoop(
@@ -31,15 +31,15 @@ export async function runAgentLoop(
   let totalCorrectionAttempts = 0; // Global cap — sonsuz döngüyü önler
   const toolsUsed: Record<string, number> = {};
   const maxToolCalls = config.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
-  
+
   while (true) {
     const toolChoice: 'auto' | 'none' = toolCallCount >= maxToolCalls ? 'none' : 'auto';
     if (toolChoice === 'none') {
-      console.log(chalk.yellow(`\n   ⚠️  [${config.name}] Maksimum araç çağrısı aşıldı, özet isteniyor...`));
+      logger.warn('AGENT', `[${config.name}] Maksimum araç çağrısı aşıldı, özet isteniyor...`);
     }
 
-    console.log(chalk.gray(`\n   \u2699\ufe0f  [${config.name}] Düşünüyor...`));
-    
+    logger.agentThinking(config.name);
+
     // Upstream API hatalarını (502, geçersiz JSON argümanlar) yakala ve yönet
     let response: Awaited<ReturnType<typeof client.chat.completions.create>>;
     try {
@@ -54,7 +54,7 @@ export async function runAgentLoop(
       const msg = apiError instanceof Error ? apiError.message : String(apiError);
       // Alibaba/OpenRouter'dan gelen geçici hatalar için bir kez retry
       if (msg.includes('502') || msg.includes('529') || msg.includes('InternalError')) {
-        console.log(chalk.yellow(`\n   🔄 [${config.name}] API geçici hata (${msg.slice(0, 60)}...), 3s bekleyip tekrar deneniyor...`));
+        logger.warn('AGENT', `[${config.name}] API geçici hata (${msg.slice(0, 60)}...), 3s bekleyip tekrar deneniyor...`);
         await new Promise(resolve => setTimeout(resolve, 3000));
         response = await client.chat.completions.create({
           model: config.model ?? DEFAULT_MODEL,
@@ -77,7 +77,7 @@ export async function runAgentLoop(
         if (upstreamErr.includes('function.arguments') || upstreamErr.includes('InvalidParameter')) {
           // Zaten cap'e ulaşıldıysa: araç çağrısı kalıcı olarak devre dışı, döngüyü kır
           if (totalCorrectionAttempts >= 6) {
-            console.log(chalk.red(`\n   🚫 [${config.name}] Araç çağrısı zaten devre dışı ama model hâlâ hata üretiyor — çıkılıyor.`));
+            logger.error('AGENT', `[${config.name}] Araç çağrısı zaten devre dışı ama model hâlâ hata üretiyor — çıkılıyor.`);
             return {
               finalResponse: 'Model geçersiz JSON üretmeye devam ediyor, yanıt üretilemiyor. Toplanan veriler session dosyasına kaydedildi.',
               toolCallCount,
@@ -87,11 +87,11 @@ export async function runAgentLoop(
 
           correctionRetries++;
           totalCorrectionAttempts++;
-          console.log(chalk.yellow(`\n   ⚠️  [${config.name}] Model geçersiz JSON üretmişti, düzeltme isteniyor... (deneme ${correctionRetries}/3, toplam: ${totalCorrectionAttempts})`));
-          
+          logger.warn('AGENT', `[${config.name}] Model geçersiz JSON üretmişti, düzeltme isteniyor... (deneme ${correctionRetries}/3, toplam: ${totalCorrectionAttempts})`);
+
           // Global cap: 6 toplam denemeden sonra zorla metin yanıt al
           if (totalCorrectionAttempts >= 6) {
-            console.log(chalk.red(`\n   🚫 [${config.name}] JSON düzeltme 6 kez başarısız — araç çağrısı devre dışı bırakılıyor.`));
+            logger.error('AGENT', `[${config.name}] JSON düzeltme 6 kez başarısız — araç çağrısı devre dışı bırakılıyor.`);
             history.push({
               role: 'user',
               content:
@@ -104,7 +104,7 @@ export async function runAgentLoop(
             correctionRetries = 0;
             continue;
           }
-          
+
           if (correctionRetries >= 3) {
             correctionRetries = 0;
             history.push({
@@ -133,15 +133,15 @@ export async function runAgentLoop(
     if (!message.tool_calls || message.tool_calls.length === 0) {
       const rawContent = typeof message.content === 'string' ? message.content : '';
       const cleanContent = stripThinkingTokens(rawContent);
-      
+
       const refusalText = typeof message.refusal === 'string' && message.refusal.trim().length > 0
         ? message.refusal
         : '';
 
-      // Model sadece <think> döndürüp boş bıraktıysa, bir kez daha dene
+      // Model sadece <think/> döndürüp boş bıraktıysa, bir kez daha dene
       if (cleanContent.length === 0 && toolCallCount > 0 && emptyRetries < 1) {
         emptyRetries++;
-        console.log(chalk.yellow(`\n   🔄 [${config.name}] Model boş yanıt döndürdü, tekrar deneniyor...`));
+        logger.warn('AGENT', `[${config.name}] Model boş yanıt döndürdü, tekrar deneniyor...`);
         history.push({
           role: 'user',
           content: 'Lütfen topladığın tüm verileri analiz edip kullanıcıya detaylı bir Markdown raporu olarak sun. Boş yanıt dönme.'
@@ -152,7 +152,7 @@ export async function runAgentLoop(
       const finalText = cleanContent.length > 0
         ? cleanContent
         : (refusalText || 'Araçlar çalıştı ama model boş yanıt döndürdü.');
-        
+
       return {
         finalResponse: finalText,
         toolCallCount,

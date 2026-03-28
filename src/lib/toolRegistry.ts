@@ -5,7 +5,7 @@ import * as readline from 'readline'
 import { spawn } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import chalk from 'chalk'
+import { logger } from './logger.js'
 import { githubOsint } from '../tools/githubTool.js'
 import { writeOsintToGraph, getConnections, getGraphStats, getGraphNodeCountsByLabel, listGraphNodes, pruneMisclassifiedFullNameUsernames, findLinkedIdentifiers, writeEmailRegistrations, writeBreachData, writeScrapeData, writeFollowingConnections, mergeRelation, closeNeo4j, clearGraph, deleteGraphNodeAndRelations } from './neo4j.js'
 import { normalizeAssistantMessage, normalizeToolContent, sanitizeHistoryForProvider } from './chatHistory.js'
@@ -619,8 +619,8 @@ async function runSherlock(username: string): Promise<string> {
 
   const sherlockDir = path.resolve(__dirname, '../../osint_collection/sherlock')
   return new Promise((resolve) => {
-    console.log(chalk.cyan(`\n   🌐 Sherlock `) + chalk.yellow.bold(username) + chalk.cyan(` için taranıyor...`))
-    console.log(chalk.gray('   (Bu işlem 1-2 dk sürebilir)'))
+    logger.info('TOOL', `🌐 Sherlock ${username} için taranıyor...`)
+    logger.info('TOOL', '(Bu işlem 1-2 dk sürebilir)')
     const proc = spawn(
       PYTHON,
       [
@@ -635,7 +635,7 @@ async function runSherlock(username: string): Promise<string> {
     proc.stderr.on('data', () => {})
     proc.on('close', async () => {
       const lines = out.split('\n').filter((l) => l.startsWith('[+'))
-      console.log(chalk.green(`   ✅ Sherlock: `) + chalk.green.bold(`${lines.length} platform bulundu`))
+      logger.info('TOOL', `✅ Sherlock: ${lines.length} platform bulundu`)
 
       // Grafa yaz
       try {
@@ -645,9 +645,9 @@ async function runSherlock(username: string): Promise<string> {
           return { platform: nameMatch?.[1]?.trim() || 'unknown', url: urlMatch?.[0] || '' }
         }).filter(p => p.url)
         const stats = await writeOsintToGraph(username, { platforms }, 'sherlock')
-        console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
+        logger.info('GRAPH', `💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`)
       } catch (e) {
-        console.log(chalk.gray(`   ⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)`))
+        logger.warn('GRAPH', '⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)')
       }
 
       resolve(out || 'No results found.')
@@ -657,13 +657,13 @@ async function runSherlock(username: string): Promise<string> {
 }
 
 async function runGithubOsint(username: string, deep = false): Promise<string> {
-  console.log(chalk.cyan(`\n   🐙 GitHub API OSINT: `) + chalk.yellow.bold(username) + chalk.cyan(deep ? ` (DEEP MOD)...` : `...`))
+  logger.info('TOOL', `🐙 GitHub API OSINT: ${username}${deep ? ' (DEEP MOD)' : ''}...`)
   const result = await githubOsint(username, deep)
   if (result.error) {
-    console.log(chalk.red(`   ❌ ${result.error}`))
+    logger.error('TOOL', `❌ ${result.error}`)
     return result.error
   }
-  console.log(chalk.green(`   ✅ GitHub OSINT: `) + chalk.green.bold(`${result.emails.length} email bulundu`))
+  logger.info('TOOL', `✅ GitHub OSINT: ${result.emails.length} email bulundu`)
 
   // Grafa yaz
   try {
@@ -681,20 +681,20 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
         url: acc.url
       })),
     }, 'github_api')
-    console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
+    logger.info('GRAPH', `💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`)
   } catch {
-    console.log(chalk.gray(`   ⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)`))
+    logger.warn('GRAPH', '⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)')
   }
 
   // Deep mod: following bağlantılarını grafa yaz
   if (result.following.length > 0) {
     const realPeople = result.following.filter(f => !f.skipped)
-    console.log(chalk.cyan(`   🔍 Following analizi: `) + chalk.green.bold(`${realPeople.length} gerçek kişi`) + chalk.gray(` (${result.following.length - realPeople.length} atlandı)`))
+    logger.info('TOOL', `🔍 Following analizi: ${realPeople.length} gerçek kişi (${result.following.length - realPeople.length} atlandı)`)
     try {
       const stats = await writeFollowingConnections(username, result.following, 'github_api')
-      console.log(chalk.blue(`   💾 Following grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
+      logger.info('GRAPH', `💾 Following grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`)
     } catch {
-      console.log(chalk.gray(`   ⚠️  Following graf yazma atlandı`))
+      logger.warn('GRAPH', '⚠️  Following graf yazma atlandı')
     }
   }
 
@@ -718,7 +718,7 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     const cacheKey = `${name}:${JSON.stringify(args)}`;
     
     if (cacheableTools.has(name) && toolCache.has(cacheKey)) {
-      console.log(chalk.yellow(`   ⚡ [Cache Hit] ${name} (${JSON.stringify(args)}) hafızadan getirildi. Tekrar çalıştırılmadı.`));
+      logger.debug('TOOL', `⚡ [Cache Hit] ${name} (${JSON.stringify(args)}) hafızadan getirildi. Tekrar çalıştırılmadı.`);
       return `[⚡ ZATEN OKUNDU — Bu araç daha önce aynı parametrelerle çağrıldı. Aşağıdaki sonuç hafızadan geldi, tekrar çağırman gerekmez — bu veriyi kullanarak ilerle.]\n\n` + toolCache.get(cacheKey)!;
     }
 
@@ -745,7 +745,7 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     else if (name === 'clear_graph') result = await runClearGraph(args.confirm === 'true' || (args.confirm as unknown) === true)
     else if (name === 'remove_false_positive') result = await runRemoveFalsePositive(args.label, args.value)
         else if (name === 'fact_check_to_graph') {
-      console.log(chalk.cyan(`\n   🧠 Fact Check Kaydı (Neo4j): `) + chalk.yellow.bold(args.claimId))
+      logger.info('TOOL', `🧠 Fact Check Kaydı (Neo4j): ${args.claimId}`)
       try {
         await writeFactCheckToGraph({
            claimId: args.claimId,
@@ -763,26 +763,26 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       }
     }
     else if (name === 'reverse_image_search') {
-      console.log(chalk.cyan(`\n   🖼️ Reverse Image Search (SerpApi): `) + chalk.yellow.bold(args.imageUrl))
+      logger.info('TOOL', `🖼️ Reverse Image Search (SerpApi): ${args.imageUrl}`)
       const res = await searchReverseImage(args.imageUrl)
       result = formatReverseImageResult(res)
     }
     else if (name === 'compare_images_phash') {
-      console.log(chalk.cyan(`\n   🧩 pHash Karşılaştırması: `) + chalk.yellow.bold(args.url1 + ' vs ' + args.url2))
+      logger.info('TOOL', `🧩 pHash Karşılaştırması: ${args.url1} vs ${args.url2}`)
       result = await compareImages(args.url1, args.url2)
     }
     else if (name === 'add_custom_node') {
-      console.log(chalk.cyan(`\n   ➕ Özel düğüm ekleniyor: `) + chalk.yellow.bold(args.label));
+      logger.info('TOOL', `➕ Özel düğüm ekleniyor: ${args.label}`);
       const res = await addCustomNodeTool({ label: args.label, properties: args.properties as any });
       result = JSON.stringify(res);
     }
     else if (name === 'delete_custom_node') {
-      console.log(chalk.cyan(`\n   ➖ Özel düğüm siliniyor: `) + chalk.yellow.bold(`${args.label} (${args.matchKey}: ${args.matchValue})`));
+      logger.info('TOOL', `➖ Özel düğüm siliniyor: ${args.label} (${args.matchKey}: ${args.matchValue})`);
       const res = await deleteCustomNodeTool({ label: args.label, matchKey: args.matchKey, matchValue: args.matchValue });
       result = JSON.stringify(res);
     }
     else if (name === 'add_custom_relationship') {
-      console.log(chalk.cyan(`\n   🔗 Özel ilişki ekleniyor: `) + chalk.yellow.bold(`${args.sourceLabel} -[${args.relationshipType}]-> ${args.targetLabel}`));
+      logger.info('TOOL', `🔗 Özel ilişki ekleniyor: ${args.sourceLabel} -[${args.relationshipType}]-> ${args.targetLabel}`);
       const res = await addCustomRelationshipTool({
         sourceLabel: args.sourceLabel,
         sourceKey: args.sourceKey,
@@ -795,8 +795,7 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       result = JSON.stringify(res);
     }
     else if (name === 'search_researcher_papers') {
-      console.log(chalk.cyan(`
-   👤 Araştırmacı Arama (Semantic Scholar): `) + chalk.yellow.bold(args.name))
+      logger.info('TOOL', `👤 Araştırmacı Arama (Semantic Scholar): ${args.name}`)
       const authorResult = await searchAuthorPapers(args.name, args.affiliation)
       result = formatAuthorResult(authorResult)
       // Graf'a yaz — AuthorPaper'ı AcademicPaper formatına çevir
@@ -821,19 +820,19 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
             totalCitations: p.citationCount,
           }))
           const stats = await writeAcademicPapersToGraph(papers, args.name, neo4jWrite)
-          console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.papersCreated} makale, ${stats.authorsLinked} yazar bağlantısı`))
+          logger.info('GRAPH', `💾 Grafa yazıldı: ${stats.papersCreated} makale, ${stats.authorsLinked} yazar bağlantısı`)
           result += `\n\n💾 Neo4j Graf: ${stats.papersCreated} Paper node, ${stats.authorsLinked} AUTHORED_BY ilişkisi oluşturuldu.`
         } catch {
-          console.log(chalk.gray(`   ⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)`))
+          logger.warn('GRAPH', '⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)')
         }
       }
     }
     else if (name === 'generate_report') {
-      console.log(chalk.cyan(`\n   📄 Rapor oluşturuluyor [${args.reportType || 'osint'}]: `) + chalk.yellow.bold(args.subject))
+      logger.info('TOOL', `📄 Rapor oluşturuluyor [${args.reportType || 'osint'}]: ${args.subject}`)
       // additionalFindings yoksa buffer'dan oku (model JSON encode edemediyse fallback)
       const findings = args.additionalFindings || _reportContentBuffer || undefined;
       if (!args.additionalFindings && _reportContentBuffer) {
-        console.log(chalk.gray(`   ℹ️  additionalFindings argümanı yoktu — dahili buffer kullanıldı (${_reportContentBuffer.length} karakter)`));
+        logger.debug('TOOL', `ℹ️  additionalFindings argümanı yoktu — dahili buffer kullanıldı (${_reportContentBuffer.length} karakter)`);
       }
       try {
         const reportResult = await generateOsintReport({
@@ -842,7 +841,7 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
           title: args.title,
           additionalFindings: findings,
         })
-        console.log(chalk.green(`   ✅ Rapor kaydedildi: `) + chalk.gray(reportResult.filePath))
+        logger.info('TOOL', `✅ Rapor kaydedildi: ${reportResult.filePath}`)
         result = [
           `✅ **Rapor başarıyla oluşturuldu!**`,
           ``,
@@ -854,13 +853,13 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
         ].join('\n')
       } catch (e) {
         const msg = (e as Error).message
-        console.log(chalk.red(`   ❌ Rapor hatası: ${msg}`))
+        logger.error('TOOL', `❌ Rapor hatası: ${msg}`)
         result = `❌ Rapor oluşturma hatası: ${msg}`
       }
     }
     else if (name === 'check_plagiarism') {
       const label = args.title ?? args.doi ?? args.author ?? 'metin'
-      console.log(chalk.cyan(`\n   🔬 İntihal Analizi: `) + chalk.yellow.bold(label))
+      logger.info('TOOL', `🔬 İntihal Analizi: ${label}`)
       try {
         const report = await checkPlagiarism({
           text: args.text,
@@ -870,21 +869,21 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
           doi: args.doi,
         })
         const riskEmoji = { clean: '🟢', low: '🔵', medium: '🟡', high: '🔴', critical: '🚨' }[report.overallRisk]
-        console.log(chalk.green(`   ✅ Analiz tamamlandı: `) + chalk.yellow(`${riskEmoji} ${report.overallRisk.toUpperCase()} — ${report.matches.length} eşleşme`))
+        logger.info('TOOL', `✅ Analiz tamamlandı: ${riskEmoji} ${report.overallRisk.toUpperCase()} — ${report.matches.length} eşleşme`)
         result = report.markdown
       } catch (e) {
         const msg = (e as Error).message
-        console.log(chalk.red(`   ❌ İntihal analizi hatası: ${msg}`))
+        logger.error('TOOL', `❌ İntihal analizi hatası: ${msg}`)
         result = `❌ İntihal analizi hatası: ${msg}`
       }
     }
     else if (name === 'search_academic_papers') {
       const maxResults = parseInt(args.maxResults ?? '10') || 10
       const sortBy = (args.sortBy as 'relevance' | 'submittedDate' | 'lastUpdatedDate') ?? 'submittedDate'
-      console.log(chalk.cyan(`\n   🔬 Akademik Araştırma (arXiv + Semantic Scholar): `) + chalk.yellow.bold(args.query))
+      logger.info('TOOL', `🔬 Akademik Araştırma (arXiv + Semantic Scholar): ${args.query}`)
       const searchResult = await searchAcademicPapers(args.query, maxResults, sortBy)
       const ssNote = (searchResult as AcademicSearchResult & { _ssNote?: string })._ssNote
-      if (ssNote) console.log(chalk.gray(ssNote))
+      if (ssNote) logger.debug('TOOL', ssNote)
       result = formatAcademicResult(searchResult)
       // Graf'a yaz
       try {
@@ -895,41 +894,41 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
           try { await session.run(query, params) } finally { await session.close() }
         }
         const stats = await writeAcademicPapersToGraph(searchResult.papers, args.query, neo4jWrite)
-        console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.papersCreated} makale, ${stats.authorsLinked} yazar bağlantısı`))
+        logger.info('GRAPH', `💾 Grafa yazıldı: ${stats.papersCreated} makale, ${stats.authorsLinked} yazar bağlantısı`)
         result += `\n\n💾 Neo4j Graf: ${stats.papersCreated} Paper node, ${stats.authorsLinked} AUTHORED_BY ilişkisi oluşturuldu.`
       } catch {
-        console.log(chalk.gray(`   ⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)`))
+        logger.warn('GRAPH', '⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)')
       }
     }
     else if (name === 'obsidian_write') {
       const overwrite = String(args.overwrite) !== 'false'
-      console.log(chalk.magenta(`\n   🟣 Obsidian'a yazılıyor: `) + chalk.yellow.bold(args.note_path))
+      logger.info('OBSIDIAN', `🟣 Obsidian'a yazılıyor: ${args.note_path}`)
       result = await obsidianWrite(args.note_path, args.content, overwrite)
-      console.log(chalk.green(`   ${result}`))
+      logger.info('OBSIDIAN', result)
     }
     else if (name === 'obsidian_append') {
-      console.log(chalk.magenta(`\n   🟣 Obsidian'a ekleniyor: `) + chalk.yellow.bold(args.note_path))
+      logger.info('OBSIDIAN', `🟣 Obsidian'a ekleniyor: ${args.note_path}`)
       result = await obsidianAppend(args.note_path, args.content)
-      console.log(chalk.green(`   ${result}`))
+      logger.info('OBSIDIAN', result)
     }
     else if (name === 'obsidian_read') {
-      console.log(chalk.magenta(`\n   🟣 Obsidian okunuyor: `) + chalk.yellow.bold(args.note_path))
+      logger.info('OBSIDIAN', `🟣 Obsidian okunuyor: ${args.note_path}`)
       result = await obsidianRead(args.note_path)
     }
     else if (name === 'obsidian_daily') {
-      console.log(chalk.magenta(`\n   🟣 Günlüğe kaydediliyor...`))
+      logger.info('OBSIDIAN', '🟣 Günlüğe kaydediliyor...')
       result = await obsidianDailyLog(args.entry, args.tag)
-      console.log(chalk.green(`   ${result}`))
+      logger.info('OBSIDIAN', result)
     }
     else if (name === 'obsidian_list') {
-      console.log(chalk.magenta(`\n   🟣 Obsidian dizini listeleniyor: `) + chalk.yellow.bold(args.dir || '(vault kökü)'))
+      logger.info('OBSIDIAN', `🟣 Obsidian dizini listeleniyor: ${args.dir || '(vault kökü)'}`)
       result = await obsidianList(args.dir)
     }
     else if (name === 'obsidian_search') {
-      console.log(chalk.magenta(`\n   🟣 Obsidian'da aranıyor: `) + chalk.yellow.bold(args.query))
+      logger.info('OBSIDIAN', `🟣 Obsidian'da aranıyor: ${args.query}`)
       const limit = args.limit ? parseInt(String(args.limit), 10) : 10
       result = await obsidianSearch(args.query, limit)
-      console.log(chalk.green(`   ${result.slice(0, 200)}...`))
+      logger.debug('OBSIDIAN', result.slice(0, 200))
     }
     else result = `Unknown tool: ${name}`;
 
@@ -941,24 +940,24 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
   }
 
 async function runExtractMetadata(url: string): Promise<string> {
-  console.log(chalk.cyan(`\n   🔍 Metadata çıkarılıyor: `) + chalk.yellow.bold(url) + chalk.cyan(`...`))
+  logger.info('TOOL', `🔍 Metadata çıkarılıyor: ${url}...`)
   const result = await extractMetadataFromUrl(url)
   const interesting = Object.keys(result.interestingFields).length
   if (result.error) {
-    console.log(chalk.red(`   ❌ ${result.error}`))
+    logger.error('TOOL', `❌ ${result.error}`)
   } else {
-    console.log(chalk.green(`   ✅ ${Object.keys(result.fields).length} metadata alanı bulundu (${interesting} OSINT-relevant)`))
+    logger.info('TOOL', `✅ ${Object.keys(result.fields).length} metadata alanı bulundu (${interesting} OSINT-relevant)`)
   }
   return formatMetadata(result)
 }
 
 async function runParseGpgKey(username: string): Promise<string> {
-  console.log(chalk.cyan(`\n   🔑 GPG key analizi: `) + chalk.yellow.bold(username) + chalk.cyan(`...`))
+  logger.info('TOOL', `🔑 GPG key analizi: ${username}...`)
   let result = await parseGithubGpgKey(username)
 
   // GitHub .gpg endpoint boş döndüyse → repo'da raw PGP dosyası arama yap
   if (result.error && result.emails.length === 0) {
-    console.log(chalk.gray(`   🔍 Repo'da PGP key aranıyor (${username}/PGP)...`))
+    logger.debug('TOOL', `🔍 Repo'da PGP key aranıyor (${username}/PGP)...`)
     const rawUrls = [
       `https://raw.githubusercontent.com/${username}/PGP/main/pgp.asc`,
       `https://raw.githubusercontent.com/${username}/PGP/main/publickey`,
@@ -970,7 +969,7 @@ async function runParseGpgKey(username: string): Promise<string> {
       try {
         const raw = await webFetch(rawUrl)
         if (!raw.error && raw.textContent && raw.textContent.includes('BEGIN PGP PUBLIC KEY')) {
-          console.log(chalk.green(`   ✅ Repo'da PGP key bulundu: ${rawUrl}`))
+          logger.info('TOOL', `✅ Repo'da PGP key bulundu: ${rawUrl}`)
           const tmpFile = `${os.tmpdir()}/pgp-${Date.now()}.asc`
           await writeFile(tmpFile, raw.textContent)
           result = await parseGpgKeyFile(tmpFile)
@@ -983,18 +982,18 @@ async function runParseGpgKey(username: string): Promise<string> {
   }
 
   if (result.error) {
-    console.log(chalk.red(`   ❌ ${result.error}`))
+    logger.error('TOOL', `❌ ${result.error}`)
   } else {
-    console.log(chalk.green(`   ✅ ${result.emails.length} email, ${result.names.length} isim bulundu`))
+    logger.info('TOOL', `✅ ${result.emails.length} email, ${result.names.length} isim bulundu`)
   }
 
   // Email'leri grafa yaz
   if (result.emails.length > 0) {
     try {
       const stats = await writeOsintToGraph(username, { emails: result.emails, realName: result.names[0] }, 'gpg_key')
-      console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
+      logger.info('GRAPH', `💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`)
     } catch {
-      console.log(chalk.gray(`   ⚠️  Graf yazma atlandı`))
+      logger.warn('GRAPH', '⚠️  Graf yazma atlandı')
     }
   }
 
@@ -1002,67 +1001,67 @@ async function runParseGpgKey(username: string): Promise<string> {
 }
 
 async function runWaybackSearch(url: string): Promise<string> {
-  console.log(chalk.cyan(`\n   📸 Wayback Machine aranıyor: `) + chalk.yellow.bold(url) + chalk.cyan(`...`))
+  logger.info('TOOL', `📸 Wayback Machine aranıyor: ${url}...`)
   const result = await waybackSearch(url)
   if (result.error) {
-    console.log(chalk.red(`   ❌ ${result.error}`))
+    logger.error('TOOL', `❌ ${result.error}`)
   } else {
-    console.log(chalk.green(`   ✅ ${result.snapshots.length} arşiv snapshot'ı bulundu`))
+    logger.info('TOOL', `✅ ${result.snapshots.length} arşiv snapshot'ı bulundu`)
   }
   return formatWaybackResult(result)
 }
 
 async function runWebFetch(url: string): Promise<string> {
-  console.log(chalk.cyan(`\n   🌐 Sayfa çekiliyor: `) + chalk.yellow.bold(url) + chalk.cyan(`...`))
+  logger.info('TOOL', `🌐 Sayfa çekiliyor: ${url}...`)
   let result = await webFetch(url)
   
   // HİBRİT FALLBACK: Eğer 403 (Cloudflare/Bot protection) veya bağlantı hatası alırsak, Firecrawl API'sine (scrapeTool) düş.
   if (result.error || result.statusCode === 403 || result.statusCode === 401) {
-    console.log(chalk.gray(`   ⚠️ curl engellendi (HTTP ${result.statusCode || 'Hata'}). Firecrawl Stealth Proxy'ye geçiliyor...`))
+    logger.warn('TOOL', `⚠️ curl engellendi (HTTP ${result.statusCode || 'Hata'}). Firecrawl Stealth Proxy'ye geçiliyor...`)
     try {
       const scrapeResult = await scrapeProfile(url)
       if (!scrapeResult.error) {
-        console.log(chalk.green(`   ✅ Firecrawl ile başarıyla çekildi (Markdown okundu)`))
+        logger.info('TOOL', '✅ Firecrawl ile başarıyla çekildi (Markdown okundu)')
         // Scrape sonuçlarını formatlayıp dön
         return formatScrapeResult(scrapeResult)
       } else {
-        console.log(chalk.red(`   ❌ Firecrawl da başarısız: ${scrapeResult.error}`))
+        logger.error('TOOL', `❌ Firecrawl da başarısız: ${scrapeResult.error}`)
         return `Fetch ve Scrape hatası: ${scrapeResult.error}`
       }
     } catch (e) {
-      console.log(chalk.red(`   ❌ Scrape modülü hatası: ${(e as Error).message}`))
+      logger.error('TOOL', `❌ Scrape modülü hatası: ${(e as Error).message}`)
       return `Scrape hatası: ${(e as Error).message}`
     }
   }
 
-  console.log(chalk.green(`   ✅ ${result.contentType} (HTTP ${result.statusCode})`))
+  logger.info('TOOL', `✅ ${result.contentType} (HTTP ${result.statusCode})`)
   if (result.textContent) {
     // Akademik URL'ler için deep-read modu: 50K — diğerleri için 8K
     const isDeepReadUrl = /ar5iv\.|arxiv\.org\/(abs|pdf)|doi\.org|dergipark\.org\.tr|ncbi\.nlm\.nih\.gov|pubmed\.|semanticscholar\.org/.test(url)
     const limit = isDeepReadUrl ? 50000 : 8000
-    if (isDeepReadUrl) console.log(chalk.blue(`   📖 Deep-read modu aktif (${limit.toLocaleString()} char)`))
+    if (isDeepReadUrl) logger.debug('TOOL', `📖 Deep-read modu aktif (${limit.toLocaleString()} char)`)
     return result.textContent.slice(0, limit)
   }
   return `Binary dosya indirildi: ${result.savedTo} (${result.contentType})`
 }
 
 async function runEmailRegistrations(email: string): Promise<string> {
-  console.log(chalk.cyan(`\n   📧 Email kayıt kontrolü (Holehe): `) + chalk.yellow.bold(email) + chalk.cyan(`...`))
-  console.log(chalk.gray('   (120+ platform taranıyor, ~30-60sn)'))
+  logger.info('TOOL', `📧 Email kayıt kontrolü (Holehe): ${email}...`)
+  logger.info('TOOL', '(120+ platform taranıyor, ~30-60sn)')
   const result = await checkEmailRegistrations(email)
   if (result.error) {
-    console.log(chalk.red(`   ❌ ${result.error}`))
+    logger.error('TOOL', `❌ ${result.error}`)
     return formatHoleheResult(result)
   }
-  console.log(chalk.green(`   ✅ ${result.totalChecked} platform tarandı, ${result.services.length} kayıt bulundu`))
+  logger.info('TOOL', `✅ ${result.totalChecked} platform tarandı, ${result.services.length} kayıt bulundu`)
 
   // Grafa yaz: Email → REGISTERED_ON → Platform
   if (result.services.length > 0) {
     try {
       const stats = await writeEmailRegistrations(email, result.services, 'holehe')
-      console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
+      logger.info('GRAPH', `💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`)
     } catch {
-      console.log(chalk.gray(`   ⚠️  Graf yazma atlandı`))
+      logger.warn('GRAPH', '⚠️  Graf yazma atlandı')
     }
   }
 
@@ -1073,66 +1072,66 @@ async function runEmailRegistrations(email: string): Promise<string> {
 
 async function runClearGraph(confirm: boolean): Promise<string> {
   if (!confirm) return 'Silme işlemi onaylanmadı.';
-  console.log(chalk.red.bold(`\n   ⚠️  Graf veritabanı temizleniyor...`));
+  logger.warn('GRAPH', '⚠️  Graf veritabanı temizleniyor...');
   try {
     process.env.NEO4J_ALLOW_CLEAR = '1';
     await clearGraph();
-    console.log(chalk.green(`   ✅ Graf veritabanı başarıyla temizlendi.`));
+    logger.info('GRAPH', '✅ Graf veritabanı başarıyla temizlendi.');
     return 'Tüm graf veritabanı kalıcı olarak silindi ve sıfırlandı.';
   } catch (e) {
-    console.log(chalk.red(`   ❌ Hata: ${(e as Error).message}`));
+    logger.error('GRAPH', `❌ Hata: ${(e as Error).message}`);
     return `Temizleme hatası: ${(e as Error).message}`;
   }
 }
 
 async function runRemoveFalsePositive(label: string, value: string): Promise<string> {
-  console.log(chalk.red.bold(`\n   🧹 False Positive Temizleniyor: `) + chalk.yellow(`${label}(${value})`));
+  logger.warn('GRAPH', `🧹 False Positive Temizleniyor: ${label}(${value})`);
   try {
     const success = await deleteGraphNodeAndRelations(label, value);
     if (success) {
-      console.log(chalk.green(`   ✅ Düğüm ve ilişkileri Graf'tan silindi.`));
+      logger.info('GRAPH', '✅ Düğüm ve ilişkileri Graf’tan silindi.');
       return `Başarı: ${label} etiketli ve ${value} değerli düğüm (ve bağlı ilişkileri) sinildi.`;
     } else {
-      console.log(chalk.yellow(`   ⚠️ Eşleşen düğüm bulunamadı veya silinemedi.`));
+      logger.warn('GRAPH', '⚠️ Eşleşen düğüm bulunamadı veya silinemedi.');
       return `Hata: ${label} etiketli ve ${value} değerli düğüm bulunamadı.`;
     }
   } catch (e) {
-    console.log(chalk.red(`   ❌ Temizleme hatası: ${(e as Error).message}`));
+    logger.error('GRAPH', `❌ Temizleme hatası: ${(e as Error).message}`);
     return `Temizleme hatası: ${(e as Error).message}`;
   }
 }
 
 async function runSearchWeb(query: string): Promise<string> {
-  console.log(chalk.cyan(`\n   🔎 Web'de aranıyor (Dorking): `) + chalk.yellow.bold(query) + chalk.cyan(`...`))
+  logger.info('SEARCH', `🔎 Web'de aranıyor (Dorking): ${query}...`)
   const result = await searchWeb(query)
   if (result.error) {
-    console.log(chalk.red(`   ❌ ${result.error}`))
+    logger.error('SEARCH', `❌ ${result.error}`)
     return formatSearchResult(result)
   }
-  console.log(chalk.green(`   ✅ ${result.results.length} sonuç bulundu`))
+  logger.info('SEARCH', `✅ ${result.results.length} sonuç bulundu`)
   return formatSearchResult(result)
 }
 
 async function runScrapeProfile(url: string): Promise<string> {
-  console.log(chalk.cyan(`\n   🕷️  Profil kazınıyor (Firecrawl): `) + chalk.yellow.bold(url) + chalk.cyan(`...`))
+  logger.info('TOOL', `🕷️  Profil kazınıyor (Firecrawl): ${url}...`)
   const result = await scrapeProfile(url)
   if (result.error) {
-    console.log(chalk.red(`   ❌ ${result.error}`))
-    if (result.usageWarning) console.log(chalk.yellow(`   ${result.usageWarning}`))
+    logger.error('TOOL', `❌ ${result.error}`)
+    if (result.usageWarning) logger.warn('TOOL', result.usageWarning)
     return formatScrapeResult(result)
   }
   const found = [result.emails.length, result.cryptoWallets.length, result.usernameHints.length]
     .map((n, i) => n > 0 ? `${n} ${['email', 'cüzdan', 'handle'][i]}` : '')
     .filter(Boolean).join(', ')
-  console.log(chalk.green(`   ✅ Sayfa alındı${found ? ` — ${found}` : ''}: ${result.title || url}`))
+  logger.info('TOOL', `✅ Sayfa alındı${found ? ` — ${found}` : ''}: ${result.title || url}`)
 
   // Bulunan OSINT verilerini grafa yaz
   if (result.emails.length > 0 || result.cryptoWallets.length > 0 || result.usernameHints.length > 0) {
     try {
       const stats = await writeScrapeData(url, result, 'firecrawl')
-      console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
+      logger.info('GRAPH', `💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`)
     } catch {
-      console.log(chalk.gray(`   ⚠️  Graf yazma atlandı`))
+      logger.warn('GRAPH', '⚠️  Graf yazma atlandı')
     }
   }
 
@@ -1140,21 +1139,21 @@ async function runScrapeProfile(url: string): Promise<string> {
 }
 
 async function runBreachCheck(email: string): Promise<string> {
-  console.log(chalk.cyan(`\n   🔓 Veri sızıntısı kontrolü: `) + chalk.yellow.bold(email) + chalk.cyan(`...`))
+  logger.info('TOOL', `🔓 Veri sızıntısı kontrolü: ${email}...`)
   const result = await checkBreaches(email)
   if (result.error) {
-    console.log(chalk.red(`   ❌ ${result.error}`))
+    logger.error('TOOL', `❌ ${result.error}`)
     return formatBreachResult(result)
   }
-  console.log(chalk.green(`   ✅ ${result.breaches.length} sızıntı bulundu (kaynak: ${result.source})`))
+  logger.info('TOOL', `✅ ${result.breaches.length} sızıntı bulundu (kaynak: ${result.source})`)
 
   // Grafa yaz: Email → LEAKED_IN → Breach
   if (result.breaches.length > 0) {
     try {
       const stats = await writeBreachData(email, result.breaches, result.source === 'hibp' ? 'hibp' : 'local_breach_db')
-      console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
+      logger.info('GRAPH', `💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`)
     } catch {
-      console.log(chalk.gray(`   ⚠️  Graf yazma atlandı`))
+      logger.warn('GRAPH', '⚠️  Graf yazma atlandı')
     }
   }
 
@@ -1162,7 +1161,7 @@ async function runBreachCheck(email: string): Promise<string> {
 }
 
 async function runVerifyProfiles(username: string): Promise<string> {
-  console.log(chalk.cyan(`\n   🔍 Profil doğrulama başlatılıyor: `) + chalk.yellow.bold(username) + chalk.cyan(`...`))
+  logger.info('TOOL', `🔍 Profil doğrulama başlatılıyor: ${username}...`)
 
   // Graftan bilinen tanımlayıcıları çek
   let known: { emails: string[]; realNames: string[]; handles: string[]; websites: string[]; avatarUrl?: string }
@@ -1179,12 +1178,12 @@ async function runVerifyProfiles(username: string): Promise<string> {
   // Eğer bilinen avatar URL'si varsa, hash'ini baştan hesapla ki her profilde tekrar indirmeyelim
   let avatarHash: string | undefined;
   if (known.avatarUrl) {
-    console.log(chalk.gray(`   🖼️ Hedefin bilinen bir avatarı var, referans hash hesaplanıyor...`));
+    logger.debug('TOOL', '🖼️ Hedefin bilinen bir avatarı var, referans hash hesaplanıyor...');
     avatarHash = (await fetchAndHashImage(known.avatarUrl)) || undefined;
     if (avatarHash) {
-      console.log(chalk.green(`   ✅ Referans avatar hash eşleşti: `) + chalk.gray(avatarHash.substring(0, 16) + '...'));
+      logger.info('TOOL', `✅ Referans avatar hash eşleşti: ${avatarHash.substring(0, 16)}...`);
     } else {
-      console.log(chalk.yellow(`   ⚠️ Referans avatar indirilemedi veya hash hesaplanamadı.`));
+      logger.warn('TOOL', '⚠️ Referans avatar indirilemedi veya hash hesaplanamadı.');
     }
   }
 
@@ -1207,7 +1206,7 @@ async function runVerifyProfiles(username: string): Promise<string> {
     return `"${username}" için grafta doğrulanacak profil yok. Önce run_sherlock çalıştır.`
   }
 
-  console.log(chalk.gray(`   📋 ${profiles.length} profil bulundu, doğrulama yapılıyor (max 10)...`))
+  logger.info('TOOL', `📋 ${profiles.length} profil bulundu, doğrulama yapılıyor (max 10)...`)
 
   const knownIds = {
     username,
@@ -1219,11 +1218,7 @@ async function runVerifyProfiles(username: string): Promise<string> {
 
   const { results, verified, unverified, skipped } = await verifySherlockProfiles(profiles, knownIds, 10)
 
-  console.log(
-    chalk.green(`   ✅ Doğrulama tamamlandı: `) +
-    chalk.green.bold(`${verified} doğrulandı`) +
-    chalk.gray(`, ${unverified} doğrulanmadı, ${skipped} atlandı`)
-  )
+  logger.info('TOOL', `✅ Doğrulama tamamlandı: ${verified} doğrulandı, ${unverified} doğrulanmadı, ${skipped} atlandı`)
 
   // Doğrulanan profillerin güven seviyesini grafta yükselt
   for (const r of results.filter(r => r.verified)) {
@@ -1239,15 +1234,15 @@ async function runVerifyProfiles(username: string): Promise<string> {
 }
 
 async function runNitterProfile(username: string): Promise<string> {
-  console.log(chalk.cyan(`\n   🐦 Twitter/X profil çekiliyor (Scrapling Stealth): `) + chalk.yellow.bold(username) + chalk.cyan(`...`))
+  logger.info('TOOL', `🐦 Twitter/X profil çekiliyor (Scrapling Stealth): ${username}...`)
   const result = await fetchNitterProfile(username)
 
   if (result.error) {
-    console.log(chalk.red(`   ❌ ${result.error}`))
+    logger.error('TOOL', `❌ ${result.error}`)
     return formatNitterResult(result)
   }
 
-  console.log(chalk.green(`   ✅ Twitter profili çekildi: `) + chalk.green.bold(result.displayName || username))
+  logger.info('TOOL', `✅ Twitter profili çekildi: ${result.displayName || username}`)
 
   // Grafa yaz
   try {
@@ -1261,42 +1256,42 @@ async function runNitterProfile(username: string): Promise<string> {
       location: data.location,
       blog: data.blog,
     }, 'nitter')
-    console.log(chalk.blue(`   💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`))
+    logger.info('GRAPH', `💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`)
   } catch {
-    console.log(chalk.gray(`   ⚠️  Graf yazma atlandı`))
+    logger.warn('GRAPH', '⚠️  Graf yazma atlandı')
   }
 
   return formatNitterResult(result)
 }
 
 async function runUnexploredPivots(username: string): Promise<string> {
-  console.log(chalk.cyan(`\n   🧭 Keşfedilmemiş pivot noktaları aranıyor: `) + chalk.yellow.bold(username) + chalk.cyan(`...`))
+  logger.info('TOOL', `🧭 Keşfedilmemiş pivot noktaları aranıyor: ${username}...`)
   try {
     const pivots = await findUnexploredPivots(username)
-    console.log(chalk.green(`   ✅ ${pivots.suggestions.length} öneri bulundu`))
+    logger.info('TOOL', `✅ ${pivots.suggestions.length} öneri bulundu`)
     return formatUnexploredPivots(pivots)
   } catch (e) {
-    console.log(chalk.red(`   ❌ ${(e as Error).message}`))
+    logger.error('TOOL', `❌ ${(e as Error).message}`)
     return `Pivot analizi hatası: ${(e as Error).message}`
   }
 }
 
 async function runSearchPerson(name: string, context?: string): Promise<string> {
-  console.log(chalk.cyan(`\n   👤 İsim araştırması: `) + chalk.yellow.bold(name) + (context ? chalk.gray(` (${context})`) : '') + chalk.cyan(`...`))
+  logger.info('TOOL', `👤 İsim araştırması: ${name}${context ? ` (${context})` : ''}...`)
   const result = await searchPerson(name, context)
 
   if (result.graphMatches.length > 0) {
     const totalUsernames = result.graphMatches.reduce((sum, m) => sum + m.linkedUsernames.length, 0)
-    console.log(chalk.green(`   ✅ Grafta ${result.graphMatches.length} eşleşme, ${totalUsernames} bağlı username bulundu`))
+    logger.info('TOOL', `✅ Grafta ${result.graphMatches.length} eşleşme, ${totalUsernames} bağlı username bulundu`)
   } else {
-    console.log(chalk.yellow(`   ⚠️ Grafta eşleşme yok — web araması yapıldı`))
+    logger.info('TOOL', '⚠️ Grafta eşleşme yok — web araması yapıldı')
   }
 
   return formatPersonSearchResult(result)
 }
 
 async function queryGraph(value: string): Promise<string> {
-  console.log(chalk.cyan(`\n   📊 Graf sorgulanıyor: `) + chalk.yellow.bold(value) + chalk.cyan(`...`))
+  logger.info('GRAPH', `📊 Graf sorgulanıyor: ${value}...`)
   try {
     const connections = await getConnections(value)
     if (connections.length === 0) return `"${value}" için grafta bağlantı bulunamadı.`
@@ -1304,7 +1299,7 @@ async function queryGraph(value: string): Promise<string> {
       const meta = c.confidence ? ` [✅ ${c.confidence}${c.source ? ` via ${c.source}` : ''}]` : ''
       return `${c.from} --[${c.relation}]--> ${c.to} (${c.toLabel})${meta}`
     })
-    console.log(chalk.green(`   ✅ ${connections.length} bağlantı bulundu`))
+    logger.info('GRAPH', `✅ ${connections.length} bağlantı bulundu`)
     return `Graf bağlantıları (${value}):\n${lines.join('\n')}`
   } catch {
     return 'Neo4j bağlantısı kurulamadı.'
@@ -1312,7 +1307,7 @@ async function queryGraph(value: string): Promise<string> {
 }
 
 async function runCrossReference(username: string): Promise<string> {
-  console.log(chalk.cyan(`\n   🔗 Çapraz doğrulama: `) + chalk.yellow.bold(username) + chalk.cyan(`...`))
+  logger.info('GRAPH', `🔗 Çapraz doğrulama: ${username}...`)
   try {
     const ids = await findLinkedIdentifiers(username)
     const lines: string[] = [`Çapraz doğrulama sonuçları (“${username}” için doğrulanmış tanımlayıcılar):`]
@@ -1332,7 +1327,7 @@ async function runCrossReference(username: string): Promise<string> {
       lines.push(`- “${ids.realNames[0] || username}” ismi çok yaygınsa, yalnızca isim eşleşmesine güvenme — email veya handle eşleşmesi gerekli.`)
     }
 
-    console.log(chalk.green(`   ✅ ${ids.emails.length} email, ${ids.handles.length} handle, ${ids.realNames.length} isim bulundu`))
+    logger.info('GRAPH', `✅ ${ids.emails.length} email, ${ids.handles.length} handle, ${ids.realNames.length} isim bulundu`)
     return lines.join('\n')
   } catch {
     return 'Neo4j bağlantısı kurulamadı.'
@@ -1340,10 +1335,10 @@ async function runCrossReference(username: string): Promise<string> {
 }
 
 async function graphStats(): Promise<string> {
-  console.log(chalk.cyan(`\n   📊 Graf istatistikleri çekiliyor...`))
+  logger.info('GRAPH', '📊 Graf istatistikleri çekiliyor...')
   try {
     const stats = await getGraphStats()
-    console.log(chalk.green(`   ✅ ${stats.nodes} node, ${stats.relationships} ilişki`))
+    logger.info('GRAPH', `✅ ${stats.nodes} node, ${stats.relationships} ilişki`)
     return `Graf istatistikleri:\n- Toplam node: ${stats.nodes}\n- Toplam ilişki: ${stats.relationships}`
   } catch {
     return 'Neo4j bağlantısı kurulamadı.'
@@ -1351,7 +1346,7 @@ async function graphStats(): Promise<string> {
 }
 
 async function runListGraphNodes(label?: string, limit?: string): Promise<string> {
-  console.log(chalk.cyan(`\n   🧩 Graf node listesi çekiliyor...`))
+  logger.info('GRAPH', '🧩 Graf node listesi çekiliyor...')
   try {
     const parsedLimit = limit ? Number.parseInt(limit, 10) : 50
     const counts = await getGraphNodeCountsByLabel()
@@ -1375,7 +1370,7 @@ async function runListGraphNodes(label?: string, limit?: string): Promise<string
       lines.push(`- ${node.label}: ${node.value}`)
     }
 
-    console.log(chalk.green(`   ✅ ${nodes.length} node listelendi`))
+    logger.info('GRAPH', `✅ ${nodes.length} node listelendi`)
     return lines.join('\n')
   } catch {
     return 'Neo4j bağlantısı kurulamadı.'
@@ -1383,10 +1378,10 @@ async function runListGraphNodes(label?: string, limit?: string): Promise<string
 }
 
 async function repairGraphNoise(): Promise<string> {
-  console.log(chalk.cyan(`\n   🧹 Graf gürültüsü temizleniyor...`))
+  logger.info('GRAPH', '🧹 Graf gürültüsü temizleniyor...')
   try {
     const result = await pruneMisclassifiedFullNameUsernames()
-    console.log(chalk.green(`   ✅ ${result.usernamesRemoved} username, ${result.profilesRemoved} profil temizlendi`))
+    logger.info('GRAPH', `✅ ${result.usernamesRemoved} username, ${result.profilesRemoved} profil temizlendi`)
     return [
       'Graf temizleme özeti:',
       `- Silinen hatalı Username node: ${result.usernamesRemoved}`,
