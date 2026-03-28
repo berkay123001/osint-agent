@@ -7,7 +7,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { logger } from './logger.js'
 import { githubOsint } from '../tools/githubTool.js'
-import { writeOsintToGraph, getConnections, getGraphStats, getGraphNodeCountsByLabel, listGraphNodes, pruneMisclassifiedFullNameUsernames, findLinkedIdentifiers, writeEmailRegistrations, writeBreachData, writeScrapeData, writeFollowingConnections, mergeRelation, closeNeo4j, clearGraph, deleteGraphNodeAndRelations } from './neo4j.js'
+import { writeOsintToGraph, getConnections, getGraphStats, getGraphNodeCountsByLabel, listGraphNodes, pruneMisclassifiedFullNameUsernames, findLinkedIdentifiers, writeEmailRegistrations, writeBreachData, writeFollowingConnections, mergeRelation, closeNeo4j, clearGraph, deleteGraphNodeAndRelations, writeFinding, writeCybersecurityNode, linkEntities } from './neo4j.js'
 import { normalizeAssistantMessage, normalizeToolContent, sanitizeHistoryForProvider } from './chatHistory.js'
 import { isLikelyUsernameCandidate } from './osintHeuristics.js'
 import { extractMetadataFromUrl, extractMetadataFromFile, formatMetadata } from '../tools/metadataTool.js'
@@ -115,7 +115,7 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
           claimText: { type: "string" },
           source: { type: "string" },
           claimDate: { type: "string" },
-          verdict: { type: "string", enum: ["YALAN", "DOĞRU", "ŞÜPHELİ"] },
+          verdict: { type: "string", enum: ["FALSE", "TRUE", "UNVERIFIED"] },
           truthExplanation: { type: "string" },
           imageUrl: { type: "string" },
           tags: { type: "array", items: { type: "string" } }
@@ -123,6 +123,85 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
         required: ["claimId", "claimText", "source", "claimDate", "verdict", "truthExplanation"]
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'save_finding',
+      description: 'Araştırma sırasında keşfedilen önemli bir bulguyu Neo4j grafına yazar. Sadece doğrulanmış veya yüksek güvenilirlikli bulgular için kullan — spekülatif sonuçları kaydetme.',
+      parameters: {
+        type: 'object',
+        properties: {
+          subject_label: { type: 'string', description: 'Özne node tipi (Username, Email, Person, Website vb.)' },
+          subject_value: { type: 'string', description: 'Özne node değeri' },
+          finding_type: {
+            type: 'string',
+            enum: ['identity', 'location', 'affiliation', 'alias', 'association'],
+            description: 'Bulgu kategorisi'
+          },
+          target_label: { type: 'string', description: 'Hedef node tipi' },
+          target_value: { type: 'string', description: 'Hedef node değeri' },
+          relation: { type: 'string', description: 'İlişki tipi (USES_EMAIL, LOCATED_IN, WORKS_AT, ALIAS_OF, ASSOCIATED_WITH vb.)' },
+          confidence: {
+            type: 'string',
+            enum: ['verified', 'high', 'medium', 'low'],
+            description: 'Güvenilirlik seviyesi'
+          },
+          evidence: { type: 'string', description: 'Bulgunun kanıtı (kaynak URL veya açıklama)' },
+        },
+        required: ['subject_label', 'subject_value', 'finding_type', 'target_label', 'target_value', 'relation'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'save_ioc',
+      description: 'Siber tehdit göstergesi (IOC) veya tehdit aktörü bilgisini Neo4j grafına yazar. ThreatActor, C2Server, Malware, Campaign, IOC, PhishingDomain tipleri desteklenir.',
+      parameters: {
+        type: 'object',
+        properties: {
+          node_type: {
+            type: 'string',
+            description: 'Node tipi: ThreatActor | C2Server | Malware | Campaign | IOC | PhishingDomain'
+          },
+          value: { type: 'string', description: 'Node değeri (domain, IP, hash, isim vb.)' },
+          properties: {
+            type: 'object',
+            description: 'Ek özellikler (category, tlp, description, firstSeen vb.) — anahtar-değer çifti',
+            additionalProperties: { type: 'string' }
+          },
+          linked_label: { type: 'string', description: 'Bağlanacak mevcut node tipi (opsiyonel)' },
+          linked_value: { type: 'string', description: 'Bağlanacak mevcut node değeri (opsiyonel)' },
+          linked_relation: { type: 'string', description: 'İlişki tipi (opsiyonel, ör: USES_C2, PART_OF_CAMPAIGN)' },
+        },
+        required: ['node_type', 'value'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'link_entities',
+      description: 'Grafta zaten var olan (veya oluşturulacak) iki node\'u ilişkilendirir. SAME_AS, ALIAS_OF, ASSOCIATED_WITH gibi genel ilişkiler için kullan.',
+      parameters: {
+        type: 'object',
+        properties: {
+          from_label: { type: 'string', description: 'Kaynak node tipi' },
+          from_value: { type: 'string', description: 'Kaynak node değeri' },
+          to_label: { type: 'string', description: 'Hedef node tipi' },
+          to_value: { type: 'string', description: 'Hedef node değeri' },
+          relation: { type: 'string', description: 'İlişki tipi (SAME_AS, ALIAS_OF, ASSOCIATED_WITH vb.)' },
+          evidence: { type: 'string', description: 'İlişkinin kanıtı (opsiyonel)' },
+          confidence: {
+            type: 'string',
+            enum: ['verified', 'high', 'medium', 'low'],
+            description: 'Güvenilirlik seviyesi (opsiyonel)'
+          },
+        },
+        required: ['from_label', 'from_value', 'to_label', 'to_value', 'relation'],
+      },
+    },
   },
   {
     type: "function",
@@ -752,7 +831,7 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
            claimText: args.claimText,
            source: args.source,
            claimDate: args.claimDate,
-           verdict: args.verdict as "YALAN" | "DOĞRU" | "ŞÜPHELİ",
+           verdict: args.verdict as 'FALSE' | 'TRUE' | 'UNVERIFIED',
            truthExplanation: args.truthExplanation,
            imageUrl: args.imageUrl,
            tags: args.tags ? JSON.parse(args.tags) : []
@@ -760,6 +839,52 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
         result = `✅ Fact-Check sonucu Neo4j Veri Grafiğine başarıyla kaydedildi! (Claim ID: ${args.claimId})`;
       } catch (e: any) {
         result = `❌ Graph kaydetme hatası: ${e.message}`;
+      }
+    }
+    else if (name === 'save_finding') {
+      logger.info('TOOL', `💾 Bulgu kaydediliyor (Neo4j): ${args.subject_label}:${args.subject_value} -[${args.relation}]-> ${args.target_label}:${args.target_value}`)
+      try {
+        const stats = await writeFinding(args.subject_label, args.subject_value, {
+          type: args.finding_type as 'identity' | 'location' | 'affiliation' | 'alias' | 'association',
+          targetLabel: args.target_label,
+          targetValue: args.target_value,
+          relation: args.relation,
+          confidence: (args.confidence as any) ?? 'medium',
+          evidence: args.evidence,
+        })
+        result = `✅ Bulgu Neo4j grafına kaydedildi. (${stats.nodesCreated} node, ${stats.relsCreated} ilişki oluşturuldu)`
+      } catch (e: any) {
+        result = `❌ Graf yazma hatası: ${e.message}`
+      }
+    }
+    else if (name === 'save_ioc') {
+      logger.info('TOOL', `🛡️  IOC kaydediliyor (Neo4j): ${args.node_type}:${args.value}`)
+      try {
+        const props: Record<string, string> = {}
+        if (args.properties && typeof args.properties === 'object') {
+          Object.assign(props, args.properties)
+        }
+        const linkedTo = args.linked_label && args.linked_value && args.linked_relation
+          ? { label: args.linked_label, value: args.linked_value, relation: args.linked_relation }
+          : undefined
+        const stats = await writeCybersecurityNode(args.node_type, args.value, props, linkedTo)
+        result = `✅ IOC Neo4j grafına kaydedildi. (${stats.nodesCreated} node, ${stats.relsCreated} ilişki oluşturuldu)`
+      } catch (e: any) {
+        result = `❌ Graf yazma hatası: ${e.message}`
+      }
+    }
+    else if (name === 'link_entities') {
+      logger.info('TOOL', `🔗 Varlıklar ilişkilendiriliyor (Neo4j): ${args.from_label}:${args.from_value} -[${args.relation}]-> ${args.to_label}:${args.to_value}`)
+      try {
+        const stats = await linkEntities(
+          args.from_label, args.from_value,
+          args.to_label, args.to_value,
+          args.relation,
+          { evidence: args.evidence, confidence: (args.confidence as any) ?? 'medium' }
+        )
+        result = `✅ Varlıklar ilişkilendirildi. (${stats.nodesCreated} node, ${stats.relsCreated} ilişki oluşturuldu)`
+      } catch (e: any) {
+        result = `❌ Graf yazma hatası: ${e.message}`
       }
     }
     else if (name === 'reverse_image_search') {
@@ -1124,16 +1249,6 @@ async function runScrapeProfile(url: string): Promise<string> {
     .map((n, i) => n > 0 ? `${n} ${['email', 'cüzdan', 'handle'][i]}` : '')
     .filter(Boolean).join(', ')
   logger.info('TOOL', `✅ Sayfa alındı${found ? ` — ${found}` : ''}: ${result.title || url}`)
-
-  // Bulunan OSINT verilerini grafa yaz
-  if (result.emails.length > 0 || result.cryptoWallets.length > 0 || result.usernameHints.length > 0) {
-    try {
-      const stats = await writeScrapeData(url, result, 'firecrawl')
-      logger.info('GRAPH', `💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`)
-    } catch {
-      logger.warn('GRAPH', '⚠️  Graf yazma atlandı')
-    }
-  }
 
   return formatScrapeResult(result)
 }

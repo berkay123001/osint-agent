@@ -19,6 +19,7 @@ const SUPERVISOR_TOOLS = [
   'search_web', 'web_fetch', 'scrape_profile', 'remove_false_positive',
   'generate_report', 'check_plagiarism',
   'obsidian_write', 'obsidian_append', 'obsidian_read', 'obsidian_daily', 'obsidian_list', 'obsidian_search',
+  'save_finding', 'save_ioc', 'link_entities',
 ];
 
 const supervisorNativeTools = tools.filter((t: any) => t.type === 'function' && SUPERVISOR_TOOLS.includes(t.function.name));
@@ -184,6 +185,20 @@ NE ZAMAN OBSİDİAN KULLAN:
 → Kişi araştırıldı → "08 - Profiller/[username].md" profil özeti oluştur
 → "Geçmişteki notlara bak" / "daha önce … araştırmış mıyım" → obsidian_search ile ara, obsidian_read ile oku
 → Profil notlarında ilişkili kişiler → [[diğer-kisi]] wikilink formatı kullan (Örn: "[[torvalds]] GitHub'ın kurucusudur")
+
+## NEO4J GRAF YAZMA KURALI
+Araştırma sırasında keşfettiğin önemli bulgular için bu araçları kullan:
+- save_finding: Kimlik/konum/bağlantı bulguları (doğrulanmış veya yüksek güvenilirlikli)
+- save_ioc: Siber tehdit göstergeleri (ThreatActor, C2Server, Malware, PhishingDomain, IOC)
+- link_entities: Grafta var olan iki varlık arasında ilişki kur
+
+NE ZAMAN KULLAN:
+✅ "bu email o username'e ait" olduğunu kanıtlayan kaynak buldun → save_finding (identity)
+✅ SubAgent raporunda "aynı kişi" olarak doğrulanan bir hesap → link_entities (SAME_AS)
+✅ Bir domain C2 sunucusu veya phishing amaçlı kullanılıyor → save_ioc (C2Server/PhishingDomain)
+✅ Kişinin çalıştığı kurum kesin olarak belirlendi → save_finding (affiliation)
+❌ Geçici arama sonuçları, spekülatif bulgular → KAYDETME
+❌ Emin olmadığın / doğrulanamayan iddialar → KAYDETME
 
 WIKILINK KURALLARI:
 → Profil notlarında diğer araştırılan kişilere [[username]] ile bağlantı kur

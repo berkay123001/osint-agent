@@ -662,6 +662,135 @@ export async function exportGraphForVisualization(): Promise<{
   }
 }
 
+// ─── Cybersecurity Node Tipleri ─────────────────────────────────────────────
+
+/**
+ * LLM'in araştırma sırasında keşfettiği önemli bir OSINT bulgusunu grafa yazar.
+ * Supervisor bu fonksiyonu "save_finding" aracı aracılığıyla çağırır.
+ *
+ * Desteklenen finding tipleri:
+ *   identity   → Username/Email/Person/Website bağlantısı
+ *   location   → Konum bilgisi
+ *   affiliation → Kurum/örgüt bağlantısı
+ *   alias      → Takma isim / alternatif username
+ */
+export async function writeFinding(
+  subjectLabel: string,
+  subjectValue: string,
+  finding: {
+    type: 'identity' | 'location' | 'affiliation' | 'alias' | 'association'
+    targetLabel: string
+    targetValue: string
+    relation: string
+    confidence?: ConfidenceLevel
+    evidence?: string
+    source?: string
+  }
+): Promise<{ nodesCreated: number; relsCreated: number }> {
+  const before = await getGraphStats()
+  const meta = {
+    source: finding.source ?? 'supervisor_llm',
+    confidence: finding.confidence ?? 'medium',
+  }
+  if (finding.evidence) {
+    (meta as any).evidence = finding.evidence
+  }
+
+  await mergeNode(subjectLabel, { value: subjectValue })
+  await mergeNode(finding.targetLabel, { value: finding.targetValue })
+  await mergeRelation(
+    subjectLabel, subjectValue,
+    finding.targetLabel, finding.targetValue,
+    sanitizeRelType(finding.relation),
+    meta
+  )
+
+  const after = await getGraphStats()
+  return {
+    nodesCreated: Math.max(after.nodes - before.nodes, 0),
+    relsCreated: Math.max(after.relationships - before.relationships, 0),
+  }
+}
+
+/**
+ * Siber güvenlik bulgusu — IOC, ThreatActor, C2Server, Malware, Campaign vb.
+ * Supervisor'ın "save_ioc" aracı bu fonksiyonu çağırır.
+ *
+ * nodeType örnekleri: ThreatActor, C2Server, Malware, Campaign, IOC, PhishingDomain
+ */
+export async function writeCybersecurityNode(
+  nodeType: string,
+  value: string,
+  properties: Record<string, string>,
+  linkedTo?: {
+    label: string
+    value: string
+    relation: string
+  },
+  source?: string
+): Promise<{ nodesCreated: number; relsCreated: number }> {
+  const before = await getGraphStats()
+  const meta = { source: source ?? 'supervisor_llm', confidence: 'medium' as ConfidenceLevel }
+
+  const allProps = { value, ...properties }
+  await mergeNode(nodeType, allProps)
+
+  if (linkedTo) {
+    await mergeNode(linkedTo.label, { value: linkedTo.value })
+    await mergeRelation(
+      nodeType, value,
+      linkedTo.label, linkedTo.value,
+      sanitizeRelType(linkedTo.relation),
+      meta
+    )
+  }
+
+  const after = await getGraphStats()
+  return {
+    nodesCreated: Math.max(after.nodes - before.nodes, 0),
+    relsCreated: Math.max(after.relationships - before.relationships, 0),
+  }
+}
+
+/**
+ * Grafta zaten var olan iki node'u ilişkilendirir.
+ * Supervisor'ın "link_entities" aracı bu fonksiyonu çağırır.
+ */
+export async function linkEntities(
+  fromLabel: string,
+  fromValue: string,
+  toLabel: string,
+  toValue: string,
+  relation: string,
+  options?: {
+    evidence?: string
+    confidence?: ConfidenceLevel
+    source?: string
+  }
+): Promise<{ nodesCreated: number; relsCreated: number }> {
+  const before = await getGraphStats()
+  const meta: Record<string, string> = {
+    source: options?.source ?? 'supervisor_llm',
+    confidence: options?.confidence ?? 'medium',
+  }
+  if (options?.evidence) meta.evidence = options.evidence
+
+  await mergeNode(fromLabel, { value: fromValue })
+  await mergeNode(toLabel, { value: toValue })
+  await mergeRelation(fromLabel, fromValue, toLabel, toValue, sanitizeRelType(relation), meta)
+
+  const after = await getGraphStats()
+  return {
+    nodesCreated: Math.max(after.nodes - before.nodes, 0),
+    relsCreated: Math.max(after.relationships - before.relationships, 0),
+  }
+}
+
+/** İlişki adını güvenli hale getirir — boşluk → _, özel char kaldır */
+function sanitizeRelType(rel: string): string {
+  return rel.toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '')
+}
+
 export async function deleteGraphNodeAndRelations(label: string, value: string): Promise<boolean> {
   const session = getDriver().session()
   const safeLabel = sanitizeLabel(label)

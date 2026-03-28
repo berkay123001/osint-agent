@@ -11,7 +11,7 @@ export const factCheckGraphTool = ai.defineTool(
       claimText: z.string().describe('Şüpheli iddianın veya haberin tam metni'),
       source: z.string().describe('İddianın yayıldığı yer (Örn: Twitter, ŞokHaber.com vs.)'),
       claimDate: z.string().describe('İddianın tarihi (YYYY-MM-DD vs.)'),
-      verdict: z.enum(['YALAN', 'DOĞRU', 'ŞÜPHELİ']).describe('Analiz sonucunda verilen karar'),
+      verdict: z.enum(['FALSE', 'TRUE', 'UNVERIFIED']).describe('Analiz sonucunda verilen karar (FALSE=yalan, TRUE=doğru, UNVERIFIED=şüpheli)'),
       truthExplanation: z.string().describe('Kararın detayı (Neden yalan, orijinal görsel ne vs.)'),
       imageUrl: z.string().optional().describe('İddiada kullanılan ana görselin URL si'),
       tags: z.array(z.string()).optional().describe('Kategoriler (Dezenformasyon, Siyaset, Oltalama vb.)')

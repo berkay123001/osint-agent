@@ -1,11 +1,12 @@
 import { getDriver } from './neo4j.js';
+import { logger } from './logger.js';
 
 export interface FactCheckData {
   claimId: string;
   claimText: string;
   source: string;
   claimDate: string;
-  verdict: 'YALAN' | 'DOĞRU' | 'ŞÜPHELİ';
+  verdict: 'FALSE' | 'TRUE' | 'UNVERIFIED';
   truthExplanation: string;
   imageUrl?: string;
   tags?: string[];
@@ -24,14 +25,14 @@ export async function writeFactCheckToGraph(data: FactCheckData): Promise<void> 
 
       // 2. Kaynak Düğümü (Source - Haber Sitesi, Twitter vs.)
       MERGE (s:Source {name: $source})
-      MERGE (s)-[:YAYINLADI]->(c)
+      MERGE (s)-[:PUBLISHED]->(c)
 
       // 3. Karar/Doğrulama Düğümü (Verdict/Fact)
       MERGE (f:Fact {id: $claimId + "_fact"})
       SET f.verdict = $verdict,
           f.explanation = $truthExplanation
       
-      MERGE (f)-[:ANALİZ_ETTİ]->(c)
+      MERGE (f)-[:ANALYZED]->(c)
 
       // 4. Görseller
       WITH c, $imageUrl AS img
@@ -39,7 +40,7 @@ export async function writeFactCheckToGraph(data: FactCheckData): Promise<void> 
         WITH c, img
         WITH c, img WHERE img IS NOT NULL
         MERGE (i:Image {url: img})
-        MERGE (c)-[:GÖRSEL_İÇERİR]->(i)
+        MERGE (c)-[:CONTAINS_IMAGE]->(i)
         RETURN count(i) as r
       }
       
@@ -47,7 +48,7 @@ export async function writeFactCheckToGraph(data: FactCheckData): Promise<void> 
       WITH c, $tags AS tagsList
       UNWIND tagsList AS tagName
       MERGE (t:Tag {name: tagName})
-      MERGE (c)-[:ETİKETLENDİ]->(t)
+      MERGE (c)-[:TAGGED_WITH]->(t)
     `;
 
     await session.run(query, {
@@ -55,9 +56,9 @@ export async function writeFactCheckToGraph(data: FactCheckData): Promise<void> 
       tags: data.tags || [],
       imageUrl: data.imageUrl || null
     });
-    console.log(`[Neo4j] Fact-Check verisi grafiğe yazıldı: ${data.claimId}`);
+    logger.info('GRAPH', `Fact-Check data written: ${data.claimId}`);
   } catch (error) {
-    console.error(`[Neo4j Hatası] Graph'a yazılamadı:`, error);
+    logger.error('GRAPH', 'Failed to write fact-check data', { error });
   } finally {
     await session.close();
   }
