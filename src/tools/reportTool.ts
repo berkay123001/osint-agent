@@ -1,9 +1,25 @@
-import { mkdir, writeFile } from 'fs/promises'
+import { copyFile, mkdir, writeFile } from 'fs/promises'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+// Obsidian vault'a otomatik kopyalama
+const OBSIDIAN_REPORTS_DIR = path.resolve(
+  process.env.HOME ?? '/home/berkayhsrt',
+  'Agent_Knowladges/OSINT/OSINT-Agent/04 - Araştırma Raporları',
+)
+
+async function syncToObsidian(filePath: string): Promise<void> {
+  try {
+    await mkdir(OBSIDIAN_REPORTS_DIR, { recursive: true })
+    const dest = path.join(OBSIDIAN_REPORTS_DIR, path.basename(filePath))
+    await copyFile(filePath, dest)
+  } catch {
+    // Obsidian vault yoksa sessizce atla
+  }
+}
 
 export interface ReportSection {
   title: string
@@ -327,6 +343,7 @@ export async function generateOsintReport(input: OsintReportInput): Promise<Osin
     const safeSubject = subject.replace(/[^a-zA-Z0-9_\-ğüşıöçĞÜŞİÖÇ]/g, '_').slice(0, 40)
     const filePath = path.join(reportsDir, `report_academic_${safeSubject}_${timestamp}.md`)
     await writeFile(filePath, markdown, 'utf-8')
+    await syncToObsidian(filePath)
     return { filePath, markdown, summary: `Akademik rapor oluşturuldu → ${filePath}` }
   }
 
@@ -339,6 +356,7 @@ export async function generateOsintReport(input: OsintReportInput): Promise<Osin
     const safeSubject = subject.replace(/[^a-zA-Z0-9_\-ğüşıöçĞÜŞİÖÇ]/g, '_').slice(0, 40)
     const filePath = path.join(reportsDir, `report_factcheck_${safeSubject}_${timestamp}.md`)
     await writeFile(filePath, markdown, 'utf-8')
+    await syncToObsidian(filePath)
     return { filePath, markdown, summary: `Fact-check raporu oluşturuldu → ${filePath}` }
   }
 
@@ -361,6 +379,7 @@ export async function generateOsintReport(input: OsintReportInput): Promise<Osin
   const filePath = path.join(reportsDir, fileName)
 
   await writeFile(filePath, markdown, 'utf-8')
+  await syncToObsidian(filePath)
 
   // Özet
   const profileCount = graphData?.connections.filter(c => c.relation === 'HAS_PROFILE').length ?? 0
