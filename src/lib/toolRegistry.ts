@@ -30,6 +30,7 @@ import { searchAcademicPapers, formatAcademicResult, writeAcademicPapersToGraph,
 import type { AcademicSearchResult } from '../tools/academicSearchTool.js'
 import { generateOsintReport } from '../tools/reportTool.js'
 import { checkPlagiarism } from '../tools/plagiarismTool.js'
+import { obsidianWrite, obsidianAppend, obsidianRead, obsidianDailyLog, obsidianList } from '../tools/obsidianTool.js'
 import os from 'os'
 import { writeFile, unlink } from 'fs/promises'
 
@@ -518,6 +519,81 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
       },
     },
   },
+  // ─── Obsidian Vault Araçları ─────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'obsidian_write',
+      description: 'Obsidian vault\'unda bir not oluştur veya güncelle. Agent\'ın kendi bilgi tabanına kayıt açar. Vault kökü: Agent_Knowladges/OSINT/OSINT-Agent/. Örnek yollar: "07 - Notlar/kullanici-tercihleri.md", "08 - Profiller/torvalds.md"',
+      parameters: {
+        type: 'object',
+        properties: {
+          note_path: { type: 'string', description: 'Vault\'a göre göreli dosya yolu (örn: "07 - Notlar/önemli-bulgular.md")' },
+          content: { type: 'string', description: 'Notun tam Markdown içeriği' },
+          overwrite: { type: 'boolean', description: 'true → üzerine yaz (varsayılan), false → sadece yoksa oluştur' },
+        },
+        required: ['note_path', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'obsidian_append',
+      description: 'Obsidian vault\'undaki mevcut bir notun sonuna içerik ekle. Günlük defteri güncellemeleri, araştırma notları ve önemli bulgular için kullan.',
+      parameters: {
+        type: 'object',
+        properties: {
+          note_path: { type: 'string', description: 'Vault\'a göre göreli dosya yolu' },
+          content: { type: 'string', description: 'Eklenecek Markdown içerik' },
+        },
+        required: ['note_path', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'obsidian_read',
+      description: 'Obsidian vault\'undaki bir notu oku. Önceki notlar, kullanıcı tercihleri veya araştırma bağlamını hatırlamak için kullan.',
+      parameters: {
+        type: 'object',
+        properties: {
+          note_path: { type: 'string', description: 'Vault\'a göre göreli dosya yolu' },
+        },
+        required: ['note_path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'obsidian_daily',
+      description: 'Bugünün günlük defterine kayıt ekle (06 - Günlük/YYYY-MM-DD.md). Önemli bulguları, kullanıcı tercihlerini, gözlemleri ve hatırlatmaları buraya yaz. Dosya yoksa otomatik oluşturur.',
+      parameters: {
+        type: 'object',
+        properties: {
+          entry: { type: 'string', description: 'Günlüğe eklenecek metin (Markdown)' },
+          tag: { type: 'string', description: 'Opsiyonel etiket: "araştırma" | "kullanıcı-tercihi" | "gözlem" | "hatırlatma"' },
+        },
+        required: ['entry'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'obsidian_list',
+      description: 'Obsidian vault\'undaki bir dizinin içeriğini listele. Mevcut notları keşfetmek veya vault yapısını görmek için kullan.',
+      parameters: {
+        type: 'object',
+        properties: {
+          dir: { type: 'string', description: 'Listelenecek dizin (göreli yol). Boş bırakılırsa vault kökü listelenir.' },
+        },
+        required: [],
+      },
+    },
+  },
 ]
 
 // ─── Tool Executors ──────────────────────────────────────────────────
@@ -809,6 +885,30 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       } catch {
         console.log(chalk.gray(`   ⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)`))
       }
+    }
+    else if (name === 'obsidian_write') {
+      const overwrite = String(args.overwrite) !== 'false'
+      console.log(chalk.magenta(`\n   🟣 Obsidian'a yazılıyor: `) + chalk.yellow.bold(args.note_path))
+      result = await obsidianWrite(args.note_path, args.content, overwrite)
+      console.log(chalk.green(`   ${result}`))
+    }
+    else if (name === 'obsidian_append') {
+      console.log(chalk.magenta(`\n   🟣 Obsidian'a ekleniyor: `) + chalk.yellow.bold(args.note_path))
+      result = await obsidianAppend(args.note_path, args.content)
+      console.log(chalk.green(`   ${result}`))
+    }
+    else if (name === 'obsidian_read') {
+      console.log(chalk.magenta(`\n   🟣 Obsidian okunuyor: `) + chalk.yellow.bold(args.note_path))
+      result = await obsidianRead(args.note_path)
+    }
+    else if (name === 'obsidian_daily') {
+      console.log(chalk.magenta(`\n   🟣 Günlüğe kaydediliyor...`))
+      result = await obsidianDailyLog(args.entry, args.tag)
+      console.log(chalk.green(`   ${result}`))
+    }
+    else if (name === 'obsidian_list') {
+      console.log(chalk.magenta(`\n   🟣 Obsidian dizini listeleniyor: `) + chalk.yellow.bold(args.dir || '(vault kökü)'))
+      result = await obsidianList(args.dir)
     }
     else result = `Unknown tool: ${name}`;
 
