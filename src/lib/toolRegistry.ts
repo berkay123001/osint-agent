@@ -30,7 +30,7 @@ import { searchAcademicPapers, formatAcademicResult, writeAcademicPapersToGraph,
 import type { AcademicSearchResult } from '../tools/academicSearchTool.js'
 import { generateOsintReport } from '../tools/reportTool.js'
 import { checkPlagiarism } from '../tools/plagiarismTool.js'
-import { obsidianWrite, obsidianAppend, obsidianRead, obsidianDailyLog, obsidianList } from '../tools/obsidianTool.js'
+import { obsidianWrite, obsidianAppend, obsidianRead, obsidianDailyLog, obsidianList, obsidianSearch } from '../tools/obsidianTool.js'
 import os from 'os'
 import { writeFile, unlink } from 'fs/promises'
 
@@ -594,6 +594,21 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'obsidian_search',
+      description: 'Obsidian vault\'unda tam metin arama yap. Tüm .md dosyalarını tarar, eşleşen dosyaları ve bağlam satırlarını döndürür. Önceki araştırmaları, profil notlarını veya kullanıcı tercihlerini bulmak için kullan. Örnek: "torvalds", "GitHub", "kullanıcı-tercihi"',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Aranacak anahtar kelime veya ifade (case-insensitive)' },
+          limit: { type: 'number', description: 'Maksimum sonuç sayısı (varsayılan: 10)' },
+        },
+        required: ['query'],
+      },
+    },
+  },
 ]
 
 // ─── Tool Executors ──────────────────────────────────────────────────
@@ -909,6 +924,12 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     else if (name === 'obsidian_list') {
       console.log(chalk.magenta(`\n   🟣 Obsidian dizini listeleniyor: `) + chalk.yellow.bold(args.dir || '(vault kökü)'))
       result = await obsidianList(args.dir)
+    }
+    else if (name === 'obsidian_search') {
+      console.log(chalk.magenta(`\n   🟣 Obsidian'da aranıyor: `) + chalk.yellow.bold(args.query))
+      const limit = args.limit ? parseInt(String(args.limit), 10) : 10
+      result = await obsidianSearch(args.query, limit)
+      console.log(chalk.green(`   ${result.slice(0, 200)}...`))
     }
     else result = `Unknown tool: ${name}`;
 

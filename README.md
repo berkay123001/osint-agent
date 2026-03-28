@@ -300,6 +300,7 @@ npx tsx src/tools/agentCli.ts --last      # Son yanıtı görüntüle
 | `add_custom_node` | Özel node ekle |
 | `add_custom_relationship` | İki node arasında ilişki kur |
 | `remove_false_positive` | Yanlış pozitif node'u temizle |
+| `unexplored_pivots` | Araştırılmamış bağlantı önerileri |
 | `generate_report` | OSINT/akademik/factcheck raporu oluştur |
 
 </details>
@@ -381,11 +382,6 @@ src/
 ## 📄 Lisans
 
 MIT — Detaylar için [LICENSE](LICENSE) dosyasına bakın.
-
-
----
-
-## ✨ Özellikler
 
 | Alan | Kapasiteler |
 |------|-------------|

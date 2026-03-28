@@ -137,6 +137,81 @@ export async function obsidianList(dir = ''): Promise<string> {
   }
 }
 
+/**
+ * Vault içindeki tüm .md dosyalarını özyinelemeli gezer.
+ * Gizli dosya/dizinleri (.) atlar.
+ */
+async function walkMdFiles(dir: string): Promise<string[]> {
+  const results: string[] = []
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return results
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      const sub = await walkMdFiles(full)
+      results.push(...sub)
+    } else if (entry.name.endsWith('.md')) {
+      results.push(full)
+    }
+  }
+  return results
+}
+
+/**
+ * Vault içinde anahtar kelime araması yap.
+ * Tüm .md dosyalarını tarar, eşleşen dosyaları ve bağlam satırlarını döndürür.
+ * @param query  Aranacak metin (case-insensitive)
+ * @param limit  Maksimum sonuç sayısı (varsayılan: 10)
+ */
+export async function obsidianSearch(query: string, limit = 10): Promise<string> {
+  const q = query.toLowerCase()
+  const allFiles = await walkMdFiles(VAULT_ROOT)
+  const matches: Array<{ relPath: string; contextLines: string[] }> = []
+
+  for (const filePath of allFiles) {
+    if (matches.length >= limit) break
+    let content: string
+    try {
+      content = await readFile(filePath, 'utf8')
+    } catch {
+      continue
+    }
+    const lines = content.split('\n')
+    const contextLines: string[] = []
+
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].toLowerCase().includes(q)) {
+        const start = Math.max(0, i - 1)
+        const end = Math.min(lines.length - 1, i + 1)
+        for (let j = start; j <= end; j++) {
+          contextLines.push(`  L${j + 1}: ${lines[j]}`)
+        }
+        contextLines.push('  ---')
+      }
+    }
+
+    if (contextLines.length > 0) {
+      const relPath = path.relative(VAULT_ROOT, filePath)
+      matches.push({ relPath, contextLines })
+    }
+  }
+
+  if (matches.length === 0) {
+    return `🔍 "${query}" için sonuç bulunamadı.`
+  }
+
+  const output = matches.map(m =>
+    `📄 **${m.relPath}**\n${m.contextLines.join('\n')}`
+  ).join('\n\n')
+
+  return `🔍 "${query}" — ${matches.length} dosyada bulundu:\n\n${output}`
+}
+
 // ─── Dizinlerin varlığını garantile ─────────────────────────────────────────
 export async function ensureVaultDirs(): Promise<void> {
   await Promise.all([

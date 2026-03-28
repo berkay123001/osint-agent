@@ -17,7 +17,7 @@ const SUPERVISOR_TOOLS = [
   'query_graph', 'list_graph_nodes', 'graph_stats', 'clear_graph', 
   'search_web', 'web_fetch', 'scrape_profile', 'remove_false_positive',
   'generate_report', 'check_plagiarism',
-  'obsidian_write', 'obsidian_append', 'obsidian_read', 'obsidian_daily', 'obsidian_list',
+  'obsidian_write', 'obsidian_append', 'obsidian_read', 'obsidian_daily', 'obsidian_list', 'obsidian_search',
 ];
 
 const supervisorNativeTools = tools.filter((t: any) => t.type === 'function' && SUPERVISOR_TOOLS.includes(t.function.name));
@@ -181,7 +181,13 @@ NE ZAMAN OBSİDİAN KULLAN:
 → Kritik bulgu / önemli not → obsidian_daily (tag:"araştırma")
 → "Bunu not al / kaydet / hatırla" → obsidian_write veya obsidian_append
 → Kişi araştırıldı → "08 - Profiller/[username].md" profil özeti oluştur
-→ "Geçmişteki notlara bak" → obsidian_read ile ilgili notu oku
+→ "Geçmişteki notlara bak" / "daha önce … araştırmış mıyım" → obsidian_search ile ara, obsidian_read ile oku
+→ Profil notlarında ilişkili kişiler → [[diğer-kisi]] wikilink formatı kullan (Örn: "[[torvalds]] GitHub'ın kurucusudur")
+
+WIKILINK KURALLARI:
+→ Profil notlarında diğer araştırılan kişilere [[username]] ile bağlantı kur
+→ Örn: "08 - Profiller/torvalds.md" içinde "[[dhh]] ile tartışma" yazılabilir
+→ Bu sayede Obsidian'da kişiler arası bağlantı grafı oluşur
 
 KARAR AĞACI — Kullanıcının isteğine göre hemen şunu yap:
 0. 🔑 SESSION KONTROLÜ (KRİTİK — her konuşma başında bir kez yap):
