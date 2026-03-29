@@ -29,12 +29,14 @@ export async function runAgentLoop(
   let emptyRetries = 0;
   let correctionRetries = 0;
   let totalCorrectionAttempts = 0; // Global cap — sonsuz döngüyü önler
+  let forceTextRetries = 0; // Metin zorlama deneme sayacı
   const toolsUsed: Record<string, number> = {};
   const maxToolCalls = config.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
 
   while (true) {
-    const toolChoice: 'auto' | 'none' = toolCallCount >= maxToolCalls ? 'none' : 'auto';
-    if (toolChoice === 'none') {
+    const toolsDisabled = toolCallCount >= maxToolCalls;
+    const toolChoice: 'auto' | 'none' = toolsDisabled ? 'none' : 'auto';
+    if (toolsDisabled) {
       logger.warn('AGENT', `[${config.name}] Maksimum araç çağrısı aşıldı, özet isteniyor...`);
     }
 
@@ -75,14 +77,37 @@ export async function runAgentLoop(
         const upstreamErr = JSON.stringify(respAny['error']);
         // Geçersiz JSON argümanı hatası → modele düzeltme fırsatı ver (maks 3 deneme)
         if (upstreamErr.includes('function.arguments') || upstreamErr.includes('InvalidParameter')) {
-          // Zaten cap'e ulaşıldıysa: araç çağrısı kalıcı olarak devre dışı, döngüyü kır
-          if (totalCorrectionAttempts >= 6) {
-            logger.error('AGENT', `[${config.name}] Araç çağrısı zaten devre dışı ama model hâlâ hata üretiyor — çıkılıyor.`);
-            return {
-              finalResponse: 'Model geçersiz JSON üretmeye devam ediyor, yanıt üretilemiyor. Toplanan veriler session dosyasına kaydedildi.',
-              toolCallCount,
-              toolsUsed,
-            };
+          // Araçlar devre dışıyken veya 6 düzeltme sonrası model hâlâ araç çağırıyorsa
+          if (toolsDisabled || totalCorrectionAttempts >= 6) {
+            forceTextRetries++
+            if (forceTextRetries > 1) {
+              // 2. denemede bile başarısız → temiz bir API çağrısı yap (tool geçmişi olmadan)
+              logger.warn('AGENT', `[${config.name}] Model araç çağırmakta ısrarcı — temiz metin yanıtı deneniyor.`)
+              try {
+                const cleanResponse = await client.chat.completions.create({
+                  model: config.model ?? DEFAULT_MODEL,
+                  messages: [
+                    { role: 'system', content: config.systemPrompt },
+                    { role: 'user', content: 'Topladığın tüm araştırma bilgilerini kısa bir özet olarak yaz. Hiçbir araç çağırma, sadece düz metin.' },
+                  ],
+                  max_tokens: 2048,
+                })
+                const text = cleanResponse.choices?.[0]?.message?.content?.trim()
+                if (text) {
+                  return { finalResponse: text, toolCallCount, toolsUsed }
+                }
+              } catch {
+                // Temiz çağrı da başarısız → pes et
+              }
+              return {
+                finalResponse: 'Model yanıt üretilemedi. Toplanan veriler session dosyasına kaydedildi.',
+                toolCallCount,
+                toolsUsed,
+              }
+            }
+            logger.warn('AGENT', `[${config.name}] JSON hatası + araç devre dışı — metin yanıt zorlanıyor (${forceTextRetries}/1).`)
+            config = { ...config, tools: [] }
+            continue
           }
 
           correctionRetries++;
