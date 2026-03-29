@@ -176,6 +176,7 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
 export const supervisorAgentConfig: AgentConfig = {
   name: 'Supervisor',
   model: 'qwen/qwen3.5-plus-02-15',
+  maxTokens: 32768, // Büyük sub-agent raporları + thinking tokens için geniş bütçe
   tools: supervisorMetaTools,
   executeTool: supervisorExecuteTool,
   systemPrompt: `Sen OSINT Dijital Müfettiş sisteminin Şef (Supervisor) Ajanısın.

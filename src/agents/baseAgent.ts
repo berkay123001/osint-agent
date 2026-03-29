@@ -13,6 +13,7 @@ const DEFAULT_MODEL = 'qwen/qwen3.5-plus-02-15';
 const SUPERVISOR_MODEL = 'qwen/qwen3.5-plus-02-15';
 export { DEFAULT_MODEL, SUPERVISOR_MODEL };
 const DEFAULT_MAX_TOOL_CALLS = 30;
+const DEFAULT_MAX_TOKENS = 32768; // Qwen3 thinking tokens için geniş bütçe
 
 const client = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -56,7 +57,7 @@ export async function runAgentLoop(
         messages: sanitizeHistoryForProvider(history),
         tools: config.tools.length > 0 ? config.tools : undefined,
         tool_choice: config.tools.length > 0 ? toolChoice : undefined,
-        max_tokens: 4096,
+        max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
       });
     } catch (apiError: unknown) {
       const msg = apiError instanceof Error ? apiError.message : String(apiError);
@@ -69,7 +70,7 @@ export async function runAgentLoop(
           messages: sanitizeHistoryForProvider(history),
           tools: config.tools.length > 0 ? config.tools : undefined,
           tool_choice: config.tools.length > 0 ? toolChoice : undefined,
-          max_tokens: 4096,
+          max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
         });
       } else {
         throw apiError;
@@ -81,6 +82,8 @@ export async function runAgentLoop(
     if (!response?.choices?.[0]) {
       if (respAny['error']) {
         const upstreamErr = JSON.stringify(respAny['error']);
+        // Gerçek hata içeriğini logla — neyin kırıldığını anlamak için
+        logger.error('AGENT', `[${config.name}] OpenRouter upstream hatası: ${upstreamErr.slice(0, 500)}`);
         // Geçersiz JSON argümanı hatası → modele düzeltme fırsatı ver (maks 3 deneme)
         if (upstreamErr.includes('function.arguments') || upstreamErr.includes('InvalidParameter')) {
           // Araçlar devre dışıyken veya 3 düzeltme sonrası model hâlâ araç çağırıyorsa
@@ -135,7 +138,7 @@ export async function runAgentLoop(
                     { role: 'user', content: `Kullanıcı şunu sordu: "${userQuestion}"\n\nAşağıda araştırma verileri var. Bunları kullanarak detaylı bir Markdown raporu oluştur:\n\n${contextSnippet}` },
                   ],
                   // tools parametresi yok — model araç çağıramaz
-                  max_tokens: 4096,
+                  max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
                 })
                 const text = cleanResponse.choices?.[0]?.message?.content?.trim()
                 if (text) {
