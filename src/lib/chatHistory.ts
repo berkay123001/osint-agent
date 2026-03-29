@@ -80,35 +80,67 @@ export function sanitizeHistoryForProvider(history: Message[]): Message[] {
 
   if (totalChars <= MAX_TOTAL_HISTORY_CHARS) return sanitized
 
-  // Sınırı aşıyor — system + en son mesajları tut, ortadakileri kısalt
-  // İlk mesaj (system) ve son 8 mesaj her zaman korunur
-  const KEEP_RECENT = 8
-  if (sanitized.length <= KEEP_RECENT + 1) return sanitized
-
+  // Sınırı aşıyor — güvenli bir kesim noktası bul.
+  // KRİTİK: tool mesajı kendi assistant(tool_calls) parent'ından ayrılmamalı.
+  // Bu nedenle "son N mesaj" almak yerine, geriye doğru yürüyerek
+  // ilk temiz başlangıç noktasını (user veya tool_calls'sız assistant) buluyoruz.
   const system = sanitized[0]
-  const recent = sanitized.slice(-KEEP_RECENT)
-  const middle = sanitized.slice(1, -KEEP_RECENT)
 
-  // Orta mesajlardan tool result ve assistant content'leri kısalt
-  const trimmed = middle.map((m) => {
-    const content = typeof m.content === 'string' ? m.content : ''
-    if (content.length > 1500) {
-      return { ...m, content: content.slice(0, 1500) + '\n... [history kısaltıldı]' }
+  // Geriye doğru yürü, toplam char ≤ MAX sağlanana veya güvenli kesim bulunana kadar
+  const TARGET_CHARS = Math.floor(MAX_TOTAL_HISTORY_CHARS * 0.7) // %70 hedef — güvenli marj
+  let cutIndex = sanitized.length
+  let accChars = 0
+  for (let i = sanitized.length - 1; i >= 1; i--) {
+    const m = sanitized[i]
+    const c = typeof m.content === 'string' ? m.content : ''
+    const tc = (m as any).tool_calls ? JSON.stringify((m as any).tool_calls) : ''
+    accChars += c.length + tc.length
+    if (accChars >= TARGET_CHARS) {
+      // Burayı ham kesme — bir user mesajı veya tool_calls'sız assistant bulana kadar ilerle
+      cutIndex = i
+      break
     }
-    return m
-  })
+  }
 
-  const result = [system, ...trimmed, ...recent]
+  // cutIndex'ten geriye doğru güvenli başlangıç noktası bul:
+  // 'user' mesajından veya tool_calls olmayan 'assistant'tan başlamalı.
+  // tool veya tool_calls'lı assistant ile başlamak yasak.
+  let safeStart = cutIndex
+  while (safeStart < sanitized.length) {
+    const m = sanitized[safeStart]
+    const isToolMsg = m.role === 'tool'
+    const isAssistantWithToolCalls = m.role === 'assistant' && !!(m as any).tool_calls?.length
+    if (!isToolMsg && !isAssistantWithToolCalls) break
+    safeStart++
+  }
 
-  // Hâlâ büyükse — sadece system + son mesajları tut
+  // safeStart'tan sona kadar olan kısım + system — güvenli küme
+  const recent = sanitized.slice(safeStart)
+  if (recent.length === 0) {
+    // Hiçbir güvenli mesaj yok → sadece system + son user mesajı
+    const lastUser = [...sanitized].reverse().find(m => m.role === 'user')
+    return lastUser ? [system, lastUser] : [system]
+  }
+
+  const result = [system, ...recent]
+
+  // Hâlâ çok büyükse — orta mesajları kısalt (tool_calls içerenlere dokunma)
   const newTotal = result.reduce((sum, m) => {
     const c = typeof m.content === 'string' ? m.content : ''
-    return sum + c.length
+    const tc = (m as any).tool_calls ? JSON.stringify((m as any).tool_calls) : ''
+    return sum + c.length + tc.length
   }, 0)
 
   if (newTotal > MAX_TOTAL_HISTORY_CHARS) {
-    // Agresif: system + son KEEP_RECENT mesaj sadece
-    return [system, ...recent]
+    // Son çare: kısa tut ama tool ilişkilerini bozma
+    return result.map(m => {
+      if (m.role === 'tool' || m.role === 'assistant' && !!(m as any).tool_calls?.length) return m
+      const content = typeof m.content === 'string' ? m.content : ''
+      if (content.length > 1500) {
+        return { ...m, content: content.slice(0, 1500) + '\n... [kısaltıldı]' }
+      }
+      return m
+    })
   }
 
   return result
