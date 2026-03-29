@@ -83,12 +83,22 @@ export async function runAgentLoop(
             if (forceTextRetries > 1) {
               // 2. denemede bile başarısız → temiz bir API çağrısı yap (tool geçmişi olmadan)
               logger.warn('AGENT', `[${config.name}] Model araç çağırmakta ısrarcı — temiz metin yanıtı deneniyor.`)
+              // History'den son kullanıcı mesajını ve son sub-agent özetini çıkar
+              const lastUserMsg = [...history].reverse().find(m => m.role === 'user')
+              const lastAssistantText = [...history].reverse().find(m => m.role === 'assistant' && typeof m.content === 'string')
+              let contextSnippet = ''
+              if (lastAssistantText && typeof lastAssistantText.content === 'string') {
+                const c = lastAssistantText.content
+                contextSnippet = c.length > 2000 ? c.slice(0, 2000) + '\n[...kısaltıldı]' : c
+              }
               try {
                 const cleanResponse = await client.chat.completions.create({
                   model: config.model ?? DEFAULT_MODEL,
                   messages: [
-                    { role: 'system', content: config.systemPrompt },
-                    { role: 'user', content: 'Topladığın tüm araştırma bilgilerini kısa bir özet olarak yaz. Hiçbir araç çağırma, sadece düz metin.' },
+                    { role: 'system', content: config.systemPrompt + '\n\nKRİTİK: Hiçbir araç çağırma. Sadece düz metin yaz.' },
+                    ...(lastUserMsg ? [{ role: 'user' as const, content: (typeof lastUserMsg.content === 'string' ? lastUserMsg.content : 'Kullanıcı sorusu') }] : []),
+                    ...(contextSnippet ? [{ role: 'assistant' as const, content: contextSnippet }] : []),
+                    { role: 'user' as const, content: 'Yukarıdaki araştırma verisini kullanarak kullanıcıya kısa bir özet sun. Hiçbir araç çağırma.' },
                   ],
                   max_tokens: 2048,
                 })

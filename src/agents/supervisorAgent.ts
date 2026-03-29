@@ -14,6 +14,30 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/**
+ * Sub-agent yanıtlarını kısaltır.
+ * - 4000 karakter altı: dokunma
+ * - 4000+ karakter: ilk 3500 karakter + "kesildi" notu + dosya yolu
+ * Supervisor detayları read_session_file ile okuyabilir.
+ */
+const MAX_SUB_AGENT_RESPONSE = 4000;
+const KEEP_FIRST = 3500;
+
+function truncateSubAgentResponse(response: string, agentLabel: string): string {
+  if (response.length <= MAX_SUB_AGENT_RESPONSE) return response
+  const truncated = response.slice(0, KEEP_FIRST)
+  const lines = truncated.split('\n')
+  // Son tamamlanmamış satırı at
+  if (truncated.length === KEEP_FIRST) lines.pop()
+  return lines.join('\n') +
+    `\n\n---\n✂️ **[${agentLabel} yanıtı ${((response.length / 1024).toFixed(1))}KB — kısaltıldı]**\n` +
+    `📄 Tam rapor için \`read_session_file\` aracını kullan.\n` +
+    `⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme.`
+}
+
+/**
+ * Sub-agent yanıtlarını kısaltır (önceki tanımlamayla birleştirildi).
+ */
 const SUPERVISOR_TOOLS = [
   'query_graph', 'list_graph_nodes', 'graph_stats', 'clear_graph', 
   'search_web', 'web_fetch', 'scrape_profile', 'remove_false_positive', 'mark_false_positive',
@@ -92,7 +116,7 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
       await writeFile(path.join(sessionDir, 'identity-last-session.md'), header + r, 'utf-8');
       logger.debug('AGENT', '📝 Kimlik session kaydedildi → .osint-sessions/identity-last-session.md');
     } catch { /* sessizce geç */ }
-    return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.\n📄 Follow-up sorular için read_session_file aracını kullan — IdentityAgent\'ı TEKRAR çağırma.`;
+    return truncateSubAgentResponse(r, 'IdentityAgent');
   } else if (name === 'ask_media_agent') {
     const r = await runMediaAgent(args.query, args.context);
     setReportContentBuffer(r);
@@ -103,7 +127,7 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
       await writeFile(path.join(sessionDir, 'media-last-session.md'), header + r, 'utf-8');
       logger.debug('AGENT', '📝 Medya session kaydedildi → .osint-sessions/media-last-session.md');
     } catch { /* sessizce geç */ }
-    return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.\n📄 Follow-up sorular için read_session_file aracını kullan — MediaAgent\'ı TEKRAR çağırma.`;
+    return truncateSubAgentResponse(r, 'MediaAgent');
   } else if (name === 'ask_academic_agent') {
     const r = await runAcademicAgent(args.query, args.context);
     setReportContentBuffer(r);
@@ -116,7 +140,7 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
       await writeFile(sessionFile, header + r, 'utf-8');
       logger.debug('AGENT', '📝 Akademik session kaydedildi → .osint-sessions/academic-last-session.md');
     } catch { /* sessizce geç */ }
-    return `${r}\n\n---\n⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme — yukarıdaki raporu kullanıcıya sun.\n📄 Follow-up sorular için (hangi makaleler, linkleri neler vb.) read_session_file aracını kullan — AcademicAgent\'ı TEKRAR çağırma.`;
+    return truncateSubAgentResponse(r, 'AcademicAgent');
   } else if (name === 'read_session_file') {
     try {
       const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
