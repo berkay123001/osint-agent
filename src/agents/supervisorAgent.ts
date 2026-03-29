@@ -10,6 +10,7 @@ import chalk from 'chalk';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { obsidianWrite } from '../tools/obsidianTool.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -105,6 +106,26 @@ const supervisorMetaTools: OpenAI.Chat.ChatCompletionTool[] = [
   }
 ];
 
+/**
+ * Sub-agent sonucunu programatik olarak Obsidian'a kaydeder.
+ * Supervisor'ın LLM tool call yapmasına gerek kalmaz — JSON crash riskini ortadan kaldırır.
+ */
+async function saveToObsidianDirect(agentLabel: string, query: string, result: string): Promise<void> {
+  try {
+    const safeName = query
+      .replace(/[Ğğ]/g, 'G').replace(/[Üü]/g, 'U').replace(/[Şş]/g, 'S')
+      .replace(/[İı]/g, 'I').replace(/[Öö]/g, 'O').replace(/[Çç]/g, 'C')
+      .replace(/[^a-zA-Z0-9 ]/g, ' ').trim().slice(0, 60).trim() || 'arastirma'
+    const date = new Date().toISOString().slice(0, 10)
+    const obsidianPath = `02 - Literatür Araştırması/${date}-${safeName}.md`
+    const header = `# ${agentLabel} Literatür Araştırması\n\n**Sorgu:** ${query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`
+    await obsidianWrite(obsidianPath, header + result, true)
+    logger.info('OBSIDIAN', `📝 Sub-agent sonucu direkt Obsidian'a yazıldı → ${obsidianPath}`)
+  } catch (e) {
+    logger.warn('OBSIDIAN', `Sub-agent Obsidian yazma atlanadı: ${(e as Error).message}`)
+  }
+}
+
 async function supervisorExecuteTool(name: string, args: Record<string, string>): Promise<string> {
   if (name === 'ask_identity_agent') {
     const r = await runIdentityAgent(args.query, args.context);
@@ -114,8 +135,8 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
       await mkdir(sessionDir, { recursive: true });
       const header = `# Kimlik Araştırması Oturum Dosyası\n\n**Sorgu:** ${args.query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`;
       await writeFile(path.join(sessionDir, 'identity-last-session.md'), header + r, 'utf-8');
-      logger.debug('AGENT', '📝 Kimlik session kaydedildi → .osint-sessions/identity-last-session.md');
     } catch { /* sessizce geç */ }
+    saveToObsidianDirect('IdentityAgent', args.query, r)
     return truncateSubAgentResponse(r, 'IdentityAgent');
   } else if (name === 'ask_media_agent') {
     const r = await runMediaAgent(args.query, args.context);
@@ -125,21 +146,20 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
       await mkdir(sessionDir, { recursive: true });
       const header = `# Medya Araştırması Oturum Dosyası\n\n**Sorgu:** ${args.query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`;
       await writeFile(path.join(sessionDir, 'media-last-session.md'), header + r, 'utf-8');
-      logger.debug('AGENT', '📝 Medya session kaydedildi → .osint-sessions/media-last-session.md');
     } catch { /* sessizce geç */ }
+    saveToObsidianDirect('MediaAgent', args.query, r)
     return truncateSubAgentResponse(r, 'MediaAgent');
   } else if (name === 'ask_academic_agent') {
     const r = await runAcademicAgent(args.query, args.context);
     setReportContentBuffer(r);
-    // Session dosyasına yaz — follow-up sorular için Supervisor buradan okur
     try {
       const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
       await mkdir(sessionDir, { recursive: true });
       const sessionFile = path.join(sessionDir, 'academic-last-session.md');
       const header = `# Akademik Araştırma Oturum Dosyası\n\n**Sorgu:** ${args.query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`;
       await writeFile(sessionFile, header + r, 'utf-8');
-      logger.debug('AGENT', '📝 Akademik session kaydedildi → .osint-sessions/academic-last-session.md');
     } catch { /* sessizce geç */ }
+    saveToObsidianDirect('AcademicAgent', args.query, r)
     return truncateSubAgentResponse(r, 'AcademicAgent');
   } else if (name === 'read_session_file') {
     try {
