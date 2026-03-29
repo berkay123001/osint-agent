@@ -157,13 +157,13 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'save_ioc',
-      description: 'Siber tehdit göstergesi (IOC) veya tehdit aktörü bilgisini Neo4j grafına yazar. ThreatActor, C2Server, Malware, Campaign, IOC, PhishingDomain tipleri desteklenir.',
+      description: 'Siber tehdit göstergesi (IOC), tehdit aktörü veya araştırma kaynağını Neo4j grafına yazar. ThreatActor, C2Server, Malware, Campaign, IOC, PhishingDomain, Tool, Framework tipleri desteklenir. UYARI: Akademik framework/tool (BloodHound, OpenCTI, THREATKG vb.) için Tool veya Framework kullan — Campaign DEĞİL.',
       parameters: {
         type: 'object',
         properties: {
           node_type: {
             type: 'string',
-            description: 'Node tipi: ThreatActor | C2Server | Malware | Campaign | IOC | PhishingDomain'
+            description: 'Node tipi: ThreatActor | C2Server | Malware | Campaign | IOC | PhishingDomain | Tool | Framework'
           },
           value: { type: 'string', description: 'Node değeri (domain, IP, hash, isim vb.)' },
           properties: {

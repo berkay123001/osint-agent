@@ -1,7 +1,13 @@
 import OpenAI from 'openai';
 import { sanitizeHistoryForProvider, normalizeAssistantMessage, normalizeToolContent } from '../lib/chatHistory.js';
 import { logger } from '../lib/logger.js';
+import { readFile } from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import type { Message, AgentConfig, AgentResult } from './types.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const DEFAULT_MODEL = 'qwen/qwen3.5-plus-02-15';
 const SUPERVISOR_MODEL = 'qwen/qwen3.5-plus-02-15';
@@ -77,40 +83,72 @@ export async function runAgentLoop(
         const upstreamErr = JSON.stringify(respAny['error']);
         // Geçersiz JSON argümanı hatası → modele düzeltme fırsatı ver (maks 3 deneme)
         if (upstreamErr.includes('function.arguments') || upstreamErr.includes('InvalidParameter')) {
-          // Araçlar devre dışıyken veya 6 düzeltme sonrası model hâlâ araç çağırıyorsa
-          if (toolsDisabled || totalCorrectionAttempts >= 6) {
+          // Araçlar devre dışıyken veya 3 düzeltme sonrası model hâlâ araç çağırıyorsa
+          if (toolsDisabled || totalCorrectionAttempts >= 3) {
             forceTextRetries++
             if (forceTextRetries > 1) {
-              // 2. denemede bile başarısız → temiz bir API çağrısı yap (tool geçmişi olmadan)
-              logger.warn('AGENT', `[${config.name}] Model araç çağırmakta ısrarcı — temiz metin yanıtı deneniyor.`)
-              // History'den son kullanıcı mesajını ve son sub-agent özetini çıkar
-              const lastUserMsg = [...history].reverse().find(m => m.role === 'user')
-              const lastAssistantText = [...history].reverse().find(m => m.role === 'assistant' && typeof m.content === 'string')
+              // 2. denemede bile başarısız → temiz bir API çağrısı yap (session file'lardan zengin context ile)
+              logger.warn('AGENT', `[${config.name}] Model araç çağırmakta ısrarcı — session file'dan context ile temiz metin yanıtı deneniyor.`)
+
+              // Session dosyalarından zengin context oku (2000 char sınırı yerine)
               let contextSnippet = ''
-              if (lastAssistantText && typeof lastAssistantText.content === 'string') {
-                const c = lastAssistantText.content
-                contextSnippet = c.length > 2000 ? c.slice(0, 2000) + '\n[...kısaltıldı]' : c
+              const sessionDir = path.resolve(__dirname, '../../.osint-sessions')
+              const sessionFiles = [
+                'academic-last-session.md',
+                'identity-last-session.md',
+                'media-last-session.md',
+                'academic-knowledge.md',
+                'identity-knowledge.md',
+                'media-knowledge.md',
+              ]
+              for (const f of sessionFiles) {
+                try {
+                  const content = await readFile(path.join(sessionDir, f), 'utf-8')
+                  if (content.length > 100) {
+                    // Her session file'dan en fazla 3000 char al, toplamda max 8000
+                    const slice = content.length > 3000 ? content.slice(0, 3000) + '\n[...kısaltıldı]' : content
+                    contextSnippet += `\n\n--- ${f} ---\n${slice}`
+                    if (contextSnippet.length > 8000) break
+                  }
+                } catch { /* dosya yoksa atla */ }
               }
+
+              // Session file boşsa history'den al
+              if (contextSnippet.length < 200) {
+                const toolResults = history
+                  .filter(m => m.role === 'tool' && typeof m.content === 'string')
+                  .map(m => (m.content as string))
+                contextSnippet = toolResults.join('\n---\n')
+                if (contextSnippet.length > 6000) {
+                  contextSnippet = contextSnippet.slice(0, 6000) + '\n[...kısaltıldı]'
+                }
+              }
+
+              const lastUserMsg = [...history].reverse().find(m => m.role === 'user' && typeof m.content === 'string' && !(m.content as string).startsWith('ARAÇ ÇAĞRISI') && !(m.content as string).startsWith('JSON'))
+              const userQuestion = lastUserMsg && typeof lastUserMsg.content === 'string' ? lastUserMsg.content : 'Kullanıcı sorusu'
+
               try {
                 const cleanResponse = await client.chat.completions.create({
                   model: config.model ?? DEFAULT_MODEL,
                   messages: [
-                    { role: 'system', content: config.systemPrompt + '\n\nKRİTİK: Hiçbir araç çağırma. Sadece düz metin yaz.' },
-                    ...(lastUserMsg ? [{ role: 'user' as const, content: (typeof lastUserMsg.content === 'string' ? lastUserMsg.content : 'Kullanıcı sorusu') }] : []),
-                    ...(contextSnippet ? [{ role: 'assistant' as const, content: contextSnippet }] : []),
-                    { role: 'user' as const, content: 'Yukarıdaki araştırma verisini kullanarak kullanıcıya kısa bir özet sun. Hiçbir araç çağırma.' },
+                    { role: 'system', content: 'Sen OSINT araştırma asistanısın. Sana verilen araştırma verilerini analiz edip Markdown formatında özetle. Hiçbir araç çağırma — sadece düz metin yaz.' },
+                    { role: 'user', content: `Kullanıcı şunu sordu: "${userQuestion}"\n\nAşağıda araştırma verileri var. Bunları kullanarak detaylı bir Markdown raporu oluştur:\n\n${contextSnippet}` },
                   ],
-                  max_tokens: 2048,
+                  // tools parametresi yok — model araç çağıramaz
+                  max_tokens: 4096,
                 })
                 const text = cleanResponse.choices?.[0]?.message?.content?.trim()
                 if (text) {
-                  return { finalResponse: text, toolCallCount, toolsUsed }
+                  const cleaned = stripThinkingTokens(text)
+                  if (cleaned.length > 50) {
+                    return { finalResponse: cleaned, toolCallCount, toolsUsed }
+                  }
                 }
-              } catch {
-                // Temiz çağrı da başarısız → pes et
+              } catch (cleanErr) {
+                logger.error('AGENT', `[${config.name}] Temiz API çağrısı da başarısız: ${(cleanErr as Error).message}`)
               }
               return {
-                finalResponse: 'Model yanıt üretilemedi. Toplanan veriler session dosyasına kaydedildi.',
+                finalResponse: 'Model yanıt üretilemedi. Toplanan veriler session dosyasına kaydedildi — `read_session_file` ile erişebilirsiniz.',
                 toolCallCount,
                 toolsUsed,
               }
@@ -124,35 +162,34 @@ export async function runAgentLoop(
           totalCorrectionAttempts++;
           logger.warn('AGENT', `[${config.name}] Model geçersiz JSON üretmişti, düzeltme isteniyor... (deneme ${correctionRetries}/3, toplam: ${totalCorrectionAttempts})`);
 
-          // Global cap: 6 toplam denemeden sonra zorla metin yanıt al
-          if (totalCorrectionAttempts >= 6) {
-            logger.error('AGENT', `[${config.name}] JSON düzeltme 6 kez başarısız — araç çağrısı devre dışı bırakılıyor.`);
+          // Global cap: 3 toplam denemeden sonra zorla metin yanıt al
+          if (totalCorrectionAttempts >= 3) {
+            logger.error('AGENT', `[${config.name}] JSON düzeltme 3 kez başarısız — araç çağrısı devre dışı bırakılıyor.`);
             history.push({
               role: 'user',
               content:
                 'ARAÇ ÇAĞRISI DEVRE DIŞI. Topladığın tüm bilgileri kullanarak doğrudan Markdown metin olarak yanıt ver. ' +
                 'Herhangi bir araç çağırma — sadece metin yaz.',
             });
-            // toolChoice'ı 'none' yapmak için maxToolCalls'ı aşıldı hisset
-            // totalCorrectionAttempts SIFIRLANMIYOR — bir sonraki JSON hatasında anında döner
             toolCallCount = maxToolCalls + 1;
             correctionRetries = 0;
             continue;
           }
 
-          if (correctionRetries >= 3) {
+          if (correctionRetries >= 2) {
             correctionRetries = 0;
             history.push({
               role: 'user',
               content:
-                'JSON argümanı 3 kez düzeltilemedi. ' +
-                'Eğer generate_report çağırıyordun: SADECE subject ve reportType gönder; additionalFindings\'i tamamen çıkar — içerik zaten dahili olarak taşınıyor. ' +
-                'Eğer başka bir araç çağırıyordun: argümanları çok kısa tut veya aracı iptal edip text yanıt ver.',
+                'ARAÇ ÇAĞRISI BAŞARISIZ. Araç çağırmayı bırak ve topladığın verileri doğrudan Markdown metin olarak özetle. ' +
+                'Hiçbir araç çağırma — save_finding, generate_report dahil HIÇBIR ŞEY. Sadece düz metin yaz.',
             });
           } else {
             history.push({
               role: 'user',
-              content: 'Önceki araç çağrısında JSON formatı hatalıydı. Lütfen araç argümanlarını geçerli JSON formatında yeniden üret.',
+              content: 'Önceki araç çağrısında JSON formatı hatalıydı. ' +
+                'Tek bir araç çağır ve argümanları çok kısa tut. ' +
+                'Çok fazla araç çağırmaya çalışıyorsan VAZGEÇ ve sonuçları metin olarak yaz.',
             });
           }
           continue;
