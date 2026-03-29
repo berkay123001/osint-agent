@@ -38,8 +38,8 @@ export async function runAgentLoop(
   let totalCorrectionAttempts = 0; // Global cap — sonsuz döngüyü önler
   let forceTextRetries = 0; // Metin zorlama deneme sayacı
   const toolsUsed: Record<string, number> = {};
-  const maxToolCalls = config.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
-
+  const maxToolCalls = config.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;  // Tool call deduplication: aynı tool+args kombinasyonu önceden çağrıldıysa cache'den dön
+  const callCache = new Map<string, string>();
   while (true) {
     const toolsDisabled = toolCallCount >= maxToolCalls;
     const toolChoice: 'auto' | 'none' = toolsDisabled ? 'none' : 'auto';
@@ -261,7 +261,15 @@ export async function runAgentLoop(
       const toolName = toolCall.function.name;
       try {
         const args = JSON.parse(toolCall.function.arguments) as Record<string, string>;
-        result = await config.executeTool(toolName, args);
+        // Deduplication: aynı tool+args daha önce çağrıldıysa cache'den dön
+        const cacheKey = `${toolName}:${JSON.stringify(args)}`;
+        if (callCache.has(cacheKey)) {
+          logger.warn('AGENT', `[${config.name}] Duplikat tool çağrısı engellendi: ${toolName} (aynı argümanlar)`);
+          result = `[DUPLICATE_CALL] Bu sorgu daha önce çağrıldı ve sonuç zaten history'de. Farklı bir sorgu dene ya da bir sonraki faza geç.\n\n[cached: ${(callCache.get(cacheKey) ?? '').slice(0, 500)}...]`;
+        } else {
+          result = await config.executeTool(toolName, args);
+          callCache.set(cacheKey, result);
+        }
       } catch (error) {
         result = `Tool hatası (${toolName}): ${(error as Error).message}`;
       }
