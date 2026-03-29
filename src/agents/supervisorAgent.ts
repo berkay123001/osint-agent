@@ -18,7 +18,7 @@ const SUPERVISOR_TOOLS = [
   'query_graph', 'list_graph_nodes', 'graph_stats', 'clear_graph', 
   'search_web', 'web_fetch', 'scrape_profile', 'remove_false_positive',
   'generate_report', 'check_plagiarism',
-  'obsidian_write', 'obsidian_append', 'obsidian_read', 'obsidian_daily', 'obsidian_list', 'obsidian_search',
+  'obsidian_write', 'obsidian_append', 'obsidian_read', 'obsidian_daily', 'obsidian_list', 'obsidian_search', 'obsidian_write_profile',
   'save_finding', 'save_ioc', 'link_entities',
 ];
 

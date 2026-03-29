@@ -212,6 +212,53 @@ export async function obsidianSearch(query: string, limit = 10): Promise<string>
   return `🔍 "${query}" — ${matches.length} dosyada bulundu:\n\n${output}`
 }
 
+/**
+ * Araştırılan kişi için profil sayfası oluştur/güncelle.
+ * Frontmatter ile yapılandırılmış metadata + Markdown özet.
+ * @param username  Profil sahibi (dosya adı olarak kullanılır)
+ * @param content   Profil içeriği (Markdown)
+ * @param metadata  Opsiyonel frontmatter alanları
+ */
+export interface ProfileMetadata {
+  realName?: string
+  emails?: string[]
+  platforms?: string[]
+  breachCount?: number
+  confidence?: 'verified' | 'high' | 'medium' | 'low'
+  investigatedAt?: string
+}
+
+export async function obsidianWriteProfile(
+  username: string,
+  content: string,
+  metadata?: ProfileMetadata,
+): Promise<string> {
+  const safeName = username
+    .replace(/[Ğğ]/g, 'G').replace(/[Üü]/g, 'U').replace(/[Şş]/g, 'S')
+    .replace(/[İı]/g, 'I').replace(/[Öö]/g, 'O').replace(/[Çç]/g, 'C')
+    .replace(/[^a-zA-Z0-9_\-]/g, '_')
+  const fileName = `${safeName}.md`
+  const full = path.join(PROFILES_DIR, fileName)
+  await mkdir(PROFILES_DIR, { recursive: true })
+
+  const now = new Date().toISOString()
+  const frontmatter: string[] = ['---']
+  frontmatter.push(`username: "${username}"`)
+  frontmatter.push(`created: "${now}"`)
+  if (metadata?.realName) frontmatter.push(`realName: "${metadata.realName}"`)
+  if (metadata?.emails?.length) frontmatter.push(`emails: [${metadata.emails.map(e => `"${e}"`).join(', ')}]`)
+  if (metadata?.platforms?.length) frontmatter.push(`platforms: [${metadata.platforms.map(p => `"${p}"`).join(', ')}]`)
+  if (metadata?.breachCount !== undefined) frontmatter.push(`breachCount: ${metadata.breachCount}`)
+  if (metadata?.confidence) frontmatter.push(`confidence: ${metadata.confidence}`)
+  frontmatter.push('---')
+
+  const body = `${frontmatter.join('\n')}\n\n${content}\n`
+  await writeFile(full, body, 'utf8')
+
+  const relPath = path.join('08 - Profiller', fileName)
+  return `✅ Profil kaydedildi: ${relPath}`
+}
+
 // ─── Dizinlerin varlığını garantile ─────────────────────────────────────────
 export async function ensureVaultDirs(): Promise<void> {
   await Promise.all([

@@ -30,7 +30,7 @@ import { searchAcademicPapers, formatAcademicResult, writeAcademicPapersToGraph,
 import type { AcademicSearchResult } from '../tools/academicSearchTool.js'
 import { generateOsintReport } from '../tools/reportTool.js'
 import { checkPlagiarism } from '../tools/plagiarismTool.js'
-import { obsidianWrite, obsidianAppend, obsidianRead, obsidianDailyLog, obsidianList, obsidianSearch } from '../tools/obsidianTool.js'
+import { obsidianWrite, obsidianAppend, obsidianRead, obsidianDailyLog, obsidianList, obsidianSearch, obsidianWriteProfile } from '../tools/obsidianTool.js'
 import os from 'os'
 import { writeFile, unlink } from 'fs/promises'
 
@@ -662,6 +662,25 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'obsidian_write_profile',
+      description: 'Araştırılan kişi için yapılandırılmış profil sayfası oluştur (08 - Profiller/[username].md). Frontmatter metadata + Markdown özet. Kişi araştırması tamamlandığında veya önemli bulgular elde edildiğinde kullan. Obsidian wikilink [[username]] ile diğer profillere bağlantı kur.',
+      parameters: {
+        type: 'object',
+        properties: {
+          username: { type: 'string', description: 'Profil sahibi username veya identifier' },
+          content: { type: 'string', description: 'Profil içeriği (Markdown). Sections: ## Kimlik, ## Platformlar, ## Bulgular, vs.' },
+          real_name: { type: 'string', description: 'Gerçek isim (biliniyorsa)' },
+          emails: { type: 'string', description: 'Email adresleri (virgülle ayrılmış)' },
+          platforms: { type: 'string', description: 'Bulunduğu platformlar (virgülle ayrılmış)' },
+          confidence: { type: 'string', description: 'Güvenilirlik: verified | high | medium | low', enum: ['verified', 'high', 'medium', 'low'] },
+        },
+        required: ['username', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'obsidian_list',
       description: 'Obsidian vault\'undaki bir dizinin içeriğini listele. Mevcut notları keşfetmek veya vault yapısını görmek için kullan.',
       parameters: {
@@ -1043,6 +1062,17 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     else if (name === 'obsidian_daily') {
       logger.info('OBSIDIAN', '🟣 Günlüğe kaydediliyor...')
       result = await obsidianDailyLog(args.entry, args.tag)
+      logger.info('OBSIDIAN', result)
+    }
+    else if (name === 'obsidian_write_profile') {
+      logger.info('OBSIDIAN', `🟣 Profil oluşturuluyor: ${args.username}`)
+      const metadata = {
+        realName: args.real_name,
+        emails: args.emails ? String(args.emails).split(',').map((s: string) => s.trim()) : undefined,
+        platforms: args.platforms ? String(args.platforms).split(',').map((s: string) => s.trim()) : undefined,
+        confidence: args.confidence as 'verified' | 'high' | 'medium' | 'low' | undefined,
+      }
+      result = await obsidianWriteProfile(args.username, args.content, metadata)
       logger.info('OBSIDIAN', result)
     }
     else if (name === 'obsidian_list') {
