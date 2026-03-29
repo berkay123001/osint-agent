@@ -154,6 +154,14 @@ export async function runAgentLoop(
               }
             }
             logger.warn('AGENT', `[${config.name}] JSON hatası + araç devre dışı — metin yanıt zorlanıyor (${forceTextRetries}/1).`)
+            // Bozuk history'yi düzelt: tool mesajı sonrası assistant placeholder ekle
+            const lastMsgForce = history[history.length - 1];
+            if (lastMsgForce && (lastMsgForce.role === 'tool' || lastMsgForce.role === 'user')) {
+              if (lastMsgForce.role === 'tool') {
+                history.push({ role: 'assistant', content: 'Araç çağrısı başarısız, text yanıt veriliyor.' });
+              }
+              history.push({ role: 'user', content: 'Araç çağırma. Topladığın tüm verileri doğrudan metin olarak sun.' });
+            }
             config = { ...config, tools: [] }
             continue
           }
@@ -161,6 +169,18 @@ export async function runAgentLoop(
           correctionRetries++;
           totalCorrectionAttempts++;
           logger.warn('AGENT', `[${config.name}] Model geçersiz JSON üretmişti, düzeltme isteniyor... (deneme ${correctionRetries}/3, toplam: ${totalCorrectionAttempts})`);
+
+          // KRİTİK: Eğer history'nin son mesajı 'tool' ise, correction user mesajı öncesinde
+          // bir placeholder assistant mesajı ekle. Aksi halde:
+          //   tool → user  (GEÇERSİZ FORMAT — OpenRouter/model bozuk yanıt üretiyor)
+          //   tool → assistant → user  (DOĞRU FORMAT)
+          const lastMsg = history[history.length - 1];
+          if (lastMsg && lastMsg.role === 'tool') {
+            history.push({
+              role: 'assistant',
+              content: 'Araç çağrısı geçersiz JSON üretti, düzeltiliyor.',
+            });
+          }
 
           // Global cap: 3 toplam denemeden sonra zorla metin yanıt al
           if (totalCorrectionAttempts >= 3) {
