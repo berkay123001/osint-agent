@@ -7,7 +7,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { logger } from './logger.js'
 import { githubOsint } from '../tools/githubTool.js'
-import { writeOsintToGraph, getConnections, getGraphStats, getGraphNodeCountsByLabel, listGraphNodes, pruneMisclassifiedFullNameUsernames, findLinkedIdentifiers, writeEmailRegistrations, writeBreachData, writeFollowingConnections, mergeRelation, closeNeo4j, clearGraph, deleteGraphNodeAndRelations, writeFinding, writeCybersecurityNode, linkEntities } from './neo4j.js'
+import { writeOsintToGraph, getConnections, getGraphStats, getGraphNodeCountsByLabel, listGraphNodes, pruneMisclassifiedFullNameUsernames, findLinkedIdentifiers, writeEmailRegistrations, writeBreachData, writeFollowingConnections, mergeRelation, closeNeo4j, clearGraph, deleteGraphNodeAndRelations, writeFinding, writeCybersecurityNode, linkEntities, markNodeMlLabel } from './neo4j.js'
 import { normalizeAssistantMessage, normalizeToolContent, sanitizeHistoryForProvider } from './chatHistory.js'
 import { isLikelyUsernameCandidate } from './osintHeuristics.js'
 import { extractMetadataFromUrl, extractMetadataFromFile, formatMetadata } from '../tools/metadataTool.js'
@@ -282,7 +282,7 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'remove_false_positive',
-      description: 'Silinmesi gereken hatalı, yanlış eklenmiş veya hedefle uyuşmayan graf düğümünü ve onun ilişkilerini siler (False Positive temizliği için).',
+      description: 'Silinmesi gereken hatalı, yanlış eklenmiş veya hedefle uyuşmayan graf düğümünü ve onun ilişkilerini KALICI OLARAK siler. ⚠️ GNN eğitimi için negatif örnek korumak istiyorsan bunun yerine mark_false_positive kullan.',
       parameters: {
         type: 'object',
         properties: {
@@ -291,6 +291,27 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
         },
         required: ['label', 'value'],
         additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'mark_false_positive',
+      description: 'Bir graf node\'unu silmeden GNN eğitimi için etiketler (soft label). false_positive → negatif eğitim örneği olarak korunur; verified → onaylanmış pozitif örnek; uncertain → eğitim setinden dışla. remove_false_positive\'in aksine node silinmez.',
+      parameters: {
+        type: 'object',
+        properties: {
+          label: { type: 'string', description: 'Node tipi (örn. Username, Email, Profile)' },
+          value: { type: 'string', description: 'Node değeri' },
+          ml_label: {
+            type: 'string',
+            enum: ['false_positive', 'verified', 'uncertain'],
+            description: 'false_positive: bu hesap hedefle ilgisiz; verified: doğrulanmış hedef; uncertain: belirsiz'
+          },
+          reason: { type: 'string', description: 'Etiketleme gerekçesi (opsiyonel, ör: "ZTE geliştiricisi, Linus değil")' },
+        },
+        required: ['label', 'value', 'ml_label'],
       },
     },
   },
@@ -842,6 +863,20 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     else if (name === 'search_person') result = await runSearchPerson(args.name, args.context)
     else if (name === 'clear_graph') result = await runClearGraph(args.confirm === 'true' || (args.confirm as unknown) === true)
     else if (name === 'remove_false_positive') result = await runRemoveFalsePositive(args.label, args.value)
+    else if (name === 'mark_false_positive') {
+      const mlLabel = args.ml_label as 'false_positive' | 'verified' | 'uncertain'
+      logger.info('TOOL', `🏷️  ML etiket: ${args.label}:${args.value} → ${mlLabel}`)
+      try {
+        const updated = await markNodeMlLabel(args.label, args.value, mlLabel, args.reason)
+        if (updated) {
+          result = `✅ Node etiketlendi: ${args.label}:${args.value} → mlLabel="${mlLabel}"${args.reason ? ` (${args.reason})` : ''}. Node graf'ta korunuyor — GNN eğitiminde ${mlLabel === 'false_positive' ? 'negatif örnek' : mlLabel === 'verified' ? 'pozitif örnek' : 'dışlanmış'} olarak kullanılacak.`
+        } else {
+          result = `⚠️ Node bulunamadı: ${args.label}:${args.value} — graf'ta mevcut değil.`
+        }
+      } catch (e: any) {
+        result = `❌ Etiketleme hatası: ${e.message}`
+      }
+    }
         else if (name === 'fact_check_to_graph') {
       logger.info('TOOL', `🧠 Fact Check Kaydı (Neo4j): ${args.claimId}`)
       try {

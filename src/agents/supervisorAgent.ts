@@ -16,7 +16,7 @@ const __dirname = path.dirname(__filename);
 
 const SUPERVISOR_TOOLS = [
   'query_graph', 'list_graph_nodes', 'graph_stats', 'clear_graph', 
-  'search_web', 'web_fetch', 'scrape_profile', 'remove_false_positive',
+  'search_web', 'web_fetch', 'scrape_profile', 'remove_false_positive', 'mark_false_positive',
   'generate_report', 'check_plagiarism',
   'obsidian_write', 'obsidian_append', 'obsidian_read', 'obsidian_daily', 'obsidian_list', 'obsidian_search', 'obsidian_write_profile',
   'save_finding', 'save_ioc', 'link_entities',
@@ -191,12 +191,17 @@ Araştırma sırasında keşfettiğin önemli bulgular için bu araçları kulla
 - save_finding: Kimlik/konum/bağlantı bulguları (doğrulanmış veya yüksek güvenilirlikli)
 - save_ioc: Siber tehdit göstergeleri (ThreatActor, C2Server, Malware, PhishingDomain, IOC)
 - link_entities: Grafta var olan iki varlık arasında ilişki kur
+- mark_false_positive: Yanlış eşleşen node'u SİLMEDEN ml_label ile etiketle (GNN negatif örneği)
+- remove_false_positive: Tamamen alakasız noise node'u kalıcı sil (GNN eğitiminde işe yaramayacak)
 
 NE ZAMAN KULLAN:
 ✅ "bu email o username'e ait" olduğunu kanıtlayan kaynak buldun → save_finding (identity)
 ✅ SubAgent raporunda "aynı kişi" olarak doğrulanan bir hesap → link_entities (SAME_AS)
 ✅ Bir domain C2 sunucusu veya phishing amaçlı kullanılıyor → save_ioc (C2Server/PhishingDomain)
 ✅ Kişinin çalıştığı kurum kesin olarak belirlendi → save_finding (affiliation)
+✅ Bir node hedefle ilgisiz ama "aynı pattern'deki" hesapları ayırt etmek istiyorsan → mark_false_positive (ml_label=false_positive)
+✅ Bir node kesin doğrulandı → mark_false_positive (ml_label=verified)
+✅ Tamamen alakasız gürültü node'u → remove_false_positive (kalıcı sil)
 ❌ Geçici arama sonuçları, spekülatif bulgular → KAYDETME
 ❌ Emin olmadığın / doğrulanamayan iddialar → KAYDETME
 

@@ -791,6 +791,39 @@ function sanitizeRelType(rel: string): string {
   return rel.toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '')
 }
 
+/**
+ * GNN eğitimi için node'u silmek yerine soft-label olarak işaretler.
+ * mlLabel: 'false_positive' → negatif eğitim örneği olarak korunur.
+ * mlLabel: 'verified'      → pozitif eğitim örneği.
+ * mlLabel: 'uncertain'     → eğitim setinden dışla.
+ *
+ * NOT: deleteGraphNodeAndRelations'ın yerini almaz — insan doğrulaması için kullanılır.
+ */
+export async function markNodeMlLabel(
+  label: string,
+  value: string,
+  mlLabel: 'false_positive' | 'verified' | 'uncertain',
+  reason?: string
+): Promise<boolean> {
+  const session = getDriver().session()
+  const safeLabel = sanitizeLabel(label)
+  try {
+    const result = await session.run(
+      `MATCH (n:${safeLabel} {value: $value})
+       SET n.mlLabel = $mlLabel,
+           n.mlLabeledBy = 'human',
+           n.mlLabeledAt = timestamp()
+           ${reason ? ', n.mlLabelReason = $reason' : ''}
+       RETURN count(n) as updated`,
+      { value, mlLabel, ...(reason ? { reason } : {}) }
+    )
+    const updated = result.records[0]?.get('updated').toNumber() ?? 0
+    return updated > 0
+  } finally {
+    await session.close()
+  }
+}
+
 export async function deleteGraphNodeAndRelations(label: string, value: string): Promise<boolean> {
   const session = getDriver().session()
   const safeLabel = sanitizeLabel(label)
