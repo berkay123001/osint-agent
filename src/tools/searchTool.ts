@@ -138,8 +138,12 @@ async function searchGoogle(query: string, limit: number = 10): Promise<SearchTo
       const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&q=${encodeURIComponent(query)}&num=${Math.min(num, 10)}&start=${start}`
       const res = await fetch(url, { signal: AbortSignal.timeout(10000) })
       if (!res.ok) {
+        if (res.status === 429) {
+          throw new Error(`Google CSE HTTP 429: Günlük kota doldu`)
+        }
         const err = await res.text()
-        throw new Error(`Google CSE HTTP ${res.status}: ${err}`)
+        // Uzun JSON hata gövdesini kısalt — sadece status kodu yeterli
+        throw new Error(`Google CSE HTTP ${res.status}: ${err.slice(0, 120)}`)
       }
       const data = await res.json()
       return data?.items ?? []
@@ -206,7 +210,7 @@ export async function searchWeb(query: string, limit: number = 10): Promise<Sear
     if (!googleResult.error && googleResult.results.length > 0) {
       return googleResult
     }
-    console.warn(`[SearchTool] Google CSE: ${googleResult.error} — Tavily'ye geçiliyor...`)
+    console.warn(`[SearchTool] Google CSE: ${googleResult.error ?? 'sonuç yok'} — Tavily'ye geçiliyor...`)
   }
 
   // 3) Tavily (son çare — kredi koruması)
