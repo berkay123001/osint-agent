@@ -38,8 +38,12 @@ export async function runAgentLoop(
   let totalCorrectionAttempts = 0; // Global cap — sonsuz döngüyü önler
   let forceTextRetries = 0; // Metin zorlama deneme sayacı
   const toolsUsed: Record<string, number> = {};
-  const maxToolCalls = config.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;  // Tool call deduplication: aynı tool+args kombinasyonu önceden çağrıldıysa cache'den dön
+  const maxToolCalls = config.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
+  // Tool call deduplication: aynı tool+args kombinasyonu önceden çağrıldıysa cache'den dön
   const callCache = new Map<string, string>();
+  // Per-tool hard limiti: tek bir tool'un bütün bütçeyi yemesini engeller
+  const PER_TOOL_LIMITS: Record<string, number> = { search_academic_papers: 8 };
+  const perToolCount: Record<string, number> = {};
   while (true) {
     const toolsDisabled = toolCallCount >= maxToolCalls;
     const toolChoice: 'auto' | 'none' = toolsDisabled ? 'none' : 'auto';
@@ -261,9 +265,17 @@ export async function runAgentLoop(
       const toolName = toolCall.function.name;
       try {
         const args = JSON.parse(toolCall.function.arguments) as Record<string, string>;
-        // Deduplication: aynı tool+args daha önce çağrıldıysa cache'den dön
-        const cacheKey = `${toolName}:${JSON.stringify(args)}`;
-        if (callCache.has(cacheKey)) {
+        // Normalize cache key: argümanları sıralayarak key üret (sıra farkı cache miss'i engeller)
+        const sortedArgs = Object.keys(args).sort().reduce<Record<string, string>>((acc, k) => { acc[k] = args[k]; return acc; }, {});
+        const cacheKey = `${toolName}:${JSON.stringify(sortedArgs)}`;
+
+        // Per-tool hard limit kontrolü
+        perToolCount[toolName] = (perToolCount[toolName] ?? 0) + 1;
+        const toolLimit = PER_TOOL_LIMITS[toolName];
+        if (toolLimit && perToolCount[toolName] > toolLimit) {
+          logger.warn('AGENT', `[${config.name}] ${toolName} hard limiti aşıldı (${toolLimit}). Atlanıyor.`);
+          result = `[TOOL_LIMIT] ${toolName} bu oturumda ${toolLimit} kez çağrıldı — limit doldu. Elindeki verilerle devam et, rapor yaz.`;
+        } else if (callCache.has(cacheKey)) {
           logger.warn('AGENT', `[${config.name}] Duplikat tool çağrısı engellendi: ${toolName} (aynı argümanlar)`);
           result = `[DUPLICATE_CALL] Bu sorgu daha önce çağrıldı ve sonuç zaten history'de. Farklı bir sorgu dene ya da bir sonraki faza geç.\n\n[cached: ${(callCache.get(cacheKey) ?? '').slice(0, 500)}...]`;
         } else {

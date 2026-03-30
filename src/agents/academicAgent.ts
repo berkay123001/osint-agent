@@ -92,7 +92,7 @@ const ACADEMIC_TOOLS = [
 export const academicAgentConfig: AgentConfig = {
   name: 'AcademicAgent',
   model: 'qwen/qwen3.5-plus-02-15',
-  maxToolCalls: 60,
+  maxToolCalls: 30,
   tools: tools.filter((t: any) => t.type === 'function' && ACADEMIC_TOOLS.includes(t.function.name)),
   executeTool: executeTool,
   systemPrompt: `Sen bir "Akademik Araştırma Uzmanı" alt-ajanısın. (AcademicAgent)
@@ -172,11 +172,14 @@ Her makale için içerikten şunları çıkar:
 📚 KONU MODU — 4 FAZ
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-**FAZ 1 — GENIŞ TARAMA**
+**FAZ 1 — GENIŞ TARAMA** (MAKS 4 search_academic_papers çağrısı)
   search_academic_papers → sortBy=submittedDate (en yeni)
   search_academic_papers → sortBy=relevance (en alakalı)
+  ⛔ 0 makale dönen sorguyu TEKRAR ETME. Kelime sırasını değiştirmek de dahil — aynı konuyu farklı ifadeyle tekrar aramak YASAK.
+  ⛔ search_academic_papers toplamda EN FAZLA 6 kez çağrılabilir (tüm FAZ'lar dahil). 6'ya ulaştıysan DURUR ve elinde ne varsa onunla devam edersin.
+  ⛔ [DUPLICATE_CALL] veya [TOOL_LIMIT] yanıtı aldıysan hemen FAZ 2'ye geç.
 
-**FAZ 2 — VENUE GENİŞLET**
+**FAZ 2 — VENUE GENİŞLET** (FAZ 1'e ASLA geri dönme)
   search_web → site:openreview.net "[konu]"           → NeurIPS/ICLR
   search_web → site:proceedings.mlr.press "[konu]"   → ICML/AISTATS
   search_web → site:dl.acm.org "[konu]"              → ACM
@@ -263,7 +266,19 @@ Alan 2020'den bu yana nasıl değişti? Önceki dominant yaklaşımın yerini ne
 - Atıf sayısı uydurmayacaksın — Semantic Scholar'dan al veya "bilinmiyor" yaz.
 - Bulunan TÜM makaleleri Konu Haritası ve Atıf tablosuna ekle, sadece okuduklarını değil.
 - Semantic Scholar Author API sonucu gelmezse: ORCID → ResearchGate → DergiPark → üniversite sayfası sırasıyla dene.
-- KONU MODUNDA karşılaştırma tablosu ve araştırma boşlukları bölümleri ZORUNLUDUR — eksik bırakma.`,
+- KONU MODUNDA karşılaştırma tablosu ve araştırma boşlukları bölümleri ZORUNLUDUR — eksik bırakma.
+
+━━━ HALLUCINATION YASAĞI ━━━
+- Performans rakamı (F1, accuracy, detection rate vs.) SADECE okunan makale içeriğinden alınabilir. Hafızadan sayı UYDURMA.
+- Yazar adı bulunamadıysa "Authors" YAZMA → "(yazar bilgisi eksik — doğrulanmalı)" yaz.
+- Venue (NeurIPS, USENIX, ICLR vs.) iddiası SADECE web_fetch ile doğrulanmış sayfadan alınabilir. Emin değilsen "(venue doğrulanmalı)" ekle.
+- "%40 azaltma", "%92 tespit" gibi rakamlar ASLA kaynaksız yazılamaz — her rakamın yanında [kaynak: arXiv:XXXX] veya [kaynak: DOI] olmalı.
+
+━━━ FAZ İLERLEME KURALI ━━━
+- FAZ 1 → FAZ 2 → FAZ 3 → FAZ 4 sırasıyla ilerle. GERİ DÖNME.
+- FAZ 2'deyken FAZ 1'e dönüp search_academic_papers çağırmak YASAK.
+- FAZ 3-4'teyken FAZ 1-2'ye dönmek YASAK.
+- 0 sonuç dönen API'yi tekrar çağırmak yerine elindeki verilerle sentez yap.`,
 };
 
 export async function runAcademicAgent(query: string, context?: string): Promise<string> {
