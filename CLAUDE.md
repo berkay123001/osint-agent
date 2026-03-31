@@ -63,7 +63,20 @@ User → Supervisor (qwen3.5-plus) → Identity / Media / Academic agents
 Central dispatcher — agents call `executeTool(name, args)`, registry routes to the right implementation with session-based caching to avoid redundant API calls.
 
 ### Search chain (tools/searchTool.ts)
-Three-tier fallback: Brave Search → Google CSE → Tavily. Social media `site:` queries skip Brave and start at Google CSE.
+Four-tier fallback: SearXNG (self-hosted) → Brave Search → Google CSE → Tavily. SearXNG is a self-hosted metasearch engine aggregating 100+ search engines with no rate limits. If SearXNG is not running, it fails instantly and falls through to Brave. Social media `site:` queries skip Brave and start at Google CSE.
+
+### Scrape chain (tools/scrapeTool.ts)
+Firecrawl self-hosted → Firecrawl cloud → Puppeteer stealth → Scrapling. Self-hosted Firecrawl (Docker) has no monthly limit. Cloud API (500 req/month) used as fallback.
+
+### Docker Services
+```bash
+docker compose up -d        # Start SearXNG + Firecrawl
+docker compose up -d searxng  # Start only SearXNG
+docker compose down          # Stop all services
+docker compose logs -f       # View logs
+```
+- **SearXNG**: `http://localhost:8888` — metasearch engine, JSON API at `/search?q=...&format=json`
+- **Firecrawl**: `http://localhost:3002` — web scraper, REST API at `/v1/scrape`
 
 ## Key Patterns
 
@@ -82,9 +95,13 @@ Required in `.env`:
 - `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` — graph database
 - `PYTHON_PATH` — Python binary with sherlock-project, holehe, scrapling installed
 
+Docker services (optional but recommended):
+- `SEARXNG_URL` — Self-hosted metasearch (default: `http://localhost:8888`)
+- `FIRECRAWL_URL` — Self-hosted scraper (default: `http://localhost:3002/v1/scrape`)
+
 Search chain (at least one): `BRAVE_SEARCH_API_KEY`, `GOOGLE_SEARCH_API_KEY`+`GOOGLE_SEARCH_CX`, `TAVILY_API_KEY`
 
-Optional: `GITHUB_TOKEN`, `HIBP_API_KEY`, `SERP_API_KEY`, `SEMANTIC_SCHOLAR_API_KEY`, `GRAPH_PORT`
+Optional: `GITHUB_TOKEN`, `HIBP_API_KEY`, `SERP_API_KEY`, `SEMANTIC_SCHOLAR_API_KEY`, `GRAPH_PORT`, `FIRECRAWL_API_KEY`
 
 ## Known Limitations
 

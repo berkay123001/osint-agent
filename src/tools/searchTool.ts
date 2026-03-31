@@ -22,7 +22,7 @@ async function searchSearXNG(query: string, limit: number = 10): Promise<SearchT
     const url = `${baseUrl}/search?q=${encodeURIComponent(query)}&format=json&categories=general&language=all`
     const response = await fetch(url, {
       headers: { 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(15000),
     })
     if (!response.ok) {
       return { query, results: [], error: `SearXNG HTTP ${response.status}` }

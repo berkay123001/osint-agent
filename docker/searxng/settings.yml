@@ -31,6 +31,10 @@ engines:
     engine: bing
     shortcut: bi
 
+  - name: brave
+    engine: brave
+    shortcut: br
+
   - name: duckduckgo
     engine: duckduckgo
     shortcut: ddg
@@ -64,8 +68,17 @@ engines:
     shortcut: tw
     disabled: true
 
+  - name: wikidata
+    engine: wikidata
+    shortcut: wd
+    disabled: true
+
+  - name: qwant
+    engine: qwant
+    shortcut: qw
+
 outgoing:
-  request_timeout: 8.0
-  max_request_timeout: 15.0
+  request_timeout: 5.0
+  max_request_timeout: 12.0
   useragent_suffix: ""
   proxies: {}

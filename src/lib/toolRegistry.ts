@@ -30,6 +30,7 @@ import { searchAcademicPapers, formatAcademicResult, writeAcademicPapersToGraph,
 import type { AcademicSearchResult } from '../tools/academicSearchTool.js'
 import { generateOsintReport } from '../tools/reportTool.js'
 import { checkPlagiarism } from '../tools/plagiarismTool.js'
+import { analyzeGpxFiles, formatGpxResult } from '../tools/gpxAnalyzerTool.js'
 import { obsidianWrite, obsidianAppend, obsidianRead, obsidianDailyLog, obsidianList, obsidianSearch, obsidianWriteProfile } from '../tools/obsidianTool.js'
 import os from 'os'
 import { writeFile, unlink } from 'fs/promises'
@@ -619,6 +620,24 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'analyze_gpx',
+      description:
+        'Analyze GPS track files (GPX format) for OSINT investigations. Parses tracks, calculates geographic center, identifies repeated locations (hotspots), and reverse-geocodes coordinates to identify landmarks, cities, and addresses. Use for fitness tracker data (Strava, Garmin), GPS route forensics, and location pattern analysis. Returns: track names, timestamps, coordinate center, hotspot locations with addresses, and landmark identification.',
+      parameters: {
+        type: 'object',
+        properties: {
+          files: {
+            type: 'string',
+            description: 'Comma-separated list of GPX file paths to analyze (absolute or relative paths)',
+          },
+        },
+        required: ['files'],
+      },
+    },
+  },
   // ─── Obsidian Vault Araçları ─────────────────────────────────────────────
   {
     type: 'function',
@@ -831,7 +850,7 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       'run_sherlock', 'run_github_osint', 'cross_reference', 'extract_metadata',
       'parse_gpg_key', 'wayback_search', 'web_fetch', 'check_email_registrations',
       'check_breaches', 'search_web', 'scrape_profile', 'verify_profiles',
-      'nitter_profile', 'search_person', 'fact_check_to_graph'
+      'nitter_profile', 'search_person', 'fact_check_to_graph', 'analyze_gpx'
     ]);
 
     const cacheKey = `${name}:${JSON.stringify(args)}`;
@@ -893,6 +912,16 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
         result = `✅ Fact-Check sonucu Neo4j Veri Grafiğine başarıyla kaydedildi! (Claim ID: ${args.claimId})`;
       } catch (e: any) {
         result = `❌ Graph kaydetme hatası: ${e.message}`;
+      }
+    }
+    else if (name === 'analyze_gpx') {
+      const files = args.files.split(',').map((f: string) => f.trim()).filter(Boolean)
+      logger.info('TOOL', `📍 GPX analizi: ${files.length} dosya`)
+      try {
+        const gpxResult = await analyzeGpxFiles(files)
+        result = formatGpxResult(gpxResult)
+      } catch (e: any) {
+        result = `❌ GPX analiz hatası: ${e.message}`
       }
     }
     else if (name === 'save_finding') {
@@ -1303,7 +1332,7 @@ async function runSearchWeb(query: string): Promise<string> {
 }
 
 async function runScrapeProfile(url: string): Promise<string> {
-  logger.info('TOOL', `🕷️  Profil kazınıyor (Firecrawl): ${url}...`)
+  logger.info('TOOL', `🕷️  Sayfa kazınıyor: ${url}...`)
   const result = await scrapeProfile(url)
   if (result.error) {
     logger.error('TOOL', `❌ ${result.error}`)

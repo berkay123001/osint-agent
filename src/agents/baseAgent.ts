@@ -9,9 +9,16 @@ import type { Message, AgentConfig, AgentResult } from './types.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DEFAULT_MODEL = 'qwen/qwen3.5-plus-02-15';
-const SUPERVISOR_MODEL = 'qwen/qwen3.5-plus-02-15';
+const DEFAULT_MODEL = 'qwen/qwen3.6-plus-preview:free';
+const SUPERVISOR_MODEL = 'qwen/qwen3.6-plus-preview:free';
 export { DEFAULT_MODEL, SUPERVISOR_MODEL };
+
+// Alibaba DataInspectionFailed hatası (PII içerik filtresi) durumunda fallback modeller
+const FALLBACK_MODELS = [
+  'google/gemini-2.0-flash-001',
+  'deepseek/deepseek-chat-v3-0324',
+];
+
 const DEFAULT_MAX_TOOL_CALLS = 30;
 const DEFAULT_MAX_TOKENS = 32768; // Qwen3 thinking tokens için geniş bütçe
 
@@ -65,18 +72,33 @@ export async function runAgentLoop(
       });
     } catch (apiError: unknown) {
       const msg = apiError instanceof Error ? apiError.message : String(apiError);
-      // Alibaba/OpenRouter'dan gelen geçici hatalar için bir kez retry
-      if (msg.includes('502') || msg.includes('529') || msg.includes('InternalError')) {
-        logger.warn('AGENT', `[${config.name}] API geçici hata (${msg.slice(0, 60)}...), 3s bekleyip tekrar deneniyor...`);
-        await new Promise(resolve => setTimeout(resolve, 3000));
+      const currentModel = config.model ?? DEFAULT_MODEL;
+
+      // Alibaba content filter — PII içerik algılandınca fallback modele geç
+      if (msg.includes('DataInspectionFailed')) {
+        const fallbackModel = FALLBACK_MODELS[0]; // Gemini
+        logger.warn('AGENT', `[${config.name}] Alibaba içerik filtresi → ${fallbackModel} modeline geçiliyor...`);
         response = await client.chat.completions.create({
-          model: config.model ?? DEFAULT_MODEL,
+          model: fallbackModel,
           messages: sanitizeHistoryForProvider(history),
           tools: config.tools.length > 0 ? config.tools : undefined,
           tool_choice: config.tools.length > 0 ? toolChoice : undefined,
           max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
         });
-      } else {
+      }
+      // Diğer geçici hatalar (502, rate limit) için aynı modelde retry
+      else if (msg.includes('502') || msg.includes('529') || msg.includes('InternalError')) {
+        logger.warn('AGENT', `[${config.name}] API geçici hata (${msg.slice(0, 60)}...), 3s bekleyip tekrar deneniyor...`);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        response = await client.chat.completions.create({
+          model: currentModel,
+          messages: sanitizeHistoryForProvider(history),
+          tools: config.tools.length > 0 ? config.tools : undefined,
+          tool_choice: config.tools.length > 0 ? toolChoice : undefined,
+          max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
+        });
+      }
+      else {
         throw apiError;
       }
     }
@@ -88,8 +110,25 @@ export async function runAgentLoop(
         const upstreamErr = JSON.stringify(respAny['error']);
         // Gerçek hata içeriğini logla — neyin kırıldığını anlamak için
         logger.error('AGENT', `[${config.name}] OpenRouter upstream hatası: ${upstreamErr.slice(0, 500)}`);
+
+        // Alibaba içerik filtresi → fallback modele geç
+        if (upstreamErr.includes('DataInspectionFailed')) {
+          const fallbackModel = FALLBACK_MODELS[0];
+          logger.warn('AGENT', `[${config.name}] Alibaba DataInspection → ${fallbackModel} fallback deneniyor...`);
+          response = await client.chat.completions.create({
+            model: fallbackModel,
+            messages: sanitizeHistoryForProvider(history),
+            tools: config.tools.length > 0 ? config.tools : undefined,
+            tool_choice: config.tools.length > 0 ? toolChoice : undefined,
+            max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
+          });
+          // Fallback sonrası tekrar kontrol et
+          if (!response?.choices?.[0]) {
+            throw new Error(`Model hatası (fallback de başarısız): ${upstreamErr.slice(0, 200)}`);
+          }
+        }
         // Geçersiz JSON argümanı hatası → modele düzeltme fırsatı ver (maks 3 deneme)
-        if (upstreamErr.includes('function.arguments') || upstreamErr.includes('InvalidParameter')) {
+        else if (upstreamErr.includes('function.arguments') || upstreamErr.includes('InvalidParameter')) {
           // Araçlar devre dışıyken veya 3 düzeltme sonrası model hâlâ araç çağırıyorsa
           if (toolsDisabled || totalCorrectionAttempts >= 3) {
             forceTextRetries++

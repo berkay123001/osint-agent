@@ -15,7 +15,7 @@ const client = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
   baseURL: 'https://openrouter.ai/api/v1',
 })
-const MODEL = 'qwen/qwen3.5-flash-02-23'
+const MODEL = 'qwen/qwen3.6-plus-preview:free'
 
 const tools: OpenAI.Chat.ChatCompletionTool[] = [
   {
