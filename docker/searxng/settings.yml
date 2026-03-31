@@ -1,0 +1,71 @@
+use_default_settings: true
+
+general:
+  instance_name: "OSINT SearXNG"
+  debug: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "all"
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "osint-agent-searxng-2026"
+  bind_address: "0.0.0.0"
+  port: 8080
+  limiter: false
+
+ui:
+  static_use_hash: true
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+    use_mobile_ui: false
+
+  - name: bing
+    engine: bing
+    shortcut: bi
+
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+
+  - name: reddit
+    engine: reddit
+    shortcut: re
+
+  - name: github
+    engine: github
+    shortcut: gh
+
+  - name: stackoverflow
+    engine: stackoverflow
+    shortcut: st
+
+  - name: arxiv
+    engine: arxiv
+    shortcut: ar
+
+  - name: semantic scholar
+    engine: semantic_scholar
+    shortcut: ss
+
+  - name: twitter
+    engine: twitter
+    shortcut: tw
+    disabled: true
+
+outgoing:
+  request_timeout: 8.0
+  max_request_timeout: 15.0
+  useragent_suffix: ""
+  proxies: {}

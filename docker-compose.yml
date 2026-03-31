@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  # Self-hosted metasearch engine — 100+ arama motorunu aggregate eder
+  # JSON API: http://localhost:8888/search?q=test&format=json
+  searxng:
+    image: searxng/searxng:latest
+    container_name: osint-searxng
+    restart: unless-stopped
+    ports:
+      - "8888:8080"
+    volumes:
+      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8888/

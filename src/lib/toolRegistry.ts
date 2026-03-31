@@ -320,7 +320,7 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'search_web',
       description:
-        'Brave Search (öncelikli) veya Tavily AI (fallback) ile web araması yapar. İsim, email, dork (site:example.com), kurum araması vb. için kullan. BULUNAN SONUÇLARI DOĞRUDAN KABUL ETME: Sonuçların hedefin bilinen diğer tanımlayıcılarıyla (email, username vb.) örtüşüp örtüşmediğini çapraz kontrol et.',
+        'SearXNG (self-hosted, öncelikli), Brave Search veya Tavily AI (fallback) ile web araması yapar. İsim, email, dork (site:example.com), kurum araması vb. için kullan. BULUNAN SONUÇLARI DOĞRUDAN KABUL ETME: Sonuçların hedefin bilinen diğer tanımlayıcılarıyla (email, username vb.) örtüşüp örtüşmediğini çapraz kontrol et.',
       parameters: {
         type: 'object',
         properties: {
@@ -512,7 +512,7 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'scrape_profile',
       description:
-        'Scrape a webpage using Firecrawl stealth proxy. Works well on: GitHub, personal blogs, forums, CTF writeup sites, portfolio pages. Returns page as Markdown and auto-extracts emails, crypto wallets (BTC/ETH), Telegram links, and external URLs. NOTE: Twitter/X and Reddit are NOT supported by Firecrawl free tier — use web_fetch for those (will auto-fallback). ⚠️ Monthly limit: 500 requests — use only when web_fetch gets blocked (403).',
+        'Scrape a webpage using Firecrawl (self-hosted veya cloud). Works well on: GitHub, personal blogs, forums, CTF writeup sites, portfolio pages. Returns page as Markdown and auto-extracts emails, crypto wallets (BTC/ETH), Telegram links, and external URLs. NOTE: Twitter/X and Reddit are NOT supported by Firecrawl — use web_fetch for those (will auto-fallback to Puppeteer/Scrapling).',
       parameters: {
         type: 'object',
         properties: {

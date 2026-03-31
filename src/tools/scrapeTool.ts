@@ -9,14 +9,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // Scrapling conda ortamındaki Python executable
 const SCRAPLING_PYTHON = '/home/berkayhsrt/anaconda3/envs/scrapling/bin/python'
-const SCRAPLING_RUNNER = path.join(__dirname, 'scrapling_runner.py')
+// dist/tools/ → src/tools/ (tsc .py kopyalamaz, kaynak dizinden çalıştır)
+const SCRAPLING_RUNNER = __dirname.includes('/dist/')
+  ? path.join(__dirname, '..', '..', 'src', 'tools', 'scrapling_runner.py')
+  : path.join(__dirname, 'scrapling_runner.py')
 
 /**
- * Firecrawl tabanlı profil scraping tool.
- * curl ile değil Firecrawl'ın proxy/stealth altyapısıyla sayfa içeriğini Markdown olarak alır.
- * TikTok, Twitter/X, GitHub, Reddit vb. platformlar için fallback.
- *
- * ⚠️ Free tier: 500 istek/ay — tasarruflu kullan!
+ * Profil scraping tool.
+ * Zincir: Scrapling (stealth, anti-bot) → Puppeteer (JS rendering) → Firecrawl cloud (son çare).
+ * Scrapling birincil scraber olarak kullanılır — Cloudflare bypass, anti-bot koruması aşabilir.
  */
 
 export interface ScrapeResult {
@@ -60,7 +61,82 @@ async function processMetadataForLinks(links: string[]): Promise<string[]> {
   return alerts.filter(a => !a.startsWith('[Yükleniyor')); // Yükleniyor loglarını at, sadece sonuçları tut
 }
 
-const FIRECRAWL_API = 'https://api.firecrawl.dev/v1/scrape'
+const FIRECRAWL_CLOUD_API = 'https://api.firecrawl.dev/v1/scrape'
+
+function getFirecrawlUrl(): string {
+  return process.env.FIRECRAWL_URL || 'http://localhost:3002/v1/scrape'
+}
+
+/**
+ * Firecrawl endpoint'ine istek atar. Self-hosted ve cloud ayni formati kullanir.
+ * Basarisiz olursa null doner, ust kod fallback'e gecer.
+ */
+async function tryFirecrawlScrape(
+  endpoint: string,
+  targetUrl: string,
+  headers: Record<string, string>
+): Promise<{ ok: boolean; body?: string; status?: number }> {
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        url: targetUrl,
+        formats: ['markdown', 'links'],
+        onlyMainContent: true,
+        waitFor: 2000,
+      }),
+      signal: AbortSignal.timeout(30000),
+    })
+    if (!res.ok) {
+      return { ok: false, status: res.status }
+    }
+    return { ok: true, body: await res.text() }
+  } catch {
+    return { ok: false }
+  }
+}
+
+/**
+ * Firecrawl JSON yanitini parse edip ScrapeResult olusturur.
+ * Self-hosted ve cloud ayni response formatini kullanir.
+ */
+function parseFirecrawlResponse(body: string, url: string): ScrapeResult | null {
+  let data: Record<string, unknown>
+  try {
+    data = JSON.parse(body) as Record<string, unknown>
+  } catch {
+    return null
+  }
+
+  const pageData = (data.data as Record<string, unknown>) ?? {}
+  const md = String((pageData.markdown as string) ?? '')
+  const linksRaw = ((pageData.links as string[] | undefined) ?? []).filter(l => typeof l === 'string')
+
+  const emails = [...new Set(md.match(EMAIL_REGEX) ?? [])]
+  const btcMatches = md.match(BITCOIN_REGEX) ?? []
+  const ethMatches = md.match(ETH_REGEX) ?? []
+  const cryptoWallets = [...new Set([...btcMatches, ...ethMatches])]
+
+  const discordHandles = [...md.matchAll(DISCORD_REGEX)].map(m => `discord:${m[0]}`)
+  const telegramHandles = [...md.matchAll(TELEGRAM_REGEX)].map(m => `telegram:${m[1]}`)
+  const usernameHints = [...new Set([...discordHandles, ...telegramHandles])]
+
+  const meta = (pageData.metadata as Record<string, unknown>) ?? {}
+  const ogImage = String(meta.ogImage ?? meta['twitter:image'] ?? '')
+
+  return {
+    url,
+    markdown: md.slice(0, 4000),
+    title: String((meta.title as string) ?? ''),
+    description: String((meta.description as string) ?? ''),
+    links: linksRaw.slice(0, 30),
+    emails,
+    cryptoWallets,
+    usernameHints,
+    avatarUrl: ogImage ? ogImage : undefined,
+  }
+}
 
 // Regex'ler: scrape çıktısından OSINT değeri olan varlıkları çıkar
 const EMAIL_REGEX = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g
@@ -158,8 +234,18 @@ async function fallbackPuppeteerScrape(url: string): Promise<ScrapeResult> {
       metadataAlerts: await processMetadataForLinks(uniqueLinks),
     };
   } catch (err: any) {
-    console.log(`[Scrape] Puppeteer başarısız (${(err as Error).message}), Scrapling kullanılıyor...`)
-    return await fallbackScraplingFetch(url)
+    console.log(`[Scrape] Puppeteer başarısız (${(err as Error).message})`)
+    return {
+      url,
+      markdown: '',
+      title: '',
+      description: '',
+      links: [],
+      emails: [],
+      cryptoWallets: [],
+      usernameHints: [],
+      error: `Puppeteer Error: ${(err as Error).message}`,
+    }
   } finally {
     if (browser) {
       await browser.close().catch(() => {});
@@ -215,7 +301,7 @@ async function fallbackScraplingFetch(url: string): Promise<ScrapeResult> {
       url,
       markdown: result.markdown.slice(0, 4000),
       title: result.title,
-      description: 'Scraped via Scrapling StealthyFetcher/DynamicFetcher (3rd fallback)',
+      description: 'Scraped via Scrapling StealthyFetcher/DynamicFetcher',
       links: result.links.slice(0, 30),
       emails: result.emails,
       cryptoWallets: result.cryptoWallets,
@@ -251,7 +337,7 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
     }
     return {
       url,
-      markdown: 'Bu bir belge/medya dosyasıdır (Firecrawl ile metin alınmadı).',
+      markdown: 'Bu bir belge/medya dosyasıdır (metadata analizi yapıldı).',
       title: 'Medya/Belge Dosyası',
       description: 'Doğrudan analiz',
       links: [], emails: [], cryptoWallets: [], usernameHints: [],
@@ -259,140 +345,72 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
     };
   }
 
-
-  if (isInterestingFile(url)) {
-    console.log(`[Scrape] URL bir dosya/medya olduğu için doğrudan Metadata aracı çalıştırılıyor: ${url}`);
-    const m = await extractMetadataFromUrl(url);
-    const alerts = [];
-    if (Object.keys(m.interestingFields).length > 0) {
-      alerts.push(`⚠️ Doğrudan Belge Analizi (${url}):\n${formatMetadata(m)}`);
-    } else {
-      alerts.push(`ℹ️ Dosya incelendi ancak önemli bir metadata bulunamadı.`);
-    }
-    return {
-      url,
-      markdown: 'Bu bir belge/medya dosyasıdır (Firecrawl ile metin alınmadı).',
-      title: 'Medya/Belge Dosyası',
-      description: 'Doğrudan analiz',
-      links: [], emails: [], cryptoWallets: [], usernameHints: [],
-      metadataAlerts: alerts
-    };
+  // 1) Scrapling (birincil) — Cloudflare bypass, anti-bot, stealth tarama
+  console.log(`[Scrape] Scrapling ile çekiliyor: ${url}`)
+  const scraplingResult = await fallbackScraplingFetch(url)
+  if (!scraplingResult.error && scraplingResult.markdown.length > 100) {
+    console.log(`[Scrape] Scrapling başarılı (${scraplingResult.markdown.length} char): ${url}`)
+    return scraplingResult
+  }
+  if (scraplingResult.error) {
+    console.log(`[Scrape] Scrapling başarısız: ${scraplingResult.error}, Puppeteer deneniyor...`)
+  } else {
+    console.log(`[Scrape] Scrapling yetersiz içerik (${scraplingResult.markdown.length} char), Puppeteer deneniyor...`)
   }
 
+  // 2) Puppeteer Stealth (JS rendering gerektiren sayfalar için)
+  console.log(`[Scrape] Puppeteer Stealth ile çekiliyor: ${url}`)
+  const puppeteerResult = await fallbackPuppeteerScrape(url)
+  if (!puppeteerResult.error && puppeteerResult.markdown.length > 100) {
+    console.log(`[Scrape] Puppeteer başarılı (${puppeteerResult.markdown.length} char): ${url}`)
+    return puppeteerResult
+  }
+  if (puppeteerResult.error) {
+    console.log(`[Scrape] Puppeteer başarısız: ${puppeteerResult.error}`)
+  }
+
+  // 3) Firecrawl cloud (son çare, 500 req/ay limit)
   const apiKey = process.env.FIRECRAWL_API_KEY
-
-
-  if (!apiKey) {
-    return {
-      url,
-      markdown: '',
-      title: '',
-      description: '',
-      links: [],
-      emails: [],
-      cryptoWallets: [],
-      usernameHints: [],
-      avatarUrl: undefined,
-      error: 'FIRECRAWL_API_KEY .env dosyasında tanımlı değil.',
+  if (apiKey) {
+    console.log(`[Scrape] Firecrawl cloud ile çekiliyor (son çare): ${url}`)
+    const cloudHeaders: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
     }
-  }
-
-  let body: string
-  try {
-    const res = await fetch(FIRECRAWL_API, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        url,
-        formats: ['markdown', 'links'],
-        onlyMainContent: true,
-        waitFor: 2000,
-      }),
-      signal: AbortSignal.timeout(30000),
-    })
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '')
-      // 403 veya 429 = bloklandı veya kota doldu -> Puppeteer fallback yap
-      if (res.status === 401 || res.status === 401 || res.status === 403 || res.status === 429 || res.status >= 500) {
-        console.log(`[Scrape] Firecrawl başarısız (HTTP ${res.status}), Puppeteer Stealth kullanılıyor...`)
-        return await fallbackPuppeteerScrape(url)
-      }
-      
-      const usageWarning = res.status === 429
-        ? '⚠️ Firecrawl aylık 500 istek kotası dolmuş. Alternatif çözüm gerekiyor.'
-        : undefined
-      return {
-        url,
-        markdown: '',
-        title: '',
-        description: '',
-        links: [],
-        emails: [],
-        cryptoWallets: [],
-        usernameHints: [],
-        avatarUrl: undefined,
-        error: `Firecrawl HTTP ${res.status}: ${errText.slice(0, 200)}`,
-        usageWarning,
+    const cloudResult = await tryFirecrawlScrape(FIRECRAWL_CLOUD_API, url, cloudHeaders)
+    if (cloudResult.ok && cloudResult.body) {
+      const parsed = parseFirecrawlResponse(cloudResult.body, url)
+      if (parsed && parsed.markdown.length > 0) {
+        console.log(`[Scrape] Cloud Firecrawl başarılı: ${url}`)
+        const usageWarning = cloudResult.status === 429
+          ? '⚠️ Firecrawl aylık 500 istek kotası dolmuş.'
+          : undefined
+        return { ...parsed, metadataAlerts: await processMetadataForLinks(parsed.links), usageWarning }
       }
     }
-
-    body = await res.text()
-  } catch (e) {
-    console.log(`[Scrape] Firecrawl bağlantı hatası: ${(e as Error).message}, Puppeteer Stealth kullanılıyor...`)
-    return await fallbackPuppeteerScrape(url)
+    console.log(`[Scrape] Cloud Firecrawl da başarısız`)
   }
 
-  let data: Record<string, unknown>
-  try {
-    data = JSON.parse(body) as Record<string, unknown>
-  } catch {
-    return {
-      url,
-      markdown: '',
-      title: '',
-      description: '',
-      links: [],
-      emails: [],
-      cryptoWallets: [],
-      usernameHints: [],
-      avatarUrl: undefined,
-      error: 'Firecrawl geçersiz JSON döndürdü.',
-    }
+  // Scrapling'in sonucunu döndür (içerik az olsa bile)
+  if (scraplingResult.markdown.length > 0) {
+    return scraplingResult
+  }
+  // Puppeteer'in sonucunu döndür
+  if (puppeteerResult.markdown.length > 0) {
+    return puppeteerResult
   }
 
-  const pageData = (data.data as Record<string, unknown>) ?? {}
-  const md = String((pageData.markdown as string) ?? '')
-  const linksRaw = ((pageData.links as string[] | undefined) ?? []).filter(l => typeof l === 'string')
-
-  // OSINT değeri olan varlıkları çıkar
-  const emails = [...new Set(md.match(EMAIL_REGEX) ?? [])]
-  const btcMatches = md.match(BITCOIN_REGEX) ?? []
-  const ethMatches = md.match(ETH_REGEX) ?? []
-  const cryptoWallets = [...new Set([...btcMatches, ...ethMatches])]
-
-  // Kullanıcı adı ipuçları: Discord, Telegram kullanıcı adları
-  const discordHandles = [...md.matchAll(DISCORD_REGEX)].map(m => `discord:${m[0]}`)
-  const telegramHandles = [...md.matchAll(TELEGRAM_REGEX)].map(m => `telegram:${m[1]}`)
-  const usernameHints = [...new Set([...discordHandles, ...telegramHandles])]
-
-  const meta = (pageData.metadata as Record<string, unknown>) ?? {}
-  const ogImage = String(meta.ogImage ?? meta['twitter:image'] ?? '')
-
+  // Hiçbir şey çalışmadı
   return {
     url,
-    markdown: md.slice(0, 4000), // LLM için 4000 char yeterli
-    title: String((meta.title as string) ?? ''),
-    description: String((meta.description as string) ?? ''),
-    links: linksRaw.slice(0, 30), // ilk 30 link yeterli
-    emails,
-    cryptoWallets,
-    usernameHints,
-    avatarUrl: ogImage ? ogImage : undefined,
-    metadataAlerts: await processMetadataForLinks(linksRaw),
+    markdown: '',
+    title: '',
+    description: '',
+    links: [],
+    emails: [],
+    cryptoWallets: [],
+    usernameHints: [],
+    error: `Tüm scrabler başarısız oldu (Scrapling, Puppeteer, Firecrawl)`,
   }
 }
 

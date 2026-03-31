@@ -12,6 +12,38 @@ export interface SearchToolResponse {
 }
 
 /**
+ * SearXNG (self-hosted metasearch engine) üzerinden web araması yapar.
+ * 100+ arama motorunu aggregate eder, API key gerektirmez.
+ * Docker ile localhost:8888'de çalışır — çalışmıyorsa sessizce Brave'e düşer.
+ */
+async function searchSearXNG(query: string, limit: number = 10): Promise<SearchToolResponse> {
+  const baseUrl = process.env.SEARXNG_URL || 'http://localhost:8888'
+  try {
+    const url = `${baseUrl}/search?q=${encodeURIComponent(query)}&format=json&categories=general&language=all`
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!response.ok) {
+      return { query, results: [], error: `SearXNG HTTP ${response.status}` }
+    }
+    const data = await response.json()
+    const rawResults: any[] = data?.results ?? []
+    if (!Array.isArray(rawResults) || rawResults.length === 0) {
+      return { query, results: [], error: 'SearXNG sonuç döndürmedi.' }
+    }
+    const results: SearchResult[] = rawResults.slice(0, limit).map((r: any) => ({
+      title: r.title || 'Başlıksız',
+      snippet: (r.content || '').slice(0, 400).replace(/\n+/g, ' ').trim(),
+      url: r.url || '',
+    }))
+    return { query, results, provider: 'SearXNG' }
+  } catch (error) {
+    return { query, results: [], error: `SearXNG erişilemiyor: ${(error as Error).message}` }
+  }
+}
+
+/**
  * Brave Search saat basında 1 req/sn sınırı var (Free plan).
  * Eş zamanlı çağrılarda 429 almamak için global throttle.
  */
@@ -187,14 +219,24 @@ function braveIsWeak(query: string): boolean {
 
 /**
  * Çok katmanlı arama zinciri:
- *   Brave → Google CSE → Tavily
+ *   SearXNG (self-hosted) → Brave → Google CSE → Tavily
  *
- * - Brave: hız ve genel web için birincil
- * - Google CSE: Brave'in index'inin düştüğü durumlar için yedek
+ * - SearXNG: self-hosted metasearch, 100+ motor, sıfır limit, API key gereksiz
+ * - Brave: hız ve genel web için ikincil
+ * - Google CSE: büyük index, güvenilir kapsama alanı
  * - Tavily: son çare (kredi koruması)
  */
 export async function searchWeb(query: string, limit: number = 10): Promise<SearchToolResponse> {
-  // 1) Brave Search (primary) — Brave'in zayıf olduğu sosyal medya sorgularında atla
+  // 0) SearXNG (self-hosted, API key gerektirmez) — çalışmıyorsa anında düşer
+  {
+    const searxngResult = await searchSearXNG(query, limit)
+    if (!searxngResult.error && searxngResult.results.length > 0) {
+      return searxngResult
+    }
+    console.warn(`[SearchTool] SearXNG: ${searxngResult.error ?? 'sonuç yok'} — Brave'e geçiliyor...`)
+  }
+
+  // 1) Brave Search (secondary) — Brave'in zayıf olduğu sosyal medya sorgularında atla
   if (process.env.BRAVE_SEARCH_API_KEY && !braveIsWeak(query)) {
     const braveResult = await searchBrave(query, limit)
     if (!braveResult.error && braveResult.results.length > 0) {
@@ -204,7 +246,7 @@ export async function searchWeb(query: string, limit: number = 10): Promise<Sear
     console.warn(`[SearchTool] Brave: ${reason} — Google CSE'ye geçiliyor...`)
   }
 
-  // 2) Google Custom Search (secondary) — büyük index, güvenilir kapsama alanı
+  // 2) Google Custom Search (tertiary) — büyük index, güvenilir kapsama alanı
   if (process.env.GOOGLE_SEARCH_API_KEY && process.env.GOOGLE_SEARCH_CX) {
     const googleResult = await searchGoogle(query, limit)
     if (!googleResult.error && googleResult.results.length > 0) {
@@ -221,7 +263,7 @@ export async function searchWeb(query: string, limit: number = 10): Promise<Sear
   return {
     query,
     results: [],
-    error: 'Arama API anahtarı bulunamadı. BRAVE_SEARCH_API_KEY, GOOGLE_SEARCH_API_KEY+GOOGLE_SEARCH_CX veya TAVILY_API_KEY .env\'e ekleyin.',
+    error: 'Arama API anahtarı bulunamadı. SEARXNG_URL, BRAVE_SEARCH_API_KEY, GOOGLE_SEARCH_API_KEY+GOOGLE_SEARCH_CX veya TAVILY_API_KEY .env\'e ekleyin.',
   }
 }
 
