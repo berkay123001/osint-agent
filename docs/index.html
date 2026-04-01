@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OSINT Agent — W13 2026 Raporu</title>
+  <style>
+    /* ── Reset & Base ─────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0d1117;
+      --surface:  #161b22;
+      --card:     #1c2128;
+      --border:   #30363d;
+      --accent:   #58a6ff;
+      --green:    #3fb950;
+      --yellow:   #d29922;
+      --red:      #f85149;
+      --purple:   #bc8cff;
+      --orange:   #ffa657;
+      --text:     #e6edf3;
+      --muted:    #8b949e;
+      --radius:   10px;
+      --shadow:   0 4px 24px rgba(0,0,0,.45);
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+      line-height: 1.6;
+      font-size: 15px;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre {
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace;
+    }
+
+    /* ── Layout ───────────────────────────────────────── */
+    .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+
+    /* ── Hero ─────────────────────────────────────────── */
+    .hero {
+      background: linear-gradient(135deg, #0d1b2a 0%, #0d1117 40%, #1a0a2e 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 72px 0 60px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(88,166,255,.08), transparent);
+      pointer-events: none;
+    }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(88,166,255,.1);
+      border: 1px solid rgba(88,166,255,.3);
+      border-radius: 20px;
+      padding: 6px 16px;
+      font-size: 13px;
+      color: var(--accent);
+      margin-bottom: 24px;
+      letter-spacing: .5px;
+    }
+    .hero-badge .dot {
+      width: 7px; height: 7px;
+      background: var(--green);
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .3; }
+    }
+    .hero h1 {
+      font-size: clamp(28px, 5vw, 48px);
+      font-weight: 700;
+      letter-spacing: -1px;
+      background: linear-gradient(135deg, #fff 30%, #8b949e);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 16px;
+    }
+    .hero-sub {
+      font-size: 17px;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    .hero-date { font-size: 14px; color: var(--muted); }
+
+    /* ── Stats Bar ────────────────────────────────────── */
+    .stats-bar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 28px 0;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 4px;
+    }
+    .stat-item {
+      text-align: center;
+      padding: 12px 8px;
+      border-right: 1px solid var(--border);
+    }
+    .stat-item:last-child { border-right: none; }
+    .stat-number {
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--accent);
+      display: block;
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-label {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .8px;
+    }
+    .stat-item.green .stat-number { color: var(--green); }
+    .stat-item.purple .stat-number { color: var(--purple); }
+    .stat-item.orange .stat-number { color: var(--orange); }
+    .stat-item.yellow .stat-number { color: var(--yellow); }
+
+    /* ── Section ──────────────────────────────────────── */
+    .section {
+      padding: 60px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .section:last-of-type { border-bottom: none; }
+
+    .section-header {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 32px;
+    }
+    .section-icon {
+      width: 40px; height: 40px;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+    .section-icon.blue  { background: rgba(88,166,255,.15); }
+    .section-icon.green { background: rgba(63,185,80,.15); }
+    .section-icon.purple{ background: rgba(188,140,255,.15); }
+    .section-icon.orange{ background: rgba(255,166,87,.15); }
+    .section-icon.yellow{ background: rgba(210,153,34,.15); }
+    .section-icon.red   { background: rgba(248,81,73,.15); }
+
+    .section-num {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .section h2 {
+      font-size: 22px;
+      font-weight: 600;
+    }
+
+    /* ── Cards ────────────────────────────────────────── */
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      transition: border-color .2s, transform .2s;
+    }
+    .card:hover { border-color: var(--accent); transform: translateY(-2px); }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .card p { font-size: 13px; color: var(--muted); }
+
+    .tag {
+      display: inline-block;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 600;
+    }
+    .tag.new     { background: rgba(63,185,80,.15); color: var(--green); border: 1px solid rgba(63,185,80,.3); }
+    .tag.improved{ background: rgba(88,166,255,.15); color: var(--accent); border: 1px solid rgba(88,166,255,.3); }
+    .tag.fixed   { background: rgba(210,153,34,.15); color: var(--yellow); border: 1px solid rgba(210,153,34,.3); }
+
+    /* ── Tables ───────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; margin-top: 16px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th {
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .7px;
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,.02); }
+    code {
+      background: rgba(88,166,255,.1);
+      color: var(--accent);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 12px;
+    }
+
+    /* ── Pipeline ─────────────────────────────────────── */
+    .pipeline {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 20px 0;
+      font-size: 13px;
+    }
+    .pipe-step {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 14px;
+      white-space: nowrap;
+    }
+    .pipe-step.primary { border-color: var(--green); color: var(--green); background: rgba(63,185,80,.08); }
+    .pipe-arrow { color: var(--muted); font-size: 16px; }
+    .pipe-step.fallback { border-style: dashed; color: var(--muted); }
+
+    /* ── Error Grid ───────────────────────────────────── */
+    .error-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .error-card {
+      display: flex;
+      gap: 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      align-items: flex-start;
+    }
+    .error-icon { font-size: 22px; flex-shrink: 0; margin-top: 2px; }
+    .error-scenario { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+    .error-action { font-size: 12px; color: var(--green); }
+
+    /* ── Log Block ────────────────────────────────────── */
+    .log-block {
+      background: #0a0e14;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      font-size: 12.5px;
+      line-height: 1.9;
+      overflow-x: auto;
+      margin-top: 16px;
+    }
+    .log-block .l-time { color: #555; }
+    .log-block .l-info { color: var(--accent); }
+    .log-block .l-warn { color: var(--yellow); }
+    .log-block .l-error { color: var(--red); }
+    .log-block .l-tool { color: var(--purple); }
+    .log-block .l-graph { color: var(--green); }
+    .log-block .l-text { color: var(--text); }
+
+    /* ── Test Results ─────────────────────────────────── */
+    .test-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .test-file {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+    .test-file-name {
+      font-size: 12px;
+      font-family: monospace;
+      color: var(--accent);
+      margin-bottom: 10px;
+    }
+    .test-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      padding: 3px 0;
+    }
+    .test-item::before { content: '✔'; color: var(--green); flex-shrink: 0; }
+    .test-count { font-size: 24px; font-weight: 700; color: var(--green); }
+
+    /* ── Agent Cards ──────────────────────────────────── */
+    .agent-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+    .agent-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      text-align: center;
+    }
+    .agent-emoji { font-size: 32px; margin-bottom: 10px; }
+    .agent-name { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+    .agent-model { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+    .agent-caps {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .agent-cap {
+      font-size: 11px;
+      background: rgba(88,166,255,.08);
+      border: 1px solid rgba(88,166,255,.15);
+      border-radius: 4px;
+      padding: 3px 8px;
+      color: var(--muted);
+    }
+    .agent-card.new-agent { border-color: rgba(63,185,80,.3); }
+    .agent-card.new-agent .agent-name { color: var(--green); }
+
+    /* ── Roadmap ──────────────────────────────────────── */
+    .roadmap { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+    .roadmap-item {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 18px;
+    }
+    .roadmap-num {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--accent);
+      opacity: .4;
+      width: 24px;
+      flex-shrink: 0;
+    }
+    .roadmap-title { font-size: 14px; font-weight: 600; }
+    .roadmap-desc { font-size: 12px; color: var(--muted); }
+    .roadmap-impact {
+      margin-left: auto;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    /* ── Footer ───────────────────────────────────────── */
+    .footer {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 32px 0;
+      text-align: center;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .footer strong { color: var(--text); }
+    .footer-links { display: flex; justify-content: center; gap: 24px; margin-top: 12px; }
+
+    /* ── Print ────────────────────────────────────────── */
+    @media print {
+      body { background: #fff; color: #111; }
+      .hero { background: #1a1a2e; color: #fff; -webkit-print-color-adjust: exact; }
+      .card, .error-card, .test-file, .agent-card, .roadmap-item { break-inside: avoid; }
+      .section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── HERO ──────────────────────────────────────────── -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-badge">
+      <span class="dot"></span>
+      Haftalık Geliştirme Raporu · W13 2026
+    </div>
+    <h1>OSINT Agent</h1>
+    <p class="hero-sub">Çok-Ajanlı Açık Kaynak İstihbarat Sistemi</p>
+    <p class="hero-date">24 Mart – 2 Nisan 2026 &nbsp;·&nbsp; Berkay Hasret Baykara</p>
+  </div>
+</section>
+
+<!-- ── STATS ──────────────────────────────────────────── -->
+<section class="stats-bar">
+  <div class="container">
+    <div class="stats-grid">
+      <div class="stat-item">
+        <span class="stat-number">67</span>
+        <span class="stat-label">Commit</span>
+      </div>
+      <div class="stat-item green">
+        <span class="stat-number">+6,959</span>
+        <span class="stat-label">Eklenen Satır</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-number">44</span>
+        <span class="stat-label">Değişen Dosya</span>
+      </div>
+      <div class="stat-item purple">
+        <span class="stat-number">31</span>
+        <span class="stat-label">Test (hepsi ✔)</span>
+      </div>
+      <div class="stat-item orange">
+        <span class="stat-number">4</span>
+        <span class="stat-label">Aktif Ajan</span>
+      </div>
+      <div class="stat-item yellow">
+        <span class="stat-number">30+</span>
+        <span class="stat-label">Tool</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 1. ARAMA ALTYAPISI ─────────────────────────────── -->
+<section class="section">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-icon blue">🔍</div>
+      <div>
+        <div class="section-num">Bölüm 01</div>
+        <h2>Arama Altyapısı</h2>
+      </div>
+    </div>
+
+    <p style="color:var(--muted); margin-bottom: 24px;">
+      Harici API'lere bağımlılık kaldırıldı. Docker üzerinde öz kaynaklı SearXNG ile 100+ arama motoru tek noktada toplandı.
+    </p>
+
+    <div class="pipeline">
+      <div class="pipe-step primary">SearXNG <span style="font-size:11px; opacity:.7">localhost:8888</span></div>
+      <span class="pipe-arrow">→ hata olursa →</span>
+      <div class="pipe-step fallback">Brave Search</div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step fallback">Google CSE</div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step fallback">Tavily</div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Özellik</th><th>Detay</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Aktif motorlar</td><td>Google, Bing, Brave, Qwant, Wikipedia, Reddit, GitHub, arXiv, StackOverflow…</td></tr>
+          <tr><td>Oran limiti</td><td>Yok (kendi sunucumuzda)</td></tr>
+          <tr><td>Yanıt süresi</td><td>~1.5s</td></tr>
+          <tr><td>DuckDuckGo</td><td><code>disabled</code> — sık CAPTCHA blokları nedeniyle</td></tr>
+          <tr><td>Brave throttle</td><td>Min 1.1s aralık — 2000 req/ay limitini korur</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ── 2. SCRAPING ALTYAPISI ──────────────────────────── -->
+<section class="section">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-icon purple">🕷️</div>
+      <div>
+        <div class="section-num">Bölüm 02</div>
+        <h2>Scraping Altyapısı</h2>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:24px;">
+      <div class="card" style="border-color:#f85149;">
+        <div class="card-title">❌ Önceki Zincir</div>
+        <p>Firecrawl Cloud (500 req/ay) → Puppeteer → Scrapling</p>
+      </div>
+      <div class="card" style="border-color:#3fb950;">
+        <div class="card-title">✅ Yeni Zincir</div>
+        <p>Scrapling --stealth → Puppeteer Stealth → Firecrawl Cloud (son çare)</p>
+      </div>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-title">🦎 Scrapling <span class="tag new">Primary</span></div>
+        <p>Cloudflare Turnstile bypass, browser fingerprint, referer spoofing. Sınırsız kullanım (local Python).</p>
+      </div>
+      <div class="card">
+        <div class="card-title">🎭 Puppeteer Stealth</div>
+        <p>Dinamik sayfalar için JavaScript rendering gereken durumlarda devreye girer.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">🔥 Firecrawl Cloud</div>
+        <p>Son çare (500 req/ay). Self-hosted Docker instance da mevcut (sınırsız).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 3. MULTI-AGENT ─────────────────────────────────── -->
+<section class="section">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-icon green">🤖</div>
+      <div>
+        <div class="section-num">Bölüm 03</div>
+        <h2>Multi-Agent Sistemi</h2>
+      </div>
+    </div>
+
+    <div class="agent-grid">
+      <div class="agent-card">
+        <div class="agent-emoji">🎯</div>
+        <div class="agent-name">Supervisor</div>
+        <div class="agent-model">qwen3.6-plus-preview:free</div>
+        <div class="agent-caps">
+          <div class="agent-cap">Yönlendirme</div>
+          <div class="agent-cap">Genel arama</div>
+          <div class="agent-cap">Rapor üretme</div>
+          <div class="agent-cap">Neo4j yazma</div>
+        </div>
+      </div>
+      <div class="agent-card">
+        <div class="agent-emoji">🔎</div>
+        <div class="agent-name">Identity Agent</div>
+        <div class="agent-model">qwen3.6-plus-preview:free</div>
+        <div class="agent-caps">
+          <div class="agent-cap">Username OSINT</div>
+          <div class="agent-cap">Email araştırma</div>
+          <div class="agent-cap">GitHub profil</div>
+          <div class="agent-cap">Breach check</div>
+        </div>
+      </div>
+      <div class="agent-card">
+        <div class="agent-emoji">🖼️</div>
+        <div class="agent-name">Media Agent</div>
+        <div class="agent-model">qwen3.6-plus-preview:free</div>
+        <div class="agent-caps">
+          <div class="agent-cap">Görsel analizi</div>
+          <div class="agent-cap">EXIF metadata</div>
+          <div class="agent-cap">Fact-check</div>
+          <div class="agent-cap">Reverse image</div>
+        </div>
+      </div>
+      <div class="agent-card new-agent">
+        <div class="agent-emoji">🎓</div>
+        <div class="agent-name">Academic Agent <span class="tag new" style="font-size:10px;">YENİ</span></div>
+        <div class="agent-model">qwen3.6-plus-preview:free</div>
+        <div class="agent-caps">
+          <div class="agent-cap">arXiv + Semantic Scholar</div>
+          <div class="agent-cap">Tam makale okuma</div>
+          <div class="agent-cap">İntihal analizi</div>
+          <div class="agent-cap">125 makale → Neo4j</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 4. HATA TOLERANSI ───────────────────────────────── -->
+<section class="section">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-icon red">🛡️</div>
+      <div>
+        <div class="section-num">Bölüm 04</div>
+        <h2>Hata Toleransı &amp; Model Yönetimi</h2>
+      </div>
+    </div>
+
+    <div class="error-grid">
+      <div class="error-card">
+        <div class="error-icon">⏱️</div>
+        <div>
+          <div class="error-scenario">429 Rate Limit</div>
+          <div class="error-action">5s bekle → aynı model ile retry</div>
+        </div>
+      </div>
+      <div class="error-card">
+        <div class="error-icon">🔌</div>
+        <div>
+          <div class="error-scenario">502 / 529 Bad Gateway</div>
+          <div class="error-action">3s bekle → aynı model ile retry</div>
+        </div>
+      </div>
+      <div class="error-card">
+        <div class="error-icon">🚫</div>
+        <div>
+          <div class="error-scenario">DataInspectionFailed (Alibaba PII)</div>
+          <div class="error-action">Gemini'ye otomatik fallback</div>
+        </div>
+      </div>
+      <div class="error-card">
+        <div class="error-icon">📛</div>
+        <div>
+          <div class="error-scenario">Fallback da başarısız</div>
+          <div class="error-action">Graceful degradation — crash yok</div>
+        </div>
+      </div>
+      <div class="error-card">
+        <div class="error-icon">🔧</div>
+        <div>
+          <div class="error-scenario">JSON parse hatası</div>
+          <div class="error-action">Model kendini düzeltir (max 6 deneme)</div>
+        </div>
+      </div>
+      <div class="error-card">
+        <div class="error-icon">💨</div>
+        <div>
+          <div class="error-scenario">Boş yanıt (<think/> only)</div>
+          <div class="error-action">3 deneme → forceText modu</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top: 28px;">
+      <p style="font-size:13px; color:var(--muted); margin-bottom: 12px;">Örnek log çıktısı:</p>
+      <div class="log-block">
+        <span class="l-time">[01:52:24]</span> <span class="l-info">[INFO]  [AGENT]</span> <span class="l-text">⚙️  [Supervisor] Düşünüyor...</span><br>
+        <span class="l-time">[01:52:42]</span> <span class="l-tool">[TOOL]  </span> <span class="l-text">🔬 Akademik Araştırma: LLM quantization...</span><br>
+        <span class="l-time">[01:52:45]</span> <span class="l-graph">[GRAPH]</span> <span class="l-text">💾 Grafa yazıldı: 25 makale</span><br>
+        <span class="l-time">[01:52:48]</span> <span class="l-warn">[WARN]  [AGENT]</span> <span class="l-text">Rate limit (429) — 5s bekleniyor...</span><br>
+        <span class="l-time">[01:52:53]</span> <span class="l-info">[INFO]  [AGENT]</span> <span class="l-text">⚙️  [Supervisor] Düşünüyor... (retry)</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 5. YENİ TOOLLAR ────────────────────────────────── -->
+<section class="section">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-icon orange">🧰</div>
+      <div>
+        <div class="section-num">Bölüm 05</div>
+        <h2>Yeni Tool'lar &amp; Entegrasyonlar</h2>
+      </div>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-title">🗺️ GPX Analyzer <span class="tag new">Yeni</span></div>
+        <p>GPS/GPX dosyası analizi. Hotspot tespiti, haversine ile coğrafi merkez, Nominatim reverse geocoding. Eyfel Kulesi OSINT Challenge başarıyla çözüldü.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">📔 Obsidian Sync <span class="tag new">Yeni</span></div>
+        <p>Tüm ajan çıktıları otomatik Obsidian vault'una yazılır. <code>obsidian_write</code>, <code>obsidian_append</code>, <code>obsidian_search</code>, <code>obsidian_daily_log</code>.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">🎓 Plagiarism Checker <span class="tag new">Yeni</span></div>
+        <p>Akademik intihal/özgünlük analizi. arXiv + Semantic Scholar çift kaynak, yazar profili çıkarma.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">🕸️ Graph UI <span class="tag improved">Geliştirildi</span></div>
+        <p>Neo4j veritabanı için interaktif browser (<code>npm run graph</code>, port 3333). Force-directed layout, renkli node tipleri.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">🏷️ ML Label Sistemi <span class="tag new">Yeni</span></div>
+        <p>GNN eğitimi için soft labeling. <code>mark_false_positive</code> tool'u ile negatif/pozitif örnekler Cypher sorgusu ile çekilebilir.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">⚠️ Claim / Fact Grafı <span class="tag new">Yeni</span></div>
+        <p>Fact-check döngüsü için <code>Claim</code>, <code>Fact</code>, <code>Source</code> node tipleri eklendi. IOC ve tehdit aktörü grafı da hazır.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 6. TEST ─────────────────────────────────────────── -->
+<section class="section">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-icon green">🧪</div>
+      <div>
+        <div class="section-num">Bölüm 06</div>
+        <h2>Test Altyapısı</h2>
+      </div>
+    </div>
+
+    <div style="display:flex; align-items:baseline; gap:16px; margin-bottom:24px;">
+      <span class="test-count">31 / 31</span>
+      <span style="color:var(--green); font-size:14px;">test geçiyor ✔</span>
+    </div>
+
+    <div class="test-grid">
+      <div class="test-file">
+        <div class="test-file-name">baseAgent.test.ts <span class="tag new" style="font-size:10px">Yeni</span></div>
+        <div class="test-item">429 rate limit → retry</div>
+        <div class="test-item">DataInspectionFailed → Gemini fallback</div>
+        <div class="test-item">Gemini da failse → graceful return</div>
+        <div class="test-item">502 hata → retry</div>
+        <div class="test-item">Bilinmeyen hata → throw</div>
+      </div>
+      <div class="test-file">
+        <div class="test-file-name">githubTool.test.ts</div>
+        <div class="test-item">Profil ve email çekme</div>
+        <div class="test-item">Fork repo filtreleme</div>
+        <div class="test-item">Patch email tespiti</div>
+        <div class="test-item">GPG placeholder tespiti</div>
+      </div>
+      <div class="test-file">
+        <div class="test-file-name">sherlockTool.test.ts</div>
+        <div class="test-item">JSON çıktı parse</div>
+        <div class="test-item">Text fallback</div>
+        <div class="test-item">Spawn hatası reject</div>
+        <div class="test-item">50 platform hız testi</div>
+      </div>
+      <div class="test-file">
+        <div class="test-file-name">osintHeuristics.test.ts</div>
+        <div class="test-item">Username tespiti</div>
+        <div class="test-item">Türkçe isim algılama</div>
+        <div class="test-item">crossReferenceScore</div>
+      </div>
+    </div>
+
+    <p style="font-size:12px; color:var(--muted); margin-top:16px;">
+      Agent loop test edilebilir → <code>runAgentLoop(_clientOverride?)</code> parametresi ile mock client inject edilebilir. Real API çağrısı yapılmaz.
+    </p>
+  </div>
+</section>
+
+<!-- ── 7. SONRAKI ADIMLAR ──────────────────────────────── -->
+<section class="section">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-icon yellow">🗺️</div>
+      <div>
+        <div class="section-num">Bölüm 07</div>
+        <h2>Sonraki Adımlar</h2>
+      </div>
+    </div>
+
+    <div class="roadmap">
+      <div class="roadmap-item">
+        <div class="roadmap-num">1</div>
+        <div>
+          <div class="roadmap-title">Tool Isolation</div>
+          <div class="roadmap-desc">Her ajan sadece ilgili tool'ları görsün → daha az "tool storm", daha yüksek kalite</div>
+        </div>
+        <span class="roadmap-impact tag improved">Kalite ↑↑</span>
+      </div>
+      <div class="roadmap-item">
+        <div class="roadmap-num">2</div>
+        <div>
+          <div class="roadmap-title">Paralel Tool Execution</div>
+          <div class="roadmap-desc">Bağımsız tool çağrılarını concurrent yaparak hız 2-3x artırılacak</div>
+        </div>
+        <span class="roadmap-impact tag new">Hız ↑↑↑</span>
+      </div>
+      <div class="roadmap-item">
+        <div class="roadmap-num">3</div>
+        <div>
+          <div class="roadmap-title">Context Compaction</div>
+          <div class="roadmap-desc">Uzun oturumlar için context penceresi otomatik özetleme</div>
+        </div>
+        <span class="roadmap-impact tag fixed">Stabilite ↑</span>
+      </div>
+      <div class="roadmap-item">
+        <div class="roadmap-num">4</div>
+        <div>
+          <div class="roadmap-title">Session Dream Memory</div>
+          <div class="roadmap-desc">Ajanlerin oturumlar arası bilgi birikimi — kalıcı kişi/konu veritabanı</div>
+        </div>
+        <span class="roadmap-impact tag improved">Süreklilik ↑</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── FOOTER ─────────────────────────────────────────── -->
+<footer class="footer">
+  <div class="container">
+    <p><strong>OSINT Agent</strong> — W13 2026 Haftalık Raporu</p>
+    <p style="margin-top:6px;">Berkay Hasret Baykara &nbsp;·&nbsp; 2 Nisan 2026</p>
+    <div class="footer-links">
+      <a href="https://github.com/berkay123001/osint-agent">GitHub →</a>
+      <a href="WEEKLY_REPORT_2026_W13.md">Markdown Raporu →</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
