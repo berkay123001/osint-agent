@@ -37,8 +37,12 @@ function stripThinkingTokens(text: string): string {
 
 export async function runAgentLoop(
   history: Message[],
-  config: AgentConfig
+  config: AgentConfig,
+  _clientOverride?: OpenAI,
+  _retryDelayMs?: number
 ): Promise<AgentResult> {
+  const _client = _clientOverride ?? client;
+  const _delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, _retryDelayMs ?? ms));
   let toolCallCount = 0;
   let emptyRetries = 0;
   let correctionRetries = 0;
@@ -61,9 +65,9 @@ export async function runAgentLoop(
     logger.agentThinking(config.name);
 
     // Upstream API hatalarını (502, geçersiz JSON argümanlar) yakala ve yönet
-    let response: Awaited<ReturnType<typeof client.chat.completions.create>>;
+    let response: Awaited<ReturnType<typeof _client.chat.completions.create>>;
     try {
-      response = await client.chat.completions.create({
+      response = await _client.chat.completions.create({
         model: config.model ?? DEFAULT_MODEL,
         messages: sanitizeHistoryForProvider(history),
         tools: config.tools.length > 0 ? config.tools : undefined,
@@ -75,22 +79,45 @@ export async function runAgentLoop(
       const currentModel = config.model ?? DEFAULT_MODEL;
 
       // Alibaba content filter — PII içerik algılandınca fallback modele geç
-      if (msg.includes('DataInspectionFailed')) {
+      if (msg.includes('DataInspectionFailed') || msg.includes('inappropriate content')) {
         const fallbackModel = FALLBACK_MODELS[0]; // Gemini
         logger.warn('AGENT', `[${config.name}] Alibaba içerik filtresi → ${fallbackModel} modeline geçiliyor...`);
-        response = await client.chat.completions.create({
-          model: fallbackModel,
+        try {
+          response = await _client.chat.completions.create({
+            model: fallbackModel,
+            messages: sanitizeHistoryForProvider(history),
+            tools: config.tools.length > 0 ? config.tools : undefined,
+            tool_choice: config.tools.length > 0 ? toolChoice : undefined,
+            max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
+          });
+        } catch (fallbackErr) {
+          // Fallback model de reddedirse → graceful degradation, crash etme
+          logger.warn('AGENT', `[${config.name}] Fallback model de başarısız — içerik filtresi atlanamıyor.`);
+          return {
+            finalResponse: '⚠️ Bu sorgu içerik filtresine takıldı. Soruyu farklı bir şekilde ifade etmeyi veya konuyu değiştirmeyi dene.',
+            toolsUsed,
+            toolCallCount,
+          };
+        }
+      }
+      // OpenRouter rate limit — exponential backoff ile retry
+      else if (msg.includes('429') || msg.toLowerCase().includes('rate limit') || msg.toLowerCase().includes('too many requests')) {
+        const waitMs = 5000;
+        logger.warn('AGENT', `[${config.name}] Rate limit (429) — ${waitMs / 1000}s bekleyip tekrar deneniyor...`);
+        await _delay(waitMs);
+        response = await _client.chat.completions.create({
+          model: currentModel,
           messages: sanitizeHistoryForProvider(history),
           tools: config.tools.length > 0 ? config.tools : undefined,
           tool_choice: config.tools.length > 0 ? toolChoice : undefined,
           max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
         });
       }
-      // Diğer geçici hatalar (502, rate limit) için aynı modelde retry
+      // Diğer geçici hatalar (502, 529) için aynı modelde retry
       else if (msg.includes('502') || msg.includes('529') || msg.includes('InternalError')) {
         logger.warn('AGENT', `[${config.name}] API geçici hata (${msg.slice(0, 60)}...), 3s bekleyip tekrar deneniyor...`);
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        response = await client.chat.completions.create({
+        await _delay(3000);
+        response = await _client.chat.completions.create({
           model: currentModel,
           messages: sanitizeHistoryForProvider(history),
           tools: config.tools.length > 0 ? config.tools : undefined,
@@ -115,7 +142,7 @@ export async function runAgentLoop(
         if (upstreamErr.includes('DataInspectionFailed')) {
           const fallbackModel = FALLBACK_MODELS[0];
           logger.warn('AGENT', `[${config.name}] Alibaba DataInspection → ${fallbackModel} fallback deneniyor...`);
-          response = await client.chat.completions.create({
+          response = await _client.chat.completions.create({
             model: fallbackModel,
             messages: sanitizeHistoryForProvider(history),
             tools: config.tools.length > 0 ? config.tools : undefined,
@@ -174,7 +201,7 @@ export async function runAgentLoop(
               const userQuestion = lastUserMsg && typeof lastUserMsg.content === 'string' ? lastUserMsg.content : 'Kullanıcı sorusu'
 
               try {
-                const cleanResponse = await client.chat.completions.create({
+                const cleanResponse = await _client.chat.completions.create({
                   model: config.model ?? DEFAULT_MODEL,
                   messages: [
                     { role: 'system', content: 'Sen OSINT araştırma asistanısın. Sana verilen araştırma verilerini analiz edip Markdown formatında özetle. Hiçbir araç çağırma — sadece düz metin yaz.' },
@@ -194,7 +221,7 @@ export async function runAgentLoop(
                 logger.error('AGENT', `[${config.name}] Temiz API çağrısı da başarısız: ${(cleanErr as Error).message}`)
               }
               return {
-                finalResponse: 'Model yanıt üretilemedi. Toplanan veriler session dosyasına kaydedildi — `read_session_file` ile erişebilirsiniz.',
+                finalResponse: 'Model yanıt üretilemedi. Toplanan veriler session dosyasına kaydedildi — `.osint-sessions/` klasörüne bakabilirsin.',
                 toolCallCount,
                 toolsUsed,
               }

@@ -38,6 +38,7 @@ engines:
   - name: duckduckgo
     engine: duckduckgo
     shortcut: ddg
+    disabled: true  # Sık CAPTCHA blokları nedeniyle devre dışı
 
   - name: wikipedia
     engine: wikipedia
