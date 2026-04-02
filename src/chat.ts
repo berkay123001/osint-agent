@@ -11,7 +11,7 @@ import type { Message } from './agents/types.js';
 
 // ── Oturum kalıcılığı ────────────────────────────────────────────────────────
 const SESSION_DIR = path.join(process.cwd(), '.osint-sessions');
-const SESSION_FILE = path.join(SESSION_DIR, 'last-session.json');
+const SESSION_PREFIX = 'session-';
 
 interface SessionData {
   createdAt: string;
@@ -20,10 +20,37 @@ interface SessionData {
   history: Message[];
 }
 
-function loadSession(): SessionData | null {
+/** Tüm kayıtlı oturumları tarih sırasına göre (en yeni ilk) listeler */
+function listSessions(): { filename: string; data: SessionData }[] {
   try {
-    if (!fs.existsSync(SESSION_FILE)) return null;
-    const raw = fs.readFileSync(SESSION_FILE, 'utf-8');
+    if (!fs.existsSync(SESSION_DIR)) return [];
+    const files = fs.readdirSync(SESSION_DIR)
+      .filter(f => f.startsWith(SESSION_PREFIX) && f.endsWith('.json'))
+      .sort()
+      .reverse(); // en yeni ilk
+    return files.map(filename => {
+      try {
+        const raw = fs.readFileSync(path.join(SESSION_DIR, filename), 'utf-8');
+        return { filename, data: JSON.parse(raw) as SessionData };
+      } catch {
+        return null;
+      }
+    }).filter((s): s is { filename: string; data: SessionData } => s !== null);
+  } catch {
+    return [];
+  }
+}
+
+/** Mevcut aktif oturum dosyasını döner */
+function currentSessionFile(): string {
+  return path.join(SESSION_DIR, `${SESSION_PREFIX}active.json`);
+}
+
+function loadActiveSession(): SessionData | null {
+  try {
+    const file = currentSessionFile();
+    if (!fs.existsSync(file)) return null;
+    const raw = fs.readFileSync(file, 'utf-8');
     return JSON.parse(raw) as SessionData;
   } catch {
     return null;
@@ -34,19 +61,37 @@ function saveSession(history: Message[]): void {
   try {
     if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
     const data: SessionData = {
-      createdAt: existingSession?.createdAt ?? new Date().toISOString(),
+      createdAt: activeSessionMeta?.createdAt ?? new Date().toISOString(),
       lastActiveAt: new Date().toISOString(),
       messageCount: history.length,
       history,
     };
-    fs.writeFileSync(SESSION_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    fs.writeFileSync(currentSessionFile(), JSON.stringify(data, null, 2), 'utf-8');
   } catch {
     // sessizce geç — kalıcılık kritik değil
   }
 }
 
-function deleteSession(): void {
-  try { if (fs.existsSync(SESSION_FILE)) fs.rmSync(SESSION_FILE); } catch { /* no-op */ }
+/** Aktif oturumu tarih damgalı dosyaya arşivler */
+function archiveSession(history: Message[]): void {
+  try {
+    if (history.length === 0) return;
+    if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
+    const createdAt = activeSessionMeta?.createdAt ?? new Date().toISOString();
+    const timestamp = new Date(createdAt).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const archiveFile = path.join(SESSION_DIR, `${SESSION_PREFIX}${timestamp}.json`);
+    const data: SessionData = {
+      createdAt,
+      lastActiveAt: new Date().toISOString(),
+      messageCount: history.length,
+      history,
+    };
+    fs.writeFileSync(archiveFile, JSON.stringify(data, null, 2), 'utf-8');
+  } catch { /* sessizce geç */ }
+}
+
+function deleteActiveSession(): void {
+  try { const f = currentSessionFile(); if (fs.existsSync(f)) fs.rmSync(f); } catch { /* no-op */ }
 }
 
 // ── Başlatma banneri ──────────────────────────────────────────────────────
@@ -58,14 +103,9 @@ function printBanner() {
 
   const art = [
     '',
-    g('        ╔═════════════════════════╗'),
-    g('        ║   ') + c('G . U . A . R . D') + g('    ║'),
-    g('        ╚═══════════╦═════════════╝'),
-    g('                    /█\\'),
-    g('                   /███\\'),
-    g('                  /█████\\'),
-    g('                 /███████\\'),
-    g('                ───────────'),
+    g('        ╔════════════════════════╗'),
+    g('        ║   ') + c('G . U . A . R . D') + g('   ║'),
+    g('        ╚════════════════════════╝'),
     '',
   ]
 
@@ -77,6 +117,7 @@ function printBanner() {
     g('  Komutlar: ') +
     chalk.cyan('/reset') + g(' · ') +
     chalk.cyan('/history') + g(' · ') +
+    chalk.cyan('/resume') + g(' · ') +
     chalk.cyan('exit')
   )
   console.log(g('  ─────────────────────────────────────────────────────────'))
@@ -89,7 +130,8 @@ printBanner()
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
 let history: Message[] = [];
-let existingSession = loadSession();
+let activeSessionMeta: { createdAt: string } | null = null;
+let existingSession = loadActiveSession();
 
 async function askResume(): Promise<boolean> {
   if (!existingSession) return false;
@@ -114,15 +156,88 @@ async function askResume(): Promise<boolean> {
   });
 }
 
+// ── /resume komutu ───────────────────────────────────────────────────────────
+function handleResume(): void {
+  const sessions = listSessions();
+
+  // Mevcut aktif oturumu da listeye ekle
+  const active = loadActiveSession();
+  const allSessions: { filename: string; data: SessionData; isActive: boolean }[] = [];
+  if (active && active.messageCount > 0) {
+    allSessions.push({ filename: '(aktif)', data: active, isActive: true });
+  }
+  for (const s of sessions) {
+    allSessions.push({ ...s, isActive: false });
+  }
+
+  if (allSessions.length === 0) {
+    console.log(chalk.yellow('\n  📭 Kayıtlı oturum bulunamadı.\n'));
+    prompt();
+    return;
+  }
+
+  console.log(chalk.cyan('\n  📂 Kayıtlı oturumlar:\n'));
+
+  for (let i = 0; i < allSessions.length; i++) {
+    const s = allSessions[i];
+    const date = new Date(s.data.lastActiveAt).toLocaleString('tr-TR');
+    const userMsgs = s.data.history.filter(m => m.role === 'user').length;
+    const last = s.data.history.slice(-2).find(m => m.role === 'user');
+    const tag = s.isActive ? chalk.green(' [aktif]') : '';
+    const num = chalk.bold.white(`${i + 1}.`);
+
+    process.stdout.write(`  ${num} ${chalk.dim(date)} · ${userMsgs} soru${tag}\n`);
+
+    if (last && typeof last.content === 'string') {
+      const preview = last.content.slice(0, 60);
+      const ellipsis = last.content.length > 60 ? '…' : '';
+      console.log(chalk.dim(`     "${preview}${ellipsis}"`));
+    }
+  }
+
+  console.log();
+  rl.question(chalk.bold.yellow('  Devam etmek istediğiniz oturum numarası (iptal: 0): '), (ans) => {
+    const idx = parseInt(ans.trim(), 10);
+    if (isNaN(idx) || idx < 1 || idx > allSessions.length) {
+      console.log(chalk.dim('\n  İptal edildi.\n'));
+      prompt();
+      return;
+    }
+
+    const chosen = allSessions[idx - 1];
+
+    // Mevcut oturumu arşivle (eğer farklı bir oturuma geçiliyorsa)
+    if (!chosen.isActive && history.length > 0) {
+      archiveSession(history);
+      console.log(chalk.dim('  💾 Mevcut oturum arşivlendi.'));
+    }
+
+    // Seçilen oturumu yükle
+    history = chosen.data.history;
+    activeSessionMeta = { createdAt: chosen.data.createdAt };
+
+    // Arşivden yüklenen oturumu aktif yap
+    if (!chosen.isActive) {
+      saveSession(history);
+      console.log(chalk.green(`\n  ✔ Oturum yüklendi — ${chosen.data.history.filter(m => m.role === 'user').length} soru, ${new Date(chosen.data.lastActiveAt).toLocaleString('tr-TR')} tarihinden.\n`));
+    } else {
+      console.log(chalk.green(`\n  ✔ Aktif oturum zaten yüklü.\n`));
+    }
+
+    prompt();
+  });
+}
+
 (async () => {
   const resume = await askResume();
   if (resume && existingSession) {
     history = existingSession.history;
+    activeSessionMeta = { createdAt: existingSession.createdAt };
     const resumeCount = history.filter(m => m.role === 'user').length;
     console.log(chalk.green(`  ✔ Oturum devam ediyor — ${resumeCount} önceki soru yüklendi.\n`));
   } else {
-    deleteSession();
-    existingSession = null;
+    deleteActiveSession();
+    activeSessionMeta = null;
     console.log(chalk.dim('  Yeni oturum başlatıldı.\n'));
   }
 
@@ -142,17 +257,19 @@ function prompt() {
 
     // Özel komutlar
     if (input.toLowerCase() === 'exit') {
-      saveSession(history);
-      console.log(chalk.dim('\n  💾 Oturum kaydedildi. Görüşürüz!'));
+      archiveSession(history);
+      deleteActiveSession();
+      console.log(chalk.dim('\n  💾 Oturum arşivlendi. Görüşürüz!'));
       await closeNeo4j();
       rl.close();
       process.exit(0);
     }
 
     if (input.toLowerCase() === '/reset') {
-      deleteSession();
+      archiveSession(history);
+      deleteActiveSession();
       history = [];
-      existingSession = null;
+      activeSessionMeta = null;
       console.log(chalk.yellow('  🔄 Oturum sıfırlandı. Yeni konuşma başlıyor.\n'));
       prompt();
       return;
@@ -163,6 +280,11 @@ function prompt() {
       const agentMsgs = history.filter(m => m.role === 'assistant').length;
       console.log(chalk.cyan(`\n  📋 ${userMsgs} soru · ${agentMsgs} yanıt · ${history.length} mesaj\n`));
       prompt();
+      return;
+    }
+
+    if (input.toLowerCase() === '/resume') {
+      handleResume();
       return;
     }
 
