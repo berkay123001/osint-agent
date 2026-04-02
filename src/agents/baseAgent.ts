@@ -336,14 +336,20 @@ export async function runAgentLoop(
         ? message.refusal
         : '';
 
-      // Model sadece <think/> döndürüp boş bıraktıysa, bir kez daha dene
-      if (cleanContent.length === 0 && toolCallCount > 0 && emptyRetries < 1) {
+      // Model sadece <think/> döndürüp boş bıraktıysa, birkaç kez daha dene
+      // Her retry'da token bütçesini küçült (thinking tokenleri yanıtı bitiriyor)
+      if (cleanContent.length === 0 && toolCallCount > 0 && emptyRetries < 3) {
         emptyRetries++;
-        logger.warn('AGENT', `[${config.name}] Model boş yanıt döndürdü, tekrar deneniyor...`);
+        // 1. retry: 8K token (thinking'i kısıtla)
+        // 2. retry: 4K token (sadece yanıt üret)
+        const retryMaxTokens = emptyRetries === 1 ? 8192 : 4096;
+        logger.warn('AGENT', `[${config.name}] Model boş yanıt döndürdü, tekrar deneniyor... (${emptyRetries}/3, max_tokens=${retryMaxTokens})`);
         history.push({
           role: 'user',
-          content: 'Lütfen topladığın tüm verileri analiz edip kullanıcıya detaylı bir Markdown raporu olarak sun. Boş yanıt dönme.'
+          content: 'Lütfen topladığın tüm verileri analiz edip kullanıcıya detaylı bir Markdown raporu olarak sun. Kısa ve öz olabilirsin. Boş yanıt dönme.'
         });
+        // Token bütçesini geçici olarak düşür — bu iterasyon için config'i override et
+        config = { ...config, maxTokens: retryMaxTokens };
         continue;
       }
 
