@@ -24,29 +24,29 @@ Kişi, kullanıcı adı, e-posta ve medya içeriklerini araştırmak; sosyal med
 
 | Alan | Kapasite |
 |------|----------|
-| Kimlik Arastirmasi | 400+ platformda kullanici adi taramasi (Sherlock), e-posta kayit kontrolu (Holehe), GitHub derin analiz, veri sizintisi kontrolu |
-| Medya Dogrulama | Ters gorsel arama, EXIF/metadata analizi, perceptual hash karsilastirmasi, Wayback Machine arsivi |
-| Akademik Arastirma | arXiv, Semantic Scholar, ORCID entegrasyonu; intihal ve ozgunluk tespiti |
-| Graf Analizi | Neo4j tabanli baglanti haritasi, D3.js canli gorsellestirme |
-| Iddia Dogrulama | Cok kaynakli bagimsiz dogrulama, Reddit topluluk analizi, kaynak guvenilirlik etiketleri |
-| Obsidian Sync | Raporlar otomatik Obsidian vault'a kopyalanir + guncel not sistemi |
+| Kimlik Araştırması | 400+ platformda kullanıcı adı taraması (Sherlock), e-posta kayıt kontrolü (Holehe), GitHub derin analiz, veri sızıntısı kontrolü |
+| Medya Doğrulama | Tersine görsel arama, EXIF/metadata analizi, perceptual hash karşılaştırması, Wayback Machine arşivi |
+| Akademik Araştırma | arXiv, Semantic Scholar, ORCID entegrasyonu; intihal ve özgünlük tespiti |
+| Graf Analizi | Neo4j tabanlı bağlantı haritası, D3.js canlı görselleştirme |
+| İddia Doğrulama | Çok kaynaklı bağımsız doğrulama, Reddit topluluk analizi, kaynak güvenilirlik etiketleri |
+| Obsidian Sync | Raporlar otomatik Obsidian vault'a kopyalanır + günlük not sistemi |
 
 ---
 
 ## Mimari
 
 ```
-Kullanici → Supervisor (Qwen3.6-Plus)
+Kullanıcı → Supervisor (Qwen3.6-Plus)
                 │
        ┌────────┼────────┐
        ▼        ▼        ▼
   Identity   Media   Academic
    Agent     Agent    Agent
-  (Flash)   (Flash)  (Plus)
+  (Plus)    (Plus)   (Plus)
        │        │        │
        └────────┼────────┘
                 ▼
-        Tool Registry (35+ arac)
+        Tool Registry (35+ araç)
                 │
        ┌────────┼────────┐
        ▼        ▼        ▼
@@ -58,164 +58,204 @@ Kullanici → Supervisor (Qwen3.6-Plus)
 
 | Ajan | Model | Sorumluluk |
 |------|-------|------------|
-| **Supervisor** | Qwen3.6-Plus | Koordinasyon, sentez, graf sorgulari, rapor |
-| **Identity Agent** | Qwen3.5-Flash | Kullanici adi, e-posta, GitHub, veri sizintisi |
-| **Media Agent** | Qwen3.5-Flash | Gorsel dogrulama, fact-check, EXIF analizi |
-| **Academic Agent** | Qwen3.5-Plus | Makale taramasi, arastirmaci profili, intihal |
+| **Supervisor** | Qwen3.6-Plus | Koordinasyon, sentez, graf sorguları, rapor |
+| **Identity Agent** | Qwen3.6-Plus | Kullanıcı adı, e-posta, GitHub, veri sızıntısı |
+| **Media Agent** | Qwen3.6-Plus | Görsel doğrulama, fact-check, EXIF analizi |
+| **Academic Agent** | Qwen3.6-Plus | Makale taraması, araştırmacı profili, intihal |
 
 ---
 
 ## Kurulum
 
-### Hizli Kurulum (npm)
+### Seçenek 1: Hızlı Kurulum (npm)
 
 ```bash
 # Global kurulum
 npm install -g osint-agent
 
-# Ilk calistirmada kurulum sihirbazi
+# Kurulum sihirbazı (Docker, Neo4j, Python, .env)
 osint --setup
 ```
 
-### Manuel Kurulum
-
-#### 1. Repoyu klonla
+### Seçenek 2: Geliştirici Kurulumu (kaynak koddan)
 
 ```bash
 git clone https://github.com/kullanici/osint-agent.git
 cd osint-agent
 npm install
+npm run build
+
+# Kurulum sihirbazı
+node dist/cli.js --setup
+
+# veya doğrudan tsx ile
+npx tsx src/cli.ts --setup
 ```
 
-#### 2. Docker servisleri (SearXNG + Firecrawl)
+### Kurulum Sihirbazi Ne Yapar?
+
+`osint --setup` 5 adımlı interaktif sihirbaz çalıştırır:
+
+| Adım | Kontrol | Otomatik Eylem |
+|------|---------|----------------|
+| 1. Docker | Versiyon kontrolü | — |
+| 2. SearXNG + Firecrawl | URL erişim testi | Çalışmıyorsa `docker compose up -d` |
+| 3. Neo4j | Bağlantı testi | Başarısızsa Docker ile kurulum + şifre belirleme |
+| 4. Python | Versiyon + paket kontrolü | Eksikse `pip install sherlock-project holehe scrapling` |
+| 5. .env | Dosya varlık kontrolü | `.env.example`'den kopyalar veya interaktif oluşturur |
+
+### Kaldırma
 
 ```bash
-docker compose up -d
+osint --uninstall
 ```
 
-| Servis | Port | Aciklama |
-|--------|------|----------|
-| **SearXNG** | `localhost:8888` | Self-hosted metasearch, 100+ arama motoru, API key gerektirmez |
-| **Firecrawl** | `localhost:3002` | Self-hosted web scraper, aylik limit yok |
+Kaldırma sihirbazı:
+- Docker container'ları durdurur ve kaldırır (osint-searxng, osint-neo4j)
+- `docker compose down` ile tüm servisleri kapatır
+- `.osint-sessions/` oturum dosyalarını siler
+- `.env` dosyasını onaylı siler (API key koruması)
+- Kalan adımları gösterir: `npm uninstall -g osint-agent`
 
-SearXNG calismiyorsa sistem otomatik olarak Brave → Google CSE → Tavily zincirine duser.
+### Gereksinimler
 
-#### 3. Python ortami (Sherlock + Holehe + Scrapling)
+| Bileşen | Zorunlu mu? | Notlar |
+|---------|-------------|--------|
+| Node.js >= 18 | ✅ Evet | `npm install -g` için |
+| OpenRouter API key | ✅ Evet | LLM erişimi |
+| Docker | Opsiyonel | SearXNG + Firecrawl + Neo4j (önerilir) |
+| Python >= 3.10 | Opsiyonel | Sherlock, Holehe, Scrapling |
+| Neo4j >= 5.x | Opsiyonel | Graf analizi (Docker ile otomatik) |
 
-```bash
-conda create -n scrapling python=3.11
-conda activate scrapling
-pip install sherlock-project holehe scrapling playwright
-playwright install chromium
-```
-
-#### 4. Neo4j (Docker)
-
-```bash
-docker run -d \
-  --name osint-neo4j \
-  -p 7474:7474 -p 7687:7687 \
-  -e NEO4J_AUTH=neo4j/sifre123 \
-  neo4j:5
-```
-
-#### 5. Ortam degiskenleri
+### Ortam Değişkenleri
 
 ```bash
 cp .env.example .env
-# .env dosyasini API anahtarlarinizla doldurun
+```
+
+```env
+# Zorunlu
+OPENROUTER_API_KEY=sk-or-v1-...
+
+# Docker servisleri (docker compose up -d)
+SEARXNG_URL=http://localhost:8888
+FIRECRAWL_URL=http://localhost:3002/v1/scrape
+
+# Arama motorları (en az birini doldur)
+BRAVE_SEARCH_API_KEY=BSA...
+GOOGLE_SEARCH_API_KEY=AIza...
+GOOGLE_SEARCH_CX=abc123...
+TAVILY_API_KEY=tvly-...
+
+# Neo4j
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=sifre123
+
+# Python (Sherlock + Holehe + Scrapling)
+PYTHON_PATH=/path/to/python
+
+# İsteğe bağlı
+GITHUB_TOKEN=ghp_...
+HIBP_API_KEY=...
+SERP_API_KEY=...
+SEMANTIC_SCHOLAR_API_KEY=...
+GRAPH_PORT=3333
+FIRECRAWL_API_KEY=...
 ```
 
 ---
 
-## Kullanim
+## Kullanım
 
 ### Interaktif REPL
 
 ```bash
-# npm global
-osint
-
-# veya gelistirici modu
-npm run chat
+osint                  # npm global
+npm run chat           # geliştirici modu
 ```
 
 ```
-  ██████╗ ███████╗██╗███╗   ██╗████████╗
-  ██╔═══██╗██╔════╝██║████╗  ██║╚══██╔══╝
-  ...
-  D I J I T A L   M U F E T T I S
+        ╔════════════════════════╗
+        ║   G . U . A . R . D   ║
+        ╚════════════════════════╝
 
-  Supervisor : qwen/qwen3.6-plus-preview:free
-  Alt ajan   : qwen/qwen3.5-flash
+  Supervisor : qwen/qwen3.6-plus:free
+  Alt ajan   : qwen/qwen3.6-plus:free
 
-  ❯ torvalds GitHub hesabini arastir
+  Komutlar: /reset · /history · /resume · exit
+
+  ❯ torvalds GitHub hesabını araştır
 ```
 
-REPL komutlari: `!reset` (oturum sifirla), `!history` (gecmis), `exit` (cikis + kaydet)
+**REPL Komutları:**
+
+| Komut | Açıklama |
+|-------|----------|
+| `/reset` | Oturumu sıfırla, mevcut oturumu arşivle |
+| `/history` | Oturum istatistikleri (soru/yanıt sayısı) |
+| `/resume` | Kayıtlı oturumları listele, seçip devam et |
+| `exit` | Oturumu arşivleyip çık |
+
+**Oturum Sistemi:**
+- Her konuşma otomatik `.osint-sessions/` dizinine kaydedilir
+- `exit` ve `/reset` mevcut oturumu tarih damgalı dosyaya arşivler
+- `/resume` ile geçmiş oturumlardan birini seçip kaldığınız yerden devam edebilirsiniz
 
 ### Tek Soru Modu
 
 ```bash
-osint "torvalds GitHub hesabini arastir"
+osint "torvalds GitHub hesabını araştır"
 ```
 
-### Graf Gorsellestirme
+### Graf Görselleştirme
 
 ```bash
 osint --graph     # veya ./start.sh
 # → http://localhost:3333
 ```
 
-Node renkleri: Kirmizi (Person), Mavi (Username/Platform), Yesil (Fact), Turuncu (Claim), Sari (Source)
-
-### CLI Araci
-
-```bash
-npx tsx src/tools/agentCli.ts "soru"     # Tek soru
-npx tsx src/tools/agentCli.ts --history   # Gecmis
-npx tsx src/tools/agentCli.ts --reset     # Sifirla
-```
+Node renkleri: Kırmızı (Person), Mavi (Username/Platform), Yeşil (Fact), Turuncu (Claim), Sarı (Source)
 
 ---
 
 ## Arama Zinciri
 
-Dort katmanli kademeli fallback:
+Dört katmanlı kademeli fallback:
 
 ```
 SearXNG (self-hosted) → Brave Search → Google CSE → Tavily
-  (100+ motor, limitsiz)   (2000/ay)    (100/gun)    (son care)
+  (100+ motor, limitsiz)   (2000/ay)    (100/gün)    (son çare)
 ```
 
-- Sosyal medya `site:` sorgulari Brave'i atlayip direkt Google CSE'ye gider
-- `search_web_multi`: 3 paralel sorgu, URL bazli tekillestirme, max 30 sonuc
+- Sosyal medya `site:` sorguları Brave'i atlayıp direkt Google CSE'ye gider
+- `search_web_multi`: 3 paralel sorgu, URL bazlı tekilleştirme, max 30 sonuç
 
 ---
 
-## Kaynak Guvenilirlik Sistemi
+## Kaynak Güvenilirlik Sistemi
 
 Her arama sonucuna otomatik etiket eklenir:
 
-| Etiket | Anlami |
+| Etiket | Anlamı |
 |--------|--------|
-| `Resmi kurum sitesi (.gov/.edu)` | Devlet/universite kaynagi |
-| `Referans kaynagi` | Wikipedia, archive.org |
-| `Teknoloji basini` | TechCrunch, Wired, Ars Technica |
-| `Topluluk tartismasi` | Reddit (oy sayisiyla), HN, StackOverflow |
-| `Urunun kendi sayfasi` | Vendor iddia + cikar catismasi uyarisi |
-| `Genel blog platformu` | Medium, dev.to — yazar uzmanligi dogrulanmamis |
+| `Resmi kurum sitesi (.gov/.edu)` | Devlet/üniversite kaynağı |
+| `Referans kaynağı` | Wikipedia, archive.org |
+| `Teknoloji basını` | TechCrunch, Wired, Ars Technica |
+| `Topluluk tartışması` | Reddit (oy sayısıyla), HN, StackOverflow |
+| `Ürünün kendi sayfası` | Vendor iddia + çıkar çatışması uyarısı |
+| `Genel blog platformu` | Medium, dev.to — yazar uzmanlığı doğrulanmamış |
 
-### Iddia Dogrulama (`verify_claim`)
+### İddia Doğrulama (`verify_claim`)
 
-Cok kaynakli kanit birlestirme:
+Çok kaynaklı kanıt birleştirme:
 
-1. Birincil kaynagi scrape et
-2. Reddit/HN gibi topluluk kaynaklarda arastir
-3. Reddit JSON API ile tartisma detaylarini cek (post skoru, yorum skorlari, fikir akimlari)
-4. Login wall tespiti — giris duvari olan sayfalar isaretlenir
+1. Birincil kaynağı scrape et
+2. Reddit/HN gibi topluluk kaynaklarda araştır
+3. Reddit JSON API ile tartışma detaylarını çek (post skoru, yorum skorları, fikir akımları)
+4. Login wall tespiti — giriş duvarı olan sayfalar işaretlenir
 
-**Onemli:** Bir sitede iddianin yazilmamasi = iddianin yanlis oldugu anlamina gelmez. Sonuc `inconclusive` olarak doner.
+**Önemli:** Bir sitede iddianın yazılmaması = iddianın yanlış olduğu anlamına gelmez. Sonuç `inconclusive` olarak döner.
 
 ---
 
@@ -225,208 +265,210 @@ Raporlar otomatik olarak Obsidian vault'una sync edilir:
 
 ```
 Agent_Knowladges/OSINT/OSINT-Agent/
-├── 04 - Arastirma Raporlari/    ← generate_report ile otomatik
-├── 06 - Gunluk/                 ← obsidian_daily
+├── 04 - Araştırma Raporları/    ← generate_report ile otomatik
+├── 06 - Günlük/                 ← obsidian_daily
 ├── 07 - Notlar/                 ← Serbest notlar
-└── 08 - Profiller/              ← Kisi profilleri ([[username]] wikilink)
+└── 08 - Profiller/              ← Kişi profilleri ([[username]] wikilink)
 ```
 
-Araclar: `obsidian_write`, `obsidian_read`, `obsidian_search`, `obsidian_daily`, `obsidian_write_profile`
+Araçlar: `obsidian_write`, `obsidian_read`, `obsidian_search`, `obsidian_daily`, `obsidian_write_profile`
 
 ---
 
-## Arac Referansi
+## Araç Referansı
 
 <details>
-<summary><strong>Kimlik Araclari</strong></summary>
+<summary><strong>Kimlik Araçları</strong></summary>
 
-| Arac | Aciklama |
+| Araç | Açıklama |
 |------|----------|
-| `run_sherlock` | 400+ platformda kullanici adi taramasi |
+| `run_sherlock` | 400+ platformda kullanıcı adı taraması |
 | `run_github_osint` | GitHub profil, GPG key, following analizi (deep mode) |
-| `check_email_registrations` | Holehe ile e-posta platform kayitlari |
-| `check_breaches` | HIBP ile veri sizintisi kontrolu |
-| `cross_reference` | E-posta/username pivot baglantisi |
-| `verify_profiles` | Bulunan profilleri canli dogrulama |
-| `search_person` | Isim + kurum ile kisi arama |
-| `parse_gpg_key` | GitHub GPG keyinden gizli e-posta cikarma |
+| `check_email_registrations` | Holehe ile e-posta platform kayıtları |
+| `check_breaches` | HIBP ile veri sızıntısı kontrolü |
+| `cross_reference` | E-posta/username pivot bağlantısı |
+| `verify_profiles` | Bulunan profilleri canlı doğrulama |
+| `search_person` | İsim + kurum ile kişi arama |
+| `parse_gpg_key` | GitHub GPG keyinden gizli e-posta çıkarma |
 
 </details>
 
 <details>
-<summary><strong>Medya Araclari</strong></summary>
+<summary><strong>Medya Araçları</strong></summary>
 
-| Arac | Aciklama |
+| Araç | Açıklama |
 |------|----------|
-| `reverse_image_search` | Google Lens / SerpApi ters gorsel arama |
-| `compare_images_phash` | Perceptual hash ile gorsel benzerlik |
-| `extract_metadata` | URL/dosya EXIF ve metadata cikarimi |
-| `wayback_search` | Wayback Machine arsiv aramasi |
+| `reverse_image_search` | Google Lens / SerpApi tersine görsel arama |
+| `compare_images_phash` | Perceptual hash ile görsel benzerlik |
+| `extract_metadata` | URL/dosya EXIF ve metadata çıkarımı |
+| `wayback_search` | Wayback Machine arşiv araması |
 | `nitter_profile` | Twitter/X profil bilgileri (Scrapling stealth) |
-| `fact_check_to_graph` | Iddia dogrulama sonucunu graf'a kaydet |
+| `fact_check_to_graph` | İddia doğrulama sonucunu graf'a kaydet |
 
 </details>
 
 <details>
-<summary><strong>Akademik Araclari</strong></summary>
+<summary><strong>Akademik Araçları</strong></summary>
 
-| Arac | Aciklama |
+| Araç | Açıklama |
 |------|----------|
-| `search_academic_papers` | arXiv + Semantic Scholar makale taramasi |
-| `search_researcher_papers` | Arastirmaci profili + yayin listesi |
-| `check_plagiarism` | CrossRef/web uzerinden intihal tespiti |
+| `search_academic_papers` | arXiv + Semantic Scholar makale taraması |
+| `search_researcher_papers` | Araştırmacı profili + yayın listesi |
+| `check_plagiarism` | CrossRef/web üzerinden intihal tespiti |
 
 </details>
 
 <details>
-<summary><strong>Arama & Dogrulama</strong></summary>
+<summary><strong>Arama & Doğrulama</strong></summary>
 
-| Arac | Aciklama |
+| Araç | Açıklama |
 |------|----------|
 | `search_web` | SearXNG → Brave → Google CSE → Tavily zinciri |
-| `search_web_multi` | 3 paralel sorgu, URL dedup, max 30 sonuc |
-| `verify_claim` | Cok kaynakli iddia dogrulama + Reddit topluluk analizi |
+| `search_web_multi` | 3 paralel sorgu, URL dedup, max 30 sonuç |
+| `verify_claim` | Çok kaynaklı iddia doğrulama + Reddit topluluk analizi |
 | `scrape_profile` | Firecrawl → Puppeteer stealth → Scrapling zinciri |
-| `web_fetch` | Sayfa icerigi cekme (akademik URL'ler 50K char limit) |
+| `web_fetch` | Sayfa içeriği çekme (akademik URL'ler 50K char limit) |
 
 </details>
 
 <details>
-<summary><strong>Graf & Veritabani</strong></summary>
+<summary><strong>Graf & Veritabanı</strong></summary>
 
-| Arac | Aciklama |
+| Araç | Açıklama |
 |------|----------|
-| `query_graph` | Neo4j baglanti sorgusu |
+| `query_graph` | Neo4j bağlantı sorgusu |
 | `list_graph_nodes` | Node listesi (label filtresiyle) |
-| `graph_stats` | Toplam node/iliski istatistigi |
-| `save_finding` | Dogrulanmis bulguyu graf'a yaz |
-| `save_ioc` | Siber tehdit gostergesi kaydet |
-| `link_entities` | Iki node arasinda iliski kur |
-| `mark_false_positive` | ML etiketi ile isaretle (GNN egitimi icin) |
-| `remove_false_positive` | Noise node kalici sil |
-| `add_custom_node` | Ozel node ekle (CryptoWallet, Malware vb.) |
-| `add_custom_relationship` | Ozel iliski ekle (OWNS, DISTRIBUTES vb.) |
+| `graph_stats` | Toplam node/ilişki istatistiği |
+| `save_finding` | Doğrulanmış bulguyu graf'a yaz |
+| `save_ioc` | Siber tehdit göstergesi kaydet |
+| `link_entities` | İki node arasında ilişki kur |
+| `mark_false_positive` | ML etiketi ile işaretle (GNN eğitimi için) |
+| `remove_false_positive` | Noise node kalıcı sil |
+| `add_custom_node` | Özel node ekle (CryptoWallet, Malware vb.) |
+| `add_custom_relationship` | Özel ilişki ekle (OWNS, DISTRIBUTES vb.) |
 
 </details>
 
 <details>
 <summary><strong>Rapor & Obsidian</strong></summary>
 
-| Arac | Aciklama |
+| Araç | Açıklama |
 |------|----------|
-| `generate_report` | Markdown rapor olustur + Obsidian sync |
+| `generate_report` | Markdown rapor oluştur + Obsidian sync |
 | `obsidian_write` | Vault'a not yaz |
-| `obsidian_append` | Mevcut notu genislet |
+| `obsidian_append` | Mevcut notu genişlet |
 | `obsidian_read` | Not oku |
-| `obsidian_daily` | Gunluk defteri guncelle |
-| `obsidian_write_profile` | Kisi profili olustur ([[wikilink]]) |
-| `obsidian_list` | Dizin icerigini listele |
+| `obsidian_daily` | Günlük defter güncelle |
+| `obsidian_write_profile` | Kişi profili oluştur ([[wikilink]]) |
+| `obsidian_list` | Dizin içeriğini listele |
 | `obsidian_search` | Tam metin arama |
 
 </details>
 
 ---
 
-## Yapilandirma (.env)
+## CLI Referansı
 
-```env
-# Zorunlu
-OPENROUTER_API_KEY=sk-or-v1-...
-
-# Arama (en az birini doldur)
-BRAVE_SEARCH_API_KEY=BSA...           # 2000 istek/ay ucretsiz
-GOOGLE_SEARCH_API_KEY=AIza...         # 100 sorgu/gun
-GOOGLE_SEARCH_CX=abc123...
-TAVILY_API_KEY=tvly-...               # Son care
-
-# Neo4j
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=sifre123
-
-# Python
-PYTHON_PATH=/path/to/anaconda3/envs/scrapling/bin/python
-
-# Istege bagli
-GITHUB_TOKEN=ghp_...                  # GitHub API kota artirimi
-HIBP_API_KEY=...                      # Veri sizintisi kontrolu
-SERP_API_KEY=...                      # Ters gorsel arama
-SEMANTIC_SCHOLAR_API_KEY=...          # Akademik arastirma
-GRAPH_PORT=3333                       # Graf UI portu
-FIRECRAWL_URL=http://localhost:3002/v1/scrape
-SEARXNG_URL=http://localhost:8888
-FIRECRAWL_API_KEY=...                 # Cloud fallback (500 req/ay)
+```bash
+osint                       # İnteraktif REPL
+osint "soru"                # Tek soru modu
+osint --setup               # Kurulum sihirbazı
+osint --uninstall           # Kaldırma sihirbazı
+osint --graph               # Graf görselleştirme (port 3333)
+osint --version             # Versiyon
+osint --help                # Yardım
 ```
 
 ---
 
-## Guvenlik
+## Güvenlik
 
 | Koruma | Detay |
 |--------|-------|
-| SSRF korumasi | localhost, 192.168.x, 10.x, 172.16-31.x engelli |
-| Neo4j inject | Tum Cypher sorgulari parametrize |
+| SSRF koruması | localhost, 192.168.x, 10.x, 172.16-31.x engelli |
+| Neo4j inject | Tüm Cypher sorguları parametrize |
 | Graf silme | `NEO4J_ALLOW_CLEAR=1` + `isSafeClearTarget()` (localhost only) |
-| Holehe inject | E-posta regex dogrulama, subprocess'e ham input gitmez |
-| API key koruma | .env gitignore'da, loglarda maskelenmis |
-| Login wall tespiti | Giris/kayit duvari olan sayfalar isaretlenir |
+| Holehe inject | E-posta regex doğrulama, subprocess'e ham input gitmez |
+| API key koruma | .env gitignore'da, loglarda maskelenmiş |
+| Login wall tespiti | Giriş/kayıt duvarı olan sayfalar işaretlenir |
 
 ---
 
 ## Testler
 
 ```bash
-npm test                              # Unit testler (33 test)
-npm run test:tools                    # Arac testleri
+npm test                              # Unit testler (64 test)
+npm run test:tools                    # Araç testleri
 npm run test:graph:local              # Neo4j entegrasyon (Docker gerekli)
 ```
 
 ---
 
-## Proje Yapisi
+## Proje Yapısı
 
 ```
 src/
 ├── agents/
-│   ├── supervisorAgent.ts            # Koordinator ajan
-│   ├── identityAgent.ts              # Kimlik arastirmasi
-│   ├── mediaAgent.ts                 # Gorsel dogrulama
-│   ├── academicAgent.ts              # Akademik arastirma
-│   ├── baseAgent.ts                  # Ortak ajan dongusu
+│   ├── supervisorAgent.ts            # Koordinatör ajan
+│   ├── identityAgent.ts              # Kimlik araştırması
+│   ├── mediaAgent.ts                 # Görsel doğrulama
+│   ├── academicAgent.ts              # Akademik araştırma
+│   ├── baseAgent.ts                  # Ortak ajan döngüsü
 │   └── types.ts                      # AgentConfig, Message, AgentResult
 ├── lib/
-│   ├── toolRegistry.ts               # 35+ arac merkezi dispatcher
-│   ├── neo4j.ts                      # Graf veritabani islemleri
-│   ├── chatHistory.ts                # Oturum yonetimi
+│   ├── toolRegistry.ts               # 35+ araç merkezi dispatcher
+│   ├── neo4j.ts                      # Graf veritabanı işlemleri
+│   ├── chatHistory.ts                # Oturum yönetimi
 │   ├── sourceCredibility.ts          # Kaynak etiketleme + Reddit analizi
-│   ├── pivotAnalyzer.ts              # Pivot onerileri
-│   ├── osintHeuristics.ts            # Username/email dogrulama
+│   ├── pivotAnalyzer.ts              # Pivot önerileri
+│   ├── osintHeuristics.ts            # Username/email doğrulama
 │   └── logger.ts                     # Renkli log sistemi
-├── tools/                            # 35+ arac implementasyonu
+├── tools/
 │   ├── searchTool.ts                 # SearXNG → Brave → Google → Tavily
 │   ├── scrapeTool.ts                 # Scrapling → Puppeteer → Firecrawl
-│   ├── verifyClaimTool.ts            # Cok kaynakli iddia dogrulama
+│   ├── verifyClaimTool.ts            # Çok kaynaklı iddia doğrulama
+│   ├── setupCommand.ts               # Kurulum + kaldırma sihirbazı
 │   ├── githubTool.ts, sherlockTool.ts, holeheTool.ts, ...
 │   └── obsidianTool.ts               # Obsidian vault entegrasyonu
-├── cli.ts                            # Global CLI giris noktasi (osint komutu)
-├── chat.ts                           # Interaktif REPL
+├── cli.ts                            # Global CLI giriş noktası (osint komutu)
+├── chat.ts                           # İnteraktif REPL (oturum sistemi)
 └── graphServer.ts                    # Graf UI sunucusu
 ```
 
 ---
 
-## Gereksinimler
+## npm Yayınlama
 
-| Bilesen | Surum | Notlar |
-|---------|-------|--------|
-| Node.js | >= 18 | npm install -g icin |
-| Python | >= 3.10 | Sherlock, Holehe, Scrapling |
-| Neo4j | >= 5.x | Docker onerilir |
-| Docker | herhangi | SearXNG + Firecrawl + Neo4j |
-| OpenRouter API key | - | LLM erisimi (zorunlu) |
+Paketi npm registry'ye yayınlamak için:
+
+```bash
+# 1. Gerekli dosyaları hazırla
+npm run build
+
+# 2. Paket içeriğini kontrol et
+npm pack --dry-run
+
+# 3. İlk yayınlama
+npm publish --access public
+
+# Güncelleme
+npm version patch    # 1.0.0 → 1.0.1
+npm publish
+```
+
+**Yayınlanan dosyalar** (`files` field in package.json):
+- `dist/` — Derlenmiş JS
+- `src/tools/scrapling_runner.py` — Python scrape runner
+- `src/tools/holehe_runner.py` — Python holehe runner
+- `.env.example` — Örnek çevre değişkenleri
+
+**npm install -g osint-agent** sonrası kullanıcı sadece:
+1. `osint --setup` çalıştırır
+2. `.env`'e API key yazar
+3. `osint` ile başlar
 
 ---
 
 ## Lisans
 
-MIT — Detaylar icin [LICENSE](LICENSE) dosyasina bakin.
+MIT — Detaylar için [LICENSE](LICENSE) dosyasına bakın.
