@@ -16,8 +16,10 @@ import { waybackSearch, formatWaybackResult } from '../tools/waybackTool.js'
 import { webFetch } from '../tools/webFetchTool.js'
 import { checkEmailRegistrations, formatHoleheResult } from '../tools/holeheTool.js'
 import { checkBreaches, formatBreachResult } from '../tools/breachCheckTool.js'
-import { searchWeb, formatSearchResult } from '../tools/searchTool.js'
+import { searchWeb, searchWebMulti, formatSearchResult } from '../tools/searchTool.js'
 import { scrapeProfile, formatScrapeResult } from '../tools/scrapeTool.js'
+import { formatSourceBadge } from './sourceCredibility.js'
+import { verifyClaim, formatVerifyResult } from '../tools/verifyClaimTool.js'
 import { verifySherlockProfiles, formatVerificationResults } from '../tools/profileVerifier.js'
 import { fetchAndHashImage } from '../tools/imageHasher.js'
 import { fetchNitterProfile, formatNitterResult } from '../tools/nitterTool.js'
@@ -334,9 +336,41 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
-      name: 'run_sherlock',
+      name: 'search_web_multi',
       description:
-        'Search a username across 400+ social platforms (Instagram, Twitter, GitHub, Reddit, etc.). Use this when investigating a username/nickname.',
+        'Aynı konuyu farklı açılardan aramak için birden fazla sorguyu PARALEL çalıştırır ve URL bazlı tekilleştirilmiş sonuçlar döndürür. Maksimum 3 sorgu (virgülle ayrılmış). Örnek: "gamma app free plan, gamma presentation no signup, gamma.app pricing 2025"',
+      parameters: {
+        type: 'object',
+        properties: {
+          queries: {
+            type: 'string',
+            description: 'Virgülle ayrılmış arama sorguları (maks. 3). Örn: "ücretsiz AI sunum, AI slides kayıt olmadan, gamma app bedava"',
+          },
+        },
+        required: ['queries'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'verify_claim',
+      description:
+        'Bir iddianın ("ücretsiz", "kayıt gerektirmez", "Turkey based" vb.) birden fazla bağımsız kaynakla doğrulanıp doğrulanamadığını kontrol eder. Vendor sitesi iddiayı açıkça yazmıyorsa bu CEVAPSIZsaklanmaz — community kaynaklarında arar. Güven: high=2+ bağımsız kaynak, medium=1, low=yalnızca vendor, inconclusive=kanıt yok.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'İddianın test edileceği ana URL (ürün/servis sitesi)' },
+          claim: { type: 'string', description: 'Doğrulanacak iddia metni (Örn: "ücretsiz kullanıma sahip, kredi kartı gerektirmez")' },
+        },
+        required: ['url', 'claim'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_sherlock',
       parameters: {
         type: 'object',
         properties: {
@@ -849,8 +883,8 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     const cacheableTools = new Set([
       'run_sherlock', 'run_github_osint', 'cross_reference', 'extract_metadata',
       'parse_gpg_key', 'wayback_search', 'web_fetch', 'check_email_registrations',
-      'check_breaches', 'search_web', 'scrape_profile', 'verify_profiles',
-      'nitter_profile', 'search_person', 'fact_check_to_graph', 'analyze_gpx'
+      'check_breaches', 'search_web', 'search_web_multi', 'scrape_profile', 'verify_profiles',
+      'nitter_profile', 'search_person', 'fact_check_to_graph', 'analyze_gpx', 'verify_claim'
     ]);
 
     const cacheKey = `${name}:${JSON.stringify(args)}`;
@@ -875,8 +909,10 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     else if (name === 'check_email_registrations') result = await runEmailRegistrations(args.email)
     else if (name === 'check_breaches') result = await runBreachCheck(args.email)
     else if (name === 'search_web') result = await runSearchWeb(args.query)
+    else if (name === 'search_web_multi') result = await runSearchWebMulti(args.queries)
     else if (name === 'scrape_profile') result = await runScrapeProfile(args.url)
     else if (name === 'verify_profiles') result = await runVerifyProfiles(args.username)
+    else if (name === 'verify_claim') result = await runVerifyClaim(args.url, args.claim)
     else if (name === 'nitter_profile') result = await runNitterProfile(args.username)
     else if (name === 'unexplored_pivots') result = await runUnexploredPivots(args.username)
     else if (name === 'search_person') result = await runSearchPerson(args.name, args.context)
@@ -1328,11 +1364,61 @@ async function runSearchWeb(query: string): Promise<string> {
     return formatSearchResult(result)
   }
   logger.info('SEARCH', `✅ ${result.results.length} sonuç bulundu`)
-  return formatSearchResult(result)
+
+  // Kaynak etiketlerini sonuçlara ekle
+  const lines: string[] = []
+  const header = formatSearchResult(result)
+  // Header formatSearchResult'dan gelir, sonuçları ayır
+  const headerLines = header.split('\n')
+  for (const line of headerLines) {
+    lines.push(line)
+    // "   URL: https://..." satırından sonra kaynak etiketi ekle
+    if (line.trim().startsWith('URL:')) {
+      const url = line.trim().replace(/^URL:\s*/, '')
+      const resultItem = result.results.find(r => r.url === url)
+      lines.push(`   ${formatSourceBadge(url, resultItem?.snippet)}`)
+    }
+  }
+  return lines.join('\n')
 }
 
-async function runScrapeProfile(url: string): Promise<string> {
-  logger.info('TOOL', `🕷️  Sayfa kazınıyor: ${url}...`)
+async function runSearchWebMulti(queriesRaw: string): Promise<string> {
+  const queries = queriesRaw.split(',').map(q => q.trim()).filter(Boolean).slice(0, 3)
+  logger.info('SEARCH', `🔎 Paralel arama (${queries.length} sorgu): ${queries.join(' | ')}`)
+  const result = await searchWebMulti(queries)
+  logger.info('SEARCH', `✅ ${result.totalUnique} benzersiz sonuç`)
+
+  const lines: string[] = [
+    `🔍 Paralel Web Arama (${queries.length} sorgu): ${queries.join(', ')}`,
+    `Benzersiz sonuç: ${result.totalUnique}`,
+    '',
+    `⚠️ SİSTEM NOTU: Sonuçları doğrudan %100 doğru kabul etmeyin.`,
+    '',
+  ]
+  result.results.forEach((r, i) => {
+    lines.push(`${i + 1}. **${r.title}**`)
+    lines.push(`   URL: ${r.url}`)
+    lines.push(`   ${formatSourceBadge(r.url, r.snippet)}`)
+    lines.push(`   Özet: ${r.snippet}`)
+    lines.push('')
+  })
+  return lines.join('\n')
+}
+
+async function runVerifyClaim(url: string, claim: string): Promise<string> {
+  logger.info('TOOL', `🔍 İddia doğrulama: "${claim}" @ ${url}`)
+  // claim metninden basit anahtar kelimeler çıkar
+  const keywords = claim
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(w => w.length > 3 && !['olan', 'için', 'veya', 'and', 'the', 'with', 'that', 'this'].includes(w))
+    .slice(0, 5)
+  const result = await verifyClaim(claim, url, keywords)
+  logger.info('TOOL', `✅ Doğrulama tamamlandı — güven: ${result.confidence}`)
+  return formatVerifyResult(result)
+}
+
+async function runScrapeProfile(url: string): Promise<string> {  logger.info('TOOL', `🕷️  Sayfa kazınıyor: ${url}...`)
   const result = await scrapeProfile(url)
   if (result.error) {
     logger.error('TOOL', `❌ ${result.error}`)

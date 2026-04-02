@@ -294,3 +294,50 @@ export function formatSearchResult(response: SearchToolResponse): string {
 
   return lines.join('\n');
 }
+
+/**
+ * Birden fazla sorguyu paralel çalıştırır, URL bazlı tekilleştirme yapar.
+ * Maksimum 3 sorgu ile sınırlandırılmıştır — API bütçesini korur.
+ */
+export async function searchWebMulti(
+  queries: string[],
+  limit: number = 10
+): Promise<SearchToolResponse & { totalUnique: number }> {
+  // Hard cap: en fazla 3 sorgu
+  const capped = queries.slice(0, 3).map(q => q.trim()).filter(Boolean)
+
+  if (capped.length === 0) {
+    return { query: '(boş)', results: [], error: 'Sorgu listesi boş', totalUnique: 0 }
+  }
+
+  // Paralel arama
+  const responses = await Promise.all(capped.map(q => searchWeb(q, limit)))
+
+  // URL bazlı tekilleştirme — ilk geçen korunur
+  const seen = new Set<string>()
+  const unique: SearchResult[] = []
+
+  for (const resp of responses) {
+    for (const item of resp.results) {
+      if (!seen.has(item.url)) {
+        seen.add(item.url)
+        unique.push(item)
+      }
+    }
+  }
+
+  // En fazla 30 sonuç döndür
+  const final = unique.slice(0, 30)
+
+  // Hataları birleştir
+  const errors = responses.filter(r => r.error).map(r => r.error!)
+  const combinedQuery = capped.join(' | ')
+
+  return {
+    query: combinedQuery,
+    results: final,
+    provider: responses.find(r => r.provider)?.provider,
+    error: errors.length === capped.length ? errors.join('; ') : undefined,
+    totalUnique: final.length,
+  }
+}

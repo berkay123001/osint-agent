@@ -41,7 +41,8 @@ function truncateSubAgentResponse(response: string, agentLabel: string): string 
  */
 const SUPERVISOR_TOOLS = [
   'query_graph', 'list_graph_nodes', 'graph_stats', 'clear_graph', 
-  'search_web', 'web_fetch', 'scrape_profile', 'remove_false_positive', 'mark_false_positive',
+  'search_web', 'search_web_multi', 'web_fetch', 'scrape_profile', 'verify_claim',
+  'remove_false_positive', 'mark_false_positive',
   'generate_report', 'check_plagiarism',
   'obsidian_write', 'obsidian_append', 'obsidian_read', 'obsidian_daily', 'obsidian_list', 'obsidian_search', 'obsidian_write_profile',
   'save_finding', 'save_ioc', 'link_entities',
@@ -305,6 +306,8 @@ Aynı ad-soyadda birden fazla kişi bulunursa (örn. hem akademisyen hem öğren
 Kendi Kullanabileceğin Temel Araçlar:
 - Graf araçları (query_graph, list_graph_nodes, graph_stats vb.)
 - search_web, web_fetch, scrape_profile
+- search_web_multi: Aynı konuyu farklı açılardan aramak için virgülle ayrılmış max 3 sorgu kullan (örn. "free AI slides, AI presentation no signup, gamma app pricing 2025")
+- verify_claim: "ücretsiz", "kayıt gerektirmez" gibi iddiaları çoklu bağımsız kaynakla doğrula. Vendor sitesi açıkça yazmıyor diye iddia yanlış DEĞİLDİR — community kaynaklarında arar.
 
 Uzmanlardan gelen raporları değerlendir, analiz et ve kullanıcıya harika bir Markdown formatında (emojiler, listeler, tablolar kullanarak) özetleyerek sun.
 

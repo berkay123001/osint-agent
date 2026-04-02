@@ -31,6 +31,7 @@ export interface ScrapeResult {
   usernameHints: string[]
   avatarUrl?: string
   metadataAlerts?: string[]
+  loginWallDetected?: boolean
   error?: string
   usageWarning?: string
 }
@@ -46,6 +47,34 @@ export function isInterestingFile(url: string | undefined): boolean {
   ]
   if (ignoredDomains.some(d => lowerUrl.includes(d))) return false
   return true
+}
+
+/**
+ * Giriş/kayıt duvarı tespiti.
+ * Sayfa içeriğinin kısıtlı olduğunu gösteren belirgin desenleri arar.
+ */
+export function detectLoginWall(markdown: string, title: string): boolean {
+  const combined = `${title} ${markdown}`.toLowerCase()
+  const WALL_PATTERNS = [
+    'sign in to continue', 'sign in to view', 'sign in to access',
+    'create an account', 'register to view', 'register to access',
+    'login required', 'log in to continue', 'log in to view',
+    'sign up to access', 'sign up to continue', 'sign up to view',
+    'üye ol', 'giriş yap', 'kayıt ol',
+    'you need to be logged in', 'please log in', 'please sign in',
+    'members only', 'subscribers only',
+  ]
+  if (WALL_PATTERNS.some(p => combined.includes(p))) return true
+  // Ücret sınır: çok az içerik var VE başlık giriş sayfasına benziyor
+  if (markdown.trim().length < 300) {
+    const titleLower = title.toLowerCase()
+    if (
+      titleLower.includes('login') || titleLower.includes('sign in') ||
+      titleLower.includes('register') || titleLower.includes('sign up') ||
+      titleLower.includes('giriş') || titleLower.includes('üye')
+    ) return true
+  }
+  return false
 }
 
 async function processMetadataForLinks(links: string[]): Promise<string[]> {
@@ -350,7 +379,7 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
   const scraplingResult = await fallbackScraplingFetch(url)
   if (!scraplingResult.error && scraplingResult.markdown.length > 100) {
     console.log(`[Scrape] Scrapling başarılı (${scraplingResult.markdown.length} char): ${url}`)
-    return scraplingResult
+    return { ...scraplingResult, loginWallDetected: detectLoginWall(scraplingResult.markdown, scraplingResult.title) }
   }
   if (scraplingResult.error) {
     console.log(`[Scrape] Scrapling başarısız: ${scraplingResult.error}, Puppeteer deneniyor...`)
@@ -363,7 +392,7 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
   const puppeteerResult = await fallbackPuppeteerScrape(url)
   if (!puppeteerResult.error && puppeteerResult.markdown.length > 100) {
     console.log(`[Scrape] Puppeteer başarılı (${puppeteerResult.markdown.length} char): ${url}`)
-    return puppeteerResult
+    return { ...puppeteerResult, loginWallDetected: detectLoginWall(puppeteerResult.markdown, puppeteerResult.title) }
   }
   if (puppeteerResult.error) {
     console.log(`[Scrape] Puppeteer başarısız: ${puppeteerResult.error}`)
@@ -385,7 +414,12 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
         const usageWarning = cloudResult.status === 429
           ? '⚠️ Firecrawl aylık 500 istek kotası dolmuş.'
           : undefined
-        return { ...parsed, metadataAlerts: await processMetadataForLinks(parsed.links), usageWarning }
+        return {
+          ...parsed,
+          metadataAlerts: await processMetadataForLinks(parsed.links),
+          usageWarning,
+          loginWallDetected: detectLoginWall(parsed.markdown, parsed.title),
+        }
       }
     }
     console.log(`[Scrape] Cloud Firecrawl da başarısız`)
@@ -393,11 +427,11 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
 
   // Scrapling'in sonucunu döndür (içerik az olsa bile)
   if (scraplingResult.markdown.length > 0) {
-    return scraplingResult
+    return { ...scraplingResult, loginWallDetected: detectLoginWall(scraplingResult.markdown, scraplingResult.title) }
   }
   // Puppeteer'in sonucunu döndür
   if (puppeteerResult.markdown.length > 0) {
-    return puppeteerResult
+    return { ...puppeteerResult, loginWallDetected: detectLoginWall(puppeteerResult.markdown, puppeteerResult.title) }
   }
 
   // Hiçbir şey çalışmadı
@@ -424,6 +458,10 @@ export function formatScrapeResult(result: ScrapeResult): string {
     `📌 Başlık: ${result.title || '(yok)'}`,
     `📝 Açıklama: ${result.description || '(yok)'}`,
   ]
+
+  if (result.loginWallDetected) {
+    lines.push(`⚠️ GİRİŞ/KAYIT DUVARI TESPİT EDİLDİ — içerik eksik olabilir, bağımsız kaynaklarla doğrula.`)
+  }
 
   if (result.emails.length > 0) {
     lines.push(`📧 Email'ler: ${result.emails.join(', ')}`)

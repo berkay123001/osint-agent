@@ -68,7 +68,8 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
 const IDENTITY_TOOLS = [
   'run_sherlock', 'run_github_osint', 'parse_gpg_key', 
   'check_email_registrations', 'check_breaches', 'search_person', 
-  'cross_reference', 'verify_profiles', 'unexplored_pivots', 'nitter_profile'
+  'cross_reference', 'verify_profiles', 'unexplored_pivots', 'nitter_profile',
+  'search_web', 'search_web_multi', 'scrape_profile', 'verify_claim'
 ];
 
 export const identityAgentConfig: AgentConfig = {
@@ -96,7 +97,9 @@ Aynı isimde birden fazla farklı kişi OLABİLİR. Bunu her zaman varsay.
 
 Unutma: 
 - Görevin KİMLİK/HESAP tespiti ve analizi yapmaktır.
-- Elde ettiğin her veriyi çapraz kontrol et. 
+- Elde ettiğin her veriyi çapraz kontrol et.
+- Aynı konuyu farklı açılardan aramak için search_web_multi kullan (virgülle ayrılmış max 3 sorgu).
+- "Bedava", "ücretsiz", "kayıt gerektirmez" gibi iddialar varsa verify_claim ile doğrula.
 - Ortaya çıkan graf bağlantılarını ve bulguları Markdown kullanarak eksiksiz raporla.`
 };
 

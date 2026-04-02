@@ -67,9 +67,11 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
 const MEDIA_TOOLS = [
   'extract_metadata', 'reverse_image_search', 'compare_images_phash', 
   'fact_check_to_graph', 'wayback_search',
-  'web_fetch',      // URL'leri bağımsız doğrulama için
-  'scrape_profile', // Haber sayfalarını tam olarak okumak için
-  'search_web',     // Ek kaynak taraması için
+  'web_fetch',         // URL'leri bağımsız doğrulama için
+  'scrape_profile',    // Haber sayfalarını tam olarak okumak için
+  'search_web',        // Ek kaynak taraması için
+  'search_web_multi',  // Aynı konuyu farklı açılardan paralel aramak için (max 3 sorgu)
+  'verify_claim',      // "ücretsiz", "resmi açıklama" gibi iddiaları doğrulamak için
 ];
 
 export const mediaAgentConfig: AgentConfig = {

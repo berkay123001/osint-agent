@@ -11,7 +11,7 @@
     "graph": "tsx src/graphServer.ts",
     "build": "tsc",
     "test": "npm run test:unit",
-    "test:unit": "OPENROUTER_API_KEY=sk-placeholder node --import tsx --test src/lib/chatHistory.test.ts src/tools/githubGpgUtils.test.ts src/lib/osintHeuristics.test.ts src/tools/sherlockTool.test.ts src/tools/githubTool.test.ts src/agents/baseAgent.test.ts",
+    "test:unit": "OPENROUTER_API_KEY=sk-placeholder node --import tsx --test src/lib/chatHistory.test.ts src/tools/githubGpgUtils.test.ts src/lib/osintHeuristics.test.ts src/tools/sherlockTool.test.ts src/tools/githubTool.test.ts src/agents/baseAgent.test.ts src/lib/sourceCredibility.test.ts",
     "test:graph": "tsx src/scripts/runGraphTests.ts",
     "test:graph:local": "NEO4J_ALLOW_CLEAR=1 node --env-file=.env --import tsx --test --test-concurrency=1 src/lib/neo4j.integration.test.ts",
     "test:seed": "NEO4J_ALLOW_CLEAR=1 tsx src/scripts/seedTestGraph.ts",
