@@ -8,6 +8,7 @@
  *   osint                   İnteraktif REPL başlat
  *   osint "soru"            Tek soru gönder
  *   osint --setup           Docker + .env kurulum sihirbazı
+ *   osint --uninstall       Kaldirma sihirbazi (Docker, .env, oturumlar)
  *   osint --graph           Neo4j graf görselleştirme sunucusu (port 3333)
  *   osint --version         Versiyon göster
  *   osint --help            Yardım
@@ -46,6 +47,7 @@ ${chalk.bold('Kullanim:')}
   ${chalk.green('osint')}                   Interaktif REPL baslat
   ${chalk.green('osint')} "soru"            Tek soru gonder, sonucu yazdir
   ${chalk.green('osint')} --setup           Kurulum sihirbazi (Docker + .env + Neo4j + Python)
+  ${chalk.green('osint')} --uninstall       Kaldirma sihirbazi (Docker, .env, oturumlar)
   ${chalk.green('osint')} --graph           Neo4j graf gorsellestirme sunucusu (port 3333)
   ${chalk.green('osint')} --version         Versiyon goster
   ${chalk.green('osint')} --help            Bu yardim
@@ -74,6 +76,14 @@ ${chalk.bold('Gereksinimler:')}
 if (args.includes('--setup')) {
   const { runSetup } = await import('./tools/setupCommand.js')
   await runSetup()
+  process.exit(0)
+}
+
+// ── Kaldirma ──────────────────────────────────────────────────────────────
+
+if (args.includes('--uninstall')) {
+  const { runUninstall } = await import('./tools/setupCommand.js')
+  await runUninstall()
   process.exit(0)
 }
 

@@ -326,3 +326,88 @@ export async function runSetup(): Promise<void> {
   console.log(chalk.dim('\n  ─────────────────────────────────────────────────────────'))
   printSummary()
 }
+
+// ── Kaldirma sihirbazi ──────────────────────────────────────────────────────
+
+export async function runUninstall(): Promise<void> {
+  console.log(chalk.bold.red('\n  🗑️  OSINT Agent Kaldirma Sihirbazi\n'))
+  console.log(chalk.dim('  ─────────────────────────────────────────────────────────'))
+
+  const { rmSync, readdirSync } = await import('fs')
+
+  // 1. Docker container'lar
+  step(1, 'Docker servisleri durduruluyor...')
+  const containers = ['osint-searxng', 'osint-neo4j']
+  for (const name of containers) {
+    const exists = run(`docker ps -aq -f name=${name}`)
+    if (exists) {
+      console.log(chalk.dim(`   ${name} durduruluyor...`))
+      const stopped = run(`docker stop ${name}`)
+      const removed = run(`docker rm ${name}`)
+      if (stopped !== null && removed !== null) {
+        ok(`${name} durduruldu ve kaldirildi`)
+      } else {
+        warn(`${name} durdurulamadi — elle: docker stop ${name} && docker rm ${name}`)
+      }
+    } else {
+      console.log(chalk.dim(`   ${name} — bulunamadi (zaten kaldirilmis)`))
+    }
+  }
+
+  // Docker Compose servisleri (firecrawl vs.)
+  const composeFile = join(PROJECT_ROOT, 'docker-compose.yml')
+  if (existsSync(composeFile)) {
+    console.log(chalk.dim('   docker compose servisleri kapatiliyor...'))
+    run('docker compose down')
+    ok('docker compose servisleri kapatildi')
+  }
+
+  // 2. Oturum dosyalari
+  step(2, 'Oturum dosyalari temizleniyor...')
+  const sessionDir = join(PROJECT_ROOT, '.osint-sessions')
+  if (existsSync(sessionDir)) {
+    try {
+      rmSync(sessionDir, { recursive: true, force: true })
+      ok('.osint-sessions/ silindi')
+    } catch {
+      warn('.osint-sessions/ silinemedi — elle silin')
+    }
+  } else {
+    console.log(chalk.dim('   .osint-sessions/ bulunamadi'))
+  }
+
+  // .pids
+  const pidsFile = join(PROJECT_ROOT, '.pids')
+  if (existsSync(pidsFile)) {
+    try { rmSync(pidsFile, { force: true }) } catch { /* no-op */ }
+    ok('.pids silindi')
+  }
+
+  // 3. .env dosyasi
+  step(3, '.env dosyasi...')
+  const envPath = join(PROJECT_ROOT, '.env')
+  if (existsSync(envPath)) {
+    const ans = await question(chalk.bold.yellow('   .env dosyasi silinsin mi? (API keyler icor!) [y/N] '))
+    if (ans.toLowerCase() === 'y') {
+      try {
+        rmSync(envPath, { force: true })
+        ok('.env silindi')
+      } catch {
+        warn('.env silinemedi')
+      }
+    } else {
+      console.log(chalk.dim('   .env korundu'))
+    }
+  } else {
+    console.log(chalk.dim('   .env bulunamadi'))
+  }
+
+  // 4. Ozet
+  console.log(chalk.dim('\n  ─────────────────────────────────────────────────────────'))
+  console.log(chalk.bold.cyan('\n  🧹 Kaldirma tamamlandi!\n'))
+  console.log(chalk.bold('   Kalan adimlar:'))
+  console.log(chalk.dim('   npm uninstall -g osint-agent    ← paketi kaldirir'))
+  console.log(chalk.dim('   docker system prune              ← kullanilmayan Docker imajlarini temizler'))
+  console.log(chalk.dim('   pip uninstall sherlock-project holehe scrapling  ← Python paketleri'))
+  console.log()
+}
