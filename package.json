@@ -10,6 +10,8 @@
     "dist/",
     "src/tools/scrapling_runner.py",
     "src/tools/holehe_runner.py",
+    "docker-compose.yml",
+    "docker/",
     ".env.example"
   ],
   "type": "module",
