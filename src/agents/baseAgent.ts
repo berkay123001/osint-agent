@@ -51,10 +51,11 @@ export async function runAgentLoop(
   let forceTextRetries = 0; // Metin zorlama deneme sayacı
   const toolsUsed: Record<string, number> = {};
   const maxToolCalls = config.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
+  const maxEmptyRetries = config.maxEmptyRetries ?? 1;
   // Tool call deduplication: aynı tool+args kombinasyonu önceden çağrıldıysa cache'den dön
   const callCache = new Map<string, string>();
   // Per-tool hard limiti: tek bir tool'un bütün bütçeyi yemesini engeller
-  const PER_TOOL_LIMITS: Record<string, number> = { search_academic_papers: 8 };
+  const PER_TOOL_LIMITS: Record<string, number> = { search_academic_papers: 8, fact_check_to_graph: 2 };
   const perToolCount: Record<string, number> = {};
   while (true) {
     const toolsDisabled = toolCallCount >= maxToolCalls;
@@ -336,8 +337,8 @@ export async function runAgentLoop(
         ? message.refusal
         : '';
 
-      // Model sadece <think/> döndürüp boş bıraktıysa, bir kez daha dene
-      if (cleanContent.length === 0 && toolCallCount > 0 && emptyRetries < 1) {
+      // Model sadece <think/> döndürüp boş bıraktıysa, tekrar dene
+      if (cleanContent.length === 0 && toolCallCount > 0 && emptyRetries < maxEmptyRetries) {
         emptyRetries++;
         logger.warn('AGENT', `[${config.name}] Model boş yanıt döndürdü, tekrar deneniyor...`);
         history.push({

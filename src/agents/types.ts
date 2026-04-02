@@ -8,8 +8,9 @@ export interface AgentConfig {
   tools: OpenAI.Chat.ChatCompletionTool[];
   executeTool: ToolExecutor;
   model?: string;
-  maxToolCalls?: number; // default 30; derin araştırma yapan ajanlar için artırılabilir
-  maxTokens?: number;   // default 32768; Supervisor gibi büyük context'li ajanlar için artır
+  maxToolCalls?: number;       // default 30; derin araştırma yapan ajanlar için artırılabilir
+  maxTokens?: number;          // default 32768; Supervisor gibi büyük context'li ajanlar için artır
+  maxEmptyRetries?: number;    // default 1; MediaAgent gibi uzun tool zincirlerinde artır
 }
 
 export type Message = OpenAI.Chat.ChatCompletionMessageParam;

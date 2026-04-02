@@ -76,6 +76,8 @@ const MEDIA_TOOLS = [
 
 export const mediaAgentConfig: AgentConfig = {
   name: 'MediaAgent',
+  maxToolCalls: 25,          // Context büyümesini yavaşlat — ham HTML/Markdown uzun gelir
+  maxEmptyRetries: 3,        // Uzun tool zincirlerinden sonra Qwen thinking bitip boş dönebilir
   tools: tools.filter((t: any) => t.type === 'function' && MEDIA_TOOLS.includes(t.function.name)),
   executeTool: executeTool,
   systemPrompt: `Sen bir "Haber Doğrulama ve Medya Analitiği" alt-ajanısın. (MediaAgent)

@@ -198,6 +198,7 @@ export const supervisorAgentConfig: AgentConfig = {
   name: 'Supervisor',
   model: 'qwen/qwen3.6-plus:free',
   maxTokens: 32768, // Büyük sub-agent raporları + thinking tokens için geniş bütçe
+  maxToolCalls: 40, // Kapsamlı OSINT araştırmalarında arama + Neo4j yazma + rapor toplamı
   tools: supervisorMetaTools,
   executeTool: supervisorExecuteTool,
   systemPrompt: `Sen OSINT Dijital Müfettiş sisteminin Şef (Supervisor) Ajanısın.

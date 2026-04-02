@@ -236,6 +236,11 @@ function handleResume(): void {
     const resumeCount = history.filter(m => m.role === 'user').length;
     console.log(chalk.green(`  ✔ Oturum devam ediyor — ${resumeCount} önceki soru yüklendi.\n`));
   } else {
+    // Kullanici devam etmek istemedi — once arşivle, sonra aktif dosyayı sil
+    if (existingSession && existingSession.messageCount > 0) {
+      archiveSession(existingSession.history);
+      console.log(chalk.dim('  💾 Önceki oturum arşivlendi.'));
+    }
     deleteActiveSession();
     activeSessionMeta = null;
     console.log(chalk.dim('  Yeni oturum başlatıldı.\n'));
