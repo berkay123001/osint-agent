@@ -49,37 +49,34 @@ function deleteSession(): void {
   try { if (fs.existsSync(SESSION_FILE)) fs.rmSync(SESSION_FILE); } catch { /* no-op */ }
 }
 
-// ── Başlatma banneri (detective ASCII) ──────────────────────────────────────
+// ── Başlatma banneri ──────────────────────────────────────────────────────
 function printBanner() {
   const g  = chalk.gray
   const c  = chalk.bold.cyan
   const y  = chalk.bold.yellow
   const d  = chalk.dim
 
-  // Detective pixel art: büyüteç + silüet
   const art = [
-    g('  ╔═══════════════════════════════════════════════════════════╗'),
-    g('  ║ ') + c(' ██████╗ ███████╗██╗███╗   ██╗████████╗') + g('              ║'),
-    g('  ║ ') + c('██╔═══██╗██╔════╝██║████╗  ██║╚══██╔══╝') + g('              ║'),
-    g('  ║ ') + c('██║   ██║███████╗██║██╔██╗ ██║   ██║   ') + g('              ║'),
-    g('  ║ ') + c('██║   ██║╚════██║██║██║╚██╗██║   ██║   ') + g('    🔍        ║'),
-    g('  ║ ') + c('╚██████╔╝███████║██║██║ ╚████║   ██║   ') + g('              ║'),
-    g('  ║ ') + c(' ╚═════╝ ╚══════╝╚═╝╚═╝  ╚═══╝  ╚═╝   ') + g('              ║'),
-    g('  ║                                                           ║'),
-    g('  ║     ') + y('D İ J İ T A L   M Ü F E T T İ Ş') + g('              ║'),
-    g('  ║     ') + d('multi-agent · supervisor · identity · media · academic') + g(' ║'),
-    g('  ╚═══════════════════════════════════════════════════════════╝'),
+    '',
+    g('        ╔═════════════════════════╗'),
+    g('        ║   ') + c('G . U . A . R . D') + g('    ║'),
+    g('        ╚═══════════╦═════════════╝'),
+    g('                    /█\\'),
+    g('                   /███\\'),
+    g('                  /█████\\'),
+    g('                 /███████\\'),
+    g('                ───────────'),
+    '',
   ]
 
   art.forEach(line => console.log(line))
-  console.log()
-  console.log(g('  ') + g('  Supervisor : ') + chalk.green(SUPERVISOR_MODEL))
-  console.log(g('  ') + g('  Alt ajan   : ') + chalk.green(DEFAULT_MODEL))
+  console.log(g('  Supervisor : ') + chalk.green(SUPERVISOR_MODEL))
+  console.log(g('  Alt ajan   : ') + chalk.green(DEFAULT_MODEL))
   console.log()
   console.log(
     g('  Komutlar: ') +
-    chalk.cyan('!reset') + g(' · ') +
-    chalk.cyan('!history') + g(' · ') +
+    chalk.cyan('/reset') + g(' · ') +
+    chalk.cyan('/history') + g(' · ') +
     chalk.cyan('exit')
   )
   console.log(g('  ─────────────────────────────────────────────────────────'))
@@ -152,7 +149,7 @@ function prompt() {
       process.exit(0);
     }
 
-    if (input.toLowerCase() === '!reset') {
+    if (input.toLowerCase() === '/reset') {
       deleteSession();
       history = [];
       existingSession = null;
@@ -161,7 +158,7 @@ function prompt() {
       return;
     }
 
-    if (input.toLowerCase() === '!history') {
+    if (input.toLowerCase() === '/history') {
       const userMsgs = history.filter(m => m.role === 'user').length;
       const agentMsgs = history.filter(m => m.role === 'assistant').length;
       console.log(chalk.cyan(`\n  📋 ${userMsgs} soru · ${agentMsgs} yanıt · ${history.length} mesaj\n`));
