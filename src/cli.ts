@@ -45,15 +45,16 @@ ${chalk.bold.cyan('osint-agent')} v${version} — Cok ajanli acik kaynak istihba
 ${chalk.bold('Kullanim:')}
   ${chalk.green('osint')}                   Interaktif REPL baslat
   ${chalk.green('osint')} "soru"            Tek soru gonder, sonucu yazdir
-  ${chalk.green('osint')} --setup           Docker servislerini baslat + .env olustur
+  ${chalk.green('osint')} --setup           Kurulum sihirbazi (Docker + .env + Neo4j + Python)
   ${chalk.green('osint')} --graph           Neo4j graf gorsellestirme sunucusu (port 3333)
   ${chalk.green('osint')} --version         Versiyon goster
   ${chalk.green('osint')} --help            Bu yardim
 
 ${chalk.bold('REPL Komutlari:')}
-  !reset     Oturumu sifirla
-  !history   Oturum gecmisi
-  exit       Cikis
+  /reset     Oturumu sifirla ve arsivle
+  /history   Oturum gecmisi
+  /resume    Kayitli oturumlari listele ve sec
+  exit       Oturumu arsivleyip cik
 
 ${chalk.bold('Ajanlar:')}
   Supervisor    Koordinator + graf + rapor
@@ -71,65 +72,8 @@ ${chalk.bold('Gereksinimler:')}
 // ── Docker + .env setup ──────────────────────────────────────────────────
 
 if (args.includes('--setup')) {
-  const { execSync } = await import('child_process')
-
-  console.log(chalk.bold.cyan('\nOSINT Agent Kurulum Sihirbazi\n'))
-
-  // 1. Docker
-  console.log(chalk.dim('1. Docker kontrol ediliyor...'))
-  try {
-    const dockerVer = execSync('docker --version', { encoding: 'utf-8' }).trim()
-    console.log(chalk.green(`   ${dockerVer}`))
-  } catch {
-    console.log(chalk.red('   Docker bulunamadi. https://docs.docker.com/get-docker/'))
-    console.log(chalk.dim('      Docker olmadan da kullanabilirsiniz — SearXNG ve Firecrawl devre disi kalir.'))
-  }
-
-  // 2. Docker Compose servisleri
-  console.log(chalk.dim('\n2. Docker servisleri baslatiliyor...'))
-  try {
-    execSync('docker compose up -d', { encoding: 'utf-8', stdio: 'inherit' })
-    console.log(chalk.green('   SearXNG + Firecrawl baslatildi'))
-  } catch {
-    console.log(chalk.yellow('   Docker compose basarisiz — servisler zaten calisiyor olabilir.'))
-  }
-
-  // 3. .env
-  console.log(chalk.dim('\n3. .env dosyasi kontrol ediliyor...'))
-  const envPath = join(process.cwd(), '.env')
-  try {
-    readFileSync(envPath, 'utf-8')
-    console.log(chalk.green('   .env dosyasi mevcut'))
-  } catch {
-    const examplePath = join(process.cwd(), '.env.example')
-    try {
-      const example = readFileSync(examplePath, 'utf-8')
-      const { writeFileSync } = await import('fs')
-      writeFileSync(envPath, example, 'utf-8')
-      console.log(chalk.yellow('   .env olusturuldu (.env.example\'den kopyalandi)'))
-      console.log(chalk.bold.red('   Lutfen .env dosyasini API key\'lerinizle doldurun!'))
-    } catch {
-      console.log(chalk.red('   .env.example bulunamadi'))
-    }
-  }
-
-  // 4. Neo4j
-  console.log(chalk.dim('\n4. Neo4j kontrol ediliyor...'))
-  try {
-    const neo4jUri = process.env.NEO4J_URI || 'bolt://localhost:7687'
-    const { default: neo4j } = await import('neo4j-driver')
-    const driver = neo4j.driver(neo4jUri)
-    const session = driver.session()
-    await session.run('RETURN 1')
-    await session.close()
-    await driver.close()
-    console.log(chalk.green(`   Neo4j baglantisi basarili (${neo4jUri})`))
-  } catch {
-    console.log(chalk.yellow('   Neo4j baglanamadi — graf ozellikleri devre disi'))
-    console.log(chalk.dim('      Kurulum: docker run -p 7474:7474 -p 7687:7687 neo4j:latest'))
-  }
-
-  console.log(chalk.bold.cyan('\nKurulum tamamlandi! `osint` ile baslayabilirsiniz.\n'))
+  const { runSetup } = await import('./tools/setupCommand.js')
+  await runSetup()
   process.exit(0)
 }
 
