@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { labelSource, formatSourceTag, extractRedditScore, formatSourceBadge } from './sourceCredibility.js'
+import { labelSource, formatSourceTag, extractRedditScore, formatSourceBadge, extractRedditDiscussionFromMarkdown, formatRedditDiscussion } from './sourceCredibility.js'
 
 // ── Resmi / referans kaynakları ─────────────────────────────────────
 
@@ -165,4 +165,116 @@ test('labelSource reddit communitySignal platform = Reddit', () => {
 test('labelSource HN communitySignal platform = Hacker News', () => {
   const r = labelSource('https://news.ycombinator.com/item?id=1')
   assert.equal(r.communitySignal?.platform, 'Hacker News')
+})
+
+// ── extractRedditDiscussionFromMarkdown ────────────────────────────────
+
+test('extractRedditDiscussionFromMarkdown: post score ve yorum çıkarma', () => {
+  const md = [
+    'r/LocalLLaMA • Posted by u/testuser • 842 points • 127 comments',
+    '',
+    'This is the post body about the free tool.',
+    '',
+    '---',
+    '',
+    'u/first_user • 156 points • 2 hours ago',
+    '',
+    'This tool works great, I highly recommend it. The free tier is genuinely free.',
+    '',
+    'u/second_user • 23 points • 1 hour ago',
+    '',
+    'Not true, they have hidden fees. I was charged after 7 days.',
+    '',
+    'u/third_user • 89 points • 45 minutes ago',
+    '',
+    'Note that the documentation says free for personal use only.',
+  ].join('\n')
+
+  const result = extractRedditDiscussionFromMarkdown(md)
+  assert.ok(result, 'Sonuç null olmamalı')
+  assert.equal(result!.postScore, 842)
+  assert.ok(result!.topComments!.length >= 2, 'En az 2 yorum bulunmalı')
+})
+
+test('extractRedditDiscussionFromMarkdown: boş markdown null döner', () => {
+  const result = extractRedditDiscussionFromMarkdown('')
+  assert.equal(result, null)
+})
+
+test('extractRedditDiscussionFromMarkdown: kısa markdown null döner', () => {
+  const result = extractRedditDiscussionFromMarkdown('short text')
+  assert.equal(result, null)
+})
+
+test('extractRedditDiscussionFromMarkdown: fikir sınıflandırması çalışır', () => {
+  const md = [
+    'r/test • Posted by u/op • 100 points • 10 comments',
+    '',
+    'Post body here.',
+    '',
+    '---',
+    '',
+    'u/a • 50 points',
+    '',
+    'This is amazing, highly recommend it.',
+    '',
+    'u/b • 30 points',
+    '',
+    'Terrible experience, avoid this product. Doesn\'t work as advertised.',
+    '',
+    'u/c • 20 points',
+    '',
+    'Note that according to documentation, this is for personal use.',
+  ].join('\n')
+
+  const result = extractRedditDiscussionFromMarkdown(md)
+  assert.ok(result, 'Sonuç null olmamalı')
+  const ops = result!.opinionSummary
+  assert.ok(ops, 'Fikir özeti olmalı')
+  const hasAnyOpinion = ops!.supporting.length > 0 || ops!.opposing.length > 0 || ops!.neutral.length > 0
+  assert.ok(hasAnyOpinion, 'En az bir fikir kategorisi dolu olmalı')
+})
+
+// ── formatRedditDiscussion ─────────────────────────────────────────────
+
+test('formatRedditDiscussion: skor ve subreddit bilgisi içerir', () => {
+  const discussion = {
+    postScore: 1234,
+    upvoteRatio: 0.92,
+    commentCount: 56,
+    subreddit: 'tools',
+    topComments: [
+      { author: 'alice', score: 42, body: 'Works great', controversial: false },
+      { author: 'bob', score: -5, body: 'Not worth it', controversial: true },
+    ],
+    opinionSummary: {
+      supporting: ['Works great'],
+      opposing: ['Not worth it'],
+      neutral: [],
+    },
+  }
+
+  const formatted = formatRedditDiscussion(discussion)
+  assert.ok(formatted.includes('Post skoru'), 'Post skoru etiketi görünmeli')
+  assert.ok(/1.?234/.test(formatted), 'Post skoru değeri görünmeli (1,234 veya 1234)')
+  assert.ok(formatted.includes('92'), 'Beğeni oranı görünmeli')
+  assert.ok(formatted.includes('r/tools'), 'Subreddit görünmeli')
+  assert.ok(formatted.includes('alice'), 'Yorumcu adı görünmeli')
+})
+
+test('formatRedditDiscussion: partial discussion da formatlanır', () => {
+  const partial = {
+    postScore: 50,
+    topComments: [
+      { author: 'user1', score: 10, body: 'Nice', controversial: false },
+    ],
+    opinionSummary: {
+      supporting: [],
+      opposing: [],
+      neutral: ['Nice'],
+    },
+  }
+
+  const formatted = formatRedditDiscussion(partial)
+  assert.ok(formatted.includes('50'), 'Post skoru görünmeli')
 })

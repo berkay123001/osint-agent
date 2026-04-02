@@ -9,12 +9,13 @@ import type { Message, AgentConfig, AgentResult } from './types.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DEFAULT_MODEL = 'qwen/qwen3.6-plus-preview:free';
-const SUPERVISOR_MODEL = 'qwen/qwen3.6-plus-preview:free';
+const DEFAULT_MODEL = 'qwen/qwen3.6-plus:free';
+const SUPERVISOR_MODEL = 'qwen/qwen3.6-plus:free';
 export { DEFAULT_MODEL, SUPERVISOR_MODEL };
 
-// Alibaba DataInspectionFailed hatası (PII içerik filtresi) durumunda fallback modeller
+// Fallback modeller — content filter (PII) VEYA rate limit durumunda sirayla denenir
 const FALLBACK_MODELS = [
+  'qwen/qwen3.6-plus:free',
   'google/gemini-2.0-flash-001',
   'deepseek/deepseek-chat-v3-0324',
 ];
@@ -100,18 +101,50 @@ export async function runAgentLoop(
           };
         }
       }
-      // OpenRouter rate limit — exponential backoff ile retry
+      // OpenRouter rate limit — exponential backoff + fallback model zinciri
       else if (msg.includes('429') || msg.toLowerCase().includes('rate limit') || msg.toLowerCase().includes('too many requests')) {
+        // 1. deneme: ayni model, 5s bekle
         const waitMs = 5000;
         logger.warn('AGENT', `[${config.name}] Rate limit (429) — ${waitMs / 1000}s bekleyip tekrar deneniyor...`);
         await _delay(waitMs);
-        response = await _client.chat.completions.create({
-          model: currentModel,
-          messages: sanitizeHistoryForProvider(history),
-          tools: config.tools.length > 0 ? config.tools : undefined,
-          tool_choice: config.tools.length > 0 ? toolChoice : undefined,
-          max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-        });
+        try {
+          response = await _client.chat.completions.create({
+            model: currentModel,
+            messages: sanitizeHistoryForProvider(history),
+            tools: config.tools.length > 0 ? config.tools : undefined,
+            tool_choice: config.tools.length > 0 ? toolChoice : undefined,
+            max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
+          });
+        } catch (retryErr) {
+          // 2. deneme: fallback modelleri sirayla dene
+          const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          if (retryMsg.includes('429') || retryMsg.toLowerCase().includes('rate limit')) {
+            for (const fbModel of FALLBACK_MODELS) {
+              if (fbModel === currentModel) continue; // ayni modeli atla
+              logger.warn('AGENT', `[${config.name}] 429 devam — fallback deneniyor: ${fbModel}`);
+              await _delay(2000);
+              try {
+                response = await _client.chat.completions.create({
+                  model: fbModel,
+                  messages: sanitizeHistoryForProvider(history),
+                  tools: config.tools.length > 0 ? config.tools : undefined,
+                  tool_choice: config.tools.length > 0 ? toolChoice : undefined,
+                  max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
+                });
+                logger.info('AGENT', `[${config.name}] Fallback basarili: ${fbModel}`);
+                break; // basarili → donguden cik
+              } catch {
+                // bu fallback de basarisiz → sonrakini dene
+                continue;
+              }
+            }
+            if (!response?.choices?.[0]) {
+              throw new Error(`Tum modeller rate limit (429) — biraz bekle ve tekrar dene.`);
+            }
+          } else {
+            throw retryErr;
+          }
+        }
       }
       // Diğer geçici hatalar (502, 529) için aynı modelde retry
       else if (msg.includes('502') || msg.includes('529') || msg.includes('InternalError')) {

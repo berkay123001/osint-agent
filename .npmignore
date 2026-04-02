@@ -1,0 +1,75 @@
+# ── Gizli dosyalar (ASLA yayınlanmamalı) ──────────────────────
+.env
+.env.*
+!.env.example
+.credentials
+*.pem
+*.key
+*.p12
+
+# ── Runtime & session verileri ───────────────────────────────
+.osint-sessions/
+.genkit/
+.pids
+*.log
+.graph-server.log
+
+# ── Build & derleme artefaktları ─────────────────────────────
+dist/
+node_modules/
+*.tsbuildinfo
+
+# ── Docker & yerel servisler ─────────────────────────────────
+chrome/
+.local-chromium/
+.cache/
+.venv/
+
+# ── Geliştirme & test dosyaları ──────────────────────────────
+test-*.ts
+test-*.js
+test_*.ts
+test_*.js
+analyzeFiles.ts
+check_neo4j.ts
+fix_chat.ts
+fix_dispatch.cjs
+fix_syntax.cjs
+fix.patch
+out.txt
+chat_out.txt
+patch_chat*.ts
+patch_driver.ts
+run_manual_graph_test.ts
+src/**/*.test.ts
+src/**/__tests__/
+
+# ── Makaleler & dokümanlar (proje-özel) ─────────────────────
+Makale/
+docs/
+*.docx
+*.pdf
+onemli*.md
+GEMINI.md
+
+# ── IDE & OS ─────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ── Git ──────────────────────────────────────────────────────
+.git/
+.gitignore
+.claude/
+
+# ── Diğer ────────────────────────────────────────────────────
+.github/
+start.sh
+stop.sh
+graph.sh
+tsconfig.json
+package-lock.json

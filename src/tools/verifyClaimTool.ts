@@ -8,6 +8,7 @@
 
 import { searchWeb } from './searchTool.js'
 import { scrapeProfile } from './scrapeTool.js'
+import { fetchRedditDiscussion, extractRedditDiscussionFromMarkdown, formatRedditDiscussion, type RedditDiscussion } from '../lib/sourceCredibility.js'
 
 export interface VerifyResult {
   claim: string
@@ -16,6 +17,7 @@ export interface VerifyResult {
   evidence: string[]           // iddiayı destekleyen alıntılar
   loginWall: boolean           // birincil kaynakta giriş duvarı var mı
   sourcesChecked: string[]     // kontrol edilen URL'ler
+  redditDiscussion?: string    // Reddit tartışma özeti (varsa)
 }
 
 /**
@@ -79,6 +81,7 @@ export async function verifyClaim(
     .slice(0, 2)
 
   let communityConfirmed = 0
+  let redditDiscussion: RedditDiscussion | null = null
 
   for (const r of communityUrls) {
     sourcesChecked.push(r.url)
@@ -87,22 +90,52 @@ export async function verifyClaim(
       communityConfirmed++
       evidence.push(`[${r.url}] ${r.snippet.slice(0, 200)}`)
     }
+
+    // Reddit URL'leri için JSON API ile derin analiz
+    if (r.url.includes('reddit.com') && !redditDiscussion) {
+      redditDiscussion = await fetchRedditDiscussion(r.url)
+      if (redditDiscussion) {
+        // Tartışmadan anahtar kelime eşleşmelerini de kanıt olarak ekle
+        for (const comment of redditDiscussion.topComments) {
+          if (containsKeywords(comment.body, keywords)) {
+            communityConfirmed++
+            evidence.push(`[Reddit u/${comment.author} (${comment.score} oy)] ${comment.body.slice(0, 200)}`)
+          }
+        }
+      } else {
+        // JSON API başarısız → scrape edilmiş Markdown'dan çıkar
+        const scraped = await scrapeProfile(r.url)
+        if (!scraped.error && scraped.markdown.length > 100) {
+          const mdDiscussion = extractRedditDiscussionFromMarkdown(scraped.markdown)
+          if (mdDiscussion) {
+            // Markdown'dan çıkarılan tartışmayı kanıt olarak ekle
+            for (const comment of mdDiscussion.topComments ?? []) {
+              if (containsKeywords(comment.body, keywords)) {
+                communityConfirmed++
+                evidence.push(`[Reddit u/${comment.author} (${comment.score} oy)] ${comment.body.slice(0, 200)}`)
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   // 3) Güven düzeyini hesapla
-  const totalIndependentConfirmed = communityConfirmed + (primaryConfirmed ? 0 : 0)
-  // primaryUrl = taraf kaynak → bağımsız sayılmaz, community = bağımsız
+  const redditSummary = redditDiscussion
+    ? formatRedditDiscussion(redditDiscussion)
+    : undefined
 
   if (communityConfirmed >= 2) {
-    return { claim, verified: true, confidence: 'high', evidence, loginWall, sourcesChecked }
+    return { claim, verified: true, confidence: 'high', evidence, loginWall, sourcesChecked, redditDiscussion: redditSummary }
   }
 
   if (communityConfirmed === 1 && primaryConfirmed) {
-    return { claim, verified: true, confidence: 'medium', evidence, loginWall, sourcesChecked }
+    return { claim, verified: true, confidence: 'medium', evidence, loginWall, sourcesChecked, redditDiscussion: redditSummary }
   }
 
   if (primaryConfirmed && communityConfirmed === 0) {
-    return { claim, verified: true, confidence: 'low', evidence, loginWall, sourcesChecked }
+    return { claim, verified: true, confidence: 'low', evidence, loginWall, sourcesChecked, redditDiscussion: redditSummary }
   }
 
   // Kanıt yok — ama bu claim'in yanlış olduğu anlamına gelmez
@@ -113,6 +146,7 @@ export async function verifyClaim(
     evidence,
     loginWall,
     sourcesChecked,
+    redditDiscussion: redditSummary,
   }
 }
 
@@ -132,6 +166,11 @@ export function formatVerifyResult(r: VerifyResult): string {
     r.evidence.forEach((e, i) => lines.push(`  ${i + 1}. ${e}`))
   } else {
     lines.push(`\nKanıt bulunamadı — bu iddianın yanlış olduğu anlamına GELMEZ, yalnızca doğrulanamadı.`)
+  }
+
+  if (r.redditDiscussion) {
+    lines.push(`\n🟣 Reddit Topluluk Tartışması:`)
+    lines.push(r.redditDiscussion)
   }
 
   return lines.filter(l => l !== '').join('\n')

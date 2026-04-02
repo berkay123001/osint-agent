@@ -1,8 +1,17 @@
 {
   "name": "osint-agent",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Çok ajanlı açık kaynak istihbarat sistemi — OSINT Digital Müfettiş",
+  "main": "dist/chat.js",
+  "bin": {
+    "osint": "dist/cli.js"
+  },
+  "files": [
+    "dist/",
+    "src/tools/scrapling_runner.py",
+    "src/tools/holehe_runner.py",
+    ".env.example"
+  ],
   "type": "module",
   "scripts": {
     "dev": "npx genkit start -- tsx src/index.ts",
@@ -10,6 +19,7 @@
     "agent:chat": "tsx src/tools/codingAgentChat.ts",
     "graph": "tsx src/graphServer.ts",
     "build": "tsc",
+    "postbuild": "chmod +x dist/cli.js",
     "test": "npm run test:unit",
     "test:unit": "OPENROUTER_API_KEY=sk-placeholder node --import tsx --test src/lib/chatHistory.test.ts src/tools/githubGpgUtils.test.ts src/lib/osintHeuristics.test.ts src/tools/sherlockTool.test.ts src/tools/githubTool.test.ts src/agents/baseAgent.test.ts src/lib/sourceCredibility.test.ts",
     "test:graph": "tsx src/scripts/runGraphTests.ts",

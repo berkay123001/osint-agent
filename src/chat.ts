@@ -49,21 +49,44 @@ function deleteSession(): void {
   try { if (fs.existsSync(SESSION_FILE)) fs.rmSync(SESSION_FILE); } catch { /* no-op */ }
 }
 
-// ── Başlatma banneri ─────────────────────────────────────────────────────────
-const border   = chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-const border2  = chalk.gray('┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄');
+// ── Başlatma banneri (detective ASCII) ──────────────────────────────────────
+function printBanner() {
+  const g  = chalk.gray
+  const c  = chalk.bold.cyan
+  const y  = chalk.bold.yellow
+  const d  = chalk.dim
 
-logger.info('UI', border);
-logger.info('UI', chalk.bold.white('🕵️  OSINT Dijital Müfettiş') + chalk.magenta(' — Multi-Agent'));
-logger.info('UI', border2);
-logger.info('UI', chalk.gray('  Supervisor : ') + chalk.green(SUPERVISOR_MODEL));
-logger.info('UI', chalk.gray('  Alt ajan   : ') + chalk.green(DEFAULT_MODEL));
-logger.info('UI', border2);
-logger.info('UI', chalk.gray('  Özel komutlar:'));
-logger.info('UI', chalk.gray('    ') + chalk.cyan('!reset') + chalk.gray(' — oturumu temizle, sıfırdan başla'));
-logger.info('UI', chalk.gray('    ') + chalk.cyan('!history') + chalk.gray(' — geçmiş mesaj sayısını göster'));
-logger.info('UI', chalk.gray('    ') + chalk.cyan('exit') + chalk.gray(' — çık (oturum kaydedilir)'));
-logger.info('UI', border);
+  // Detective pixel art: büyüteç + silüet
+  const art = [
+    g('  ╔═══════════════════════════════════════════════════════════╗'),
+    g('  ║ ') + c(' ██████╗ ███████╗██╗███╗   ██╗████████╗') + g('              ║'),
+    g('  ║ ') + c('██╔═══██╗██╔════╝██║████╗  ██║╚══██╔══╝') + g('              ║'),
+    g('  ║ ') + c('██║   ██║███████╗██║██╔██╗ ██║   ██║   ') + g('              ║'),
+    g('  ║ ') + c('██║   ██║╚════██║██║██║╚██╗██║   ██║   ') + g('    🔍        ║'),
+    g('  ║ ') + c('╚██████╔╝███████║██║██║ ╚████║   ██║   ') + g('              ║'),
+    g('  ║ ') + c(' ╚═════╝ ╚══════╝╚═╝╚═╝  ╚═══╝  ╚═╝   ') + g('              ║'),
+    g('  ║                                                           ║'),
+    g('  ║     ') + y('D İ J İ T A L   M Ü F E T T İ Ş') + g('              ║'),
+    g('  ║     ') + d('multi-agent · supervisor · identity · media · academic') + g(' ║'),
+    g('  ╚═══════════════════════════════════════════════════════════╝'),
+  ]
+
+  art.forEach(line => console.log(line))
+  console.log()
+  console.log(g('  ') + g('  Supervisor : ') + chalk.green(SUPERVISOR_MODEL))
+  console.log(g('  ') + g('  Alt ajan   : ') + chalk.green(DEFAULT_MODEL))
+  console.log()
+  console.log(
+    g('  Komutlar: ') +
+    chalk.cyan('!reset') + g(' · ') +
+    chalk.cyan('!history') + g(' · ') +
+    chalk.cyan('exit')
+  )
+  console.log(g('  ─────────────────────────────────────────────────────────'))
+  console.log()
+}
+
+printBanner()
 
 // ── Oturum yükleme ───────────────────────────────────────────────────────────
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -76,16 +99,16 @@ async function askResume(): Promise<boolean> {
   const msgCount = existingSession.messageCount;
   const lastDate = new Date(existingSession.lastActiveAt).toLocaleString('tr-TR');
   return new Promise((resolve) => {
-    logger.info('UI', chalk.yellow(`\n💾 Kayıtlı oturum bulundu:`));
-    logger.info('UI', chalk.gray(`   Tarih    : ${lastDate}`));
-    logger.info('UI', chalk.gray(`   Mesajlar : ${msgCount} mesaj`));
+    console.log(chalk.yellow(`\n  💾 Kayıtlı oturum:`))
+    console.log(chalk.dim(`     ${lastDate}  ·  ${msgCount} mesaj`))
     if (msgCount > 0) {
       const last = existingSession!.history.slice(-2).find(m => m.role === 'user');
       if (last) {
         const preview = typeof last.content === 'string'
-          ? last.content.slice(0, 80)
+          ? last.content.slice(0, 70)
           : '[karmaşık mesaj]';
-        logger.info('UI', chalk.gray(`   Son soru : "${preview}${last.content && typeof last.content === 'string' && last.content.length > 80 ? '…' : ''}"`));
+        const ellipsis = typeof last.content === 'string' && last.content.length > 70 ? '…' : ''
+        console.log(chalk.dim(`     Son: "${preview}${ellipsis}"`))
       }
     }
     rl.question(chalk.bold.yellow('\n  Kaldığın yerden devam etsem mi? [E/h] '), (ans) => {
@@ -99,16 +122,16 @@ async function askResume(): Promise<boolean> {
   if (resume && existingSession) {
     history = existingSession.history;
     const resumeCount = history.filter(m => m.role === 'user').length;
-    logger.info('UI', chalk.green(`\n✅ Oturum devam ediyor — ${resumeCount} önceki soru yüklendi.\n`));
+    console.log(chalk.green(`  ✔ Oturum devam ediyor — ${resumeCount} önceki soru yüklendi.\n`));
   } else {
     deleteSession();
     existingSession = null;
-    logger.info('UI', chalk.gray('\nYeni oturum başlatıldı.\n'));
+    console.log(chalk.dim('  Yeni oturum başlatıldı.\n'));
   }
 
-  logger.info('UI', chalk.gray('Örnek: ') + chalk.cyan('"torvalds GitHub hesabını araştır"'));
-  logger.info('UI', chalk.gray('       ') + chalk.cyan('"Bu haber doğru mu: [URL]"'));
-  logger.info('UI', border + '\n');
+  console.log(chalk.dim('  Örnek: ') + chalk.cyan('"torvalds GitHub hesabını araştır"'))
+  console.log(chalk.dim('         ') + chalk.cyan('"Bu haber doğru mu: [URL]"'))
+  console.log(chalk.gray('  ─────────────────────────────────────────────────────────\n'))
 
   prompt();
 })();
@@ -116,14 +139,14 @@ async function askResume(): Promise<boolean> {
 // ── Ana soru döngüsü ─────────────────────────────────────────────────────────
 function prompt() {
   if (!process.stdin.readable) return;
-  rl.question(chalk.bold.green('\nSen: '), async (line) => {
+  rl.question(chalk.bold.green('\n  ❯ '), async (line) => {
     const input = line.trim();
     if (!input) { prompt(); return; }
 
     // Özel komutlar
     if (input.toLowerCase() === 'exit') {
       saveSession(history);
-      logger.info('UI', chalk.gray('\n💾 Oturum kaydedildi. Görüşürüz!'));
+      console.log(chalk.dim('\n  💾 Oturum kaydedildi. Görüşürüz!'));
       await closeNeo4j();
       rl.close();
       process.exit(0);
@@ -133,7 +156,7 @@ function prompt() {
       deleteSession();
       history = [];
       existingSession = null;
-      logger.info('UI', chalk.yellow('🔄 Oturum sıfırlandı. Yeni konuşma başlıyor.\n'));
+      console.log(chalk.yellow('  🔄 Oturum sıfırlandı. Yeni konuşma başlıyor.\n'));
       prompt();
       return;
     }
@@ -141,7 +164,7 @@ function prompt() {
     if (input.toLowerCase() === '!history') {
       const userMsgs = history.filter(m => m.role === 'user').length;
       const agentMsgs = history.filter(m => m.role === 'assistant').length;
-      logger.info('UI', chalk.cyan(`\n📋 Oturum geçmişi: ${userMsgs} soru, ${agentMsgs} yanıt (toplam ${history.length} mesaj)\n`));
+      console.log(chalk.cyan(`\n  📋 ${userMsgs} soru · ${agentMsgs} yanıt · ${history.length} mesaj\n`));
       prompt();
       return;
     }
@@ -152,7 +175,7 @@ function prompt() {
       // Her başarılı yanıttan sonra kaydet
       saveSession(history);
     } catch (e) {
-      logger.error('UI', `\n❌ Hata: ${(e as Error).message}`);
+      console.log(chalk.red(`\n  ❌ Hata: ${(e as Error).message}`));
     }
 
     prompt();
@@ -161,7 +184,7 @@ function prompt() {
 
 rl.on('close', async () => {
   saveSession(history);
-  logger.info('UI', chalk.gray('\nOturum kaydedildi.'));
+  console.log(chalk.dim('  Oturum kaydedildi.'));
   await closeNeo4j();
   process.exit(0);
 });
