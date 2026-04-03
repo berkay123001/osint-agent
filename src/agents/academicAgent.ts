@@ -281,13 +281,18 @@ Alan 2020'den bu yana nasıl değişti? Önceki dominant yaklaşımın yerini ne
 - 0 sonuç dönen API'yi tekrar çağırmak yerine elindeki verilerle sentez yap.`,
 };
 
-export async function runAcademicAgent(query: string, context?: string): Promise<string> {
-  console.log(chalk.cyan.bold(`\n📚 Dış Görevlendirme: AcademicAgent -> "${query}"`));
+// depth → maxToolCalls çarpanı: quick=0.5x, normal=1x, deep=1.75x
+const DEPTH_MULTIPLIERS: Record<string, number> = { quick: 0.5, normal: 1, deep: 1.75 };
+
+export async function runAcademicAgent(query: string, context?: string, depth?: string): Promise<string> {
+  const multiplier = DEPTH_MULTIPLIERS[depth ?? 'normal'] ?? 1;
+  const maxToolCalls = Math.ceil((academicAgentConfig.maxToolCalls ?? 30) * multiplier);
+  console.log(chalk.cyan.bold(`\n📚 Dış Görevlendirme: AcademicAgent -> "${query}"`) + chalk.dim(` [derinlik: ${depth ?? 'normal'}, bütçe: ${maxToolCalls}]`));
   const history: Message[] = [
     { role: 'system', content: academicAgentConfig.systemPrompt },
     { role: 'user', content: context ? `Context:\n${context}\n\nAraştırma Görevi:\n${query}` : query }
   ];
-  const result = await runAgentLoop(history, academicAgentConfig);
+  const result = await runAgentLoop(history, { ...academicAgentConfig, maxToolCalls });
   
   // Ham bilgiyi history'den çıkar ve kaydet (Supervisor follow-up soruları için)
   await saveKnowledgeFromHistory(history, query);

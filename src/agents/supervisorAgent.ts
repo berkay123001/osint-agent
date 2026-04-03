@@ -61,7 +61,8 @@ const supervisorMetaTools: OpenAI.Chat.ChatCompletionTool[] = [
         type: 'object',
         properties: {
           query: { type: 'string', description: 'Identity uzmanına verilecek tam görev/komut (Örn: "torvalds github hesabını incele")' },
-          context: { type: 'string', description: 'Ek bağlam (Öncesinde bilinenler vs.)' }
+          context: { type: 'string', description: 'Ek bağlam (Öncesinde bilinenler vs.)' },
+          depth: { type: 'string', enum: ['quick', 'normal', 'deep'], description: 'Araştırma derinliği. quick=tek varlık/hızlı doğrulama (0.5x araç bütçesi), normal=standart (1x), deep=çok varlıklı/karmaşık araştırma (1.75x). Birden fazla kişi/username/email varsa deep kullan.' }
         },
         required: ['query']
       }
@@ -76,7 +77,8 @@ const supervisorMetaTools: OpenAI.Chat.ChatCompletionTool[] = [
         type: 'object',
         properties: {
           query: { type: 'string', description: 'Media uzmanına verilecek görev/komut (Örn: "Şu görselin kaynağını bul" veya "İran gaz kesintisi iddiasını doğrula — aşağıdaki URL\'leri kendi araçlarınla tara")' },
-          context: { type: 'string', description: 'HAM VERİ paketi — Supervisor\'ın topladığı URL\'ler, ham alıntılar ve çelişkili noktalar. Örnek format: "URL1: https://... | Alıntı: \'Bakan: akış devam ediyor\'\nURL2: https://... | Alıntı: \'Bloomberg: ihracat durduruldu\'\nÇELİŞKİ: Türk resmi kaynaklar vs uluslararası medya"\nMediaAgent bu URL\'leri kendi web_fetch/scrape araçlarıyla bağımsız olarak doğrular. ÖZET DEĞİL — HAM URL VER.' }
+          context: { type: 'string', description: 'HAM VERİ paketi — Supervisor\'ın topladığı URL\'ler, ham alıntılar ve çelişkili noktalar. Örnek format: "URL1: https://... | Alıntı: \'Bakan: akış devam ediyor\'\nURL2: https://... | Alıntı: \'Bloomberg: ihracat durduruldu\'\nÇELİŞKİ: Türk resmi kaynaklar vs uluslararası medya"\nMediaAgent bu URL\'leri kendi web_fetch/scrape araçlarıyla bağımsız olarak doğrular. ÖZET DEĞİL — HAM URL VER.' },
+          depth: { type: 'string', enum: ['quick', 'normal', 'deep'], description: 'Araştırma derinliği. quick=tek iddia/görsel (0.5x), normal=standart (1x), deep=çok kaynak/karmaşık fact-check (1.75x). Birden fazla bağımsız iddia veya 3+ URL incelemelerde deep kullan.' }
         },
         required: ['query']
       }
@@ -91,7 +93,8 @@ const supervisorMetaTools: OpenAI.Chat.ChatCompletionTool[] = [
         type: 'object',
         properties: {
           query: { type: 'string', description: 'Akademik araştırma görevi (Örn: "reinforcement learning from human feedback 2025 makaleleri")' },
-          context: { type: 'string', description: 'Ek bağlam (araştırmacı ismi, kurum vb.)' }
+          context: { type: 'string', description: 'Ek bağlam (araştırmacı ismi, kurum vb.)' },
+          depth: { type: 'string', enum: ['quick', 'normal', 'deep'], description: 'Araştırma derinliği. quick=tek makale/hızlı özet (0.5x), normal=standart literatür taraması (1x), deep=kapsamlı citation ağı/çoklu araştırmacı analizi (1.75x).' }
         },
         required: ['query']
       }
@@ -143,7 +146,7 @@ async function saveToObsidianDirect(agentLabel: string, query: string, result: s
 
 async function supervisorExecuteTool(name: string, args: Record<string, string>): Promise<string> {
   if (name === 'ask_identity_agent') {
-    const r = await runIdentityAgent(args.query, args.context);
+    const r = await runIdentityAgent(args.query, args.context, args.depth);
     setReportContentBuffer(r);
     try {
       const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
@@ -154,7 +157,7 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
     saveToObsidianDirect('IdentityAgent', args.query, r)
     return truncateSubAgentResponse(r, 'IdentityAgent');
   } else if (name === 'ask_media_agent') {
-    const r = await runMediaAgent(args.query, args.context);
+    const r = await runMediaAgent(args.query, args.context, args.depth);
     setReportContentBuffer(r);
     try {
       const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
@@ -165,7 +168,7 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
     saveToObsidianDirect('MediaAgent', args.query, r)
     return truncateSubAgentResponse(r, 'MediaAgent');
   } else if (name === 'ask_academic_agent') {
-    const r = await runAcademicAgent(args.query, args.context);
+    const r = await runAcademicAgent(args.query, args.context, args.depth);
     setReportContentBuffer(r);
     try {
       const sessionDir = path.resolve(__dirname, '../../.osint-sessions');

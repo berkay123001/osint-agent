@@ -151,13 +151,18 @@ Unutma:
 - Detaylı Markdown rapor + güven skoru tablosuyla bulgularını derle.`,
 };
 
-export async function runMediaAgent(query: string, context?: string): Promise<string> {
-  console.log(chalk.cyan.bold(`\n📰 Dış Görevlendirme: MediaAgent -> "${query}"`));
+// depth → maxToolCalls çarpanı: quick=0.5x, normal=1x, deep=1.75x
+const DEPTH_MULTIPLIERS: Record<string, number> = { quick: 0.5, normal: 1, deep: 1.75 };
+
+export async function runMediaAgent(query: string, context?: string, depth?: string): Promise<string> {
+  const multiplier = DEPTH_MULTIPLIERS[depth ?? 'normal'] ?? 1;
+  const maxToolCalls = Math.ceil((mediaAgentConfig.maxToolCalls ?? 25) * multiplier);
+  console.log(chalk.cyan.bold(`\n📰 Dış Görevlendirme: MediaAgent -> "${query}"`) + chalk.dim(` [derinlik: ${depth ?? 'normal'}, bütçe: ${maxToolCalls}]`));
   const history: Message[] = [
     { role: 'system', content: mediaAgentConfig.systemPrompt },
     { role: 'user', content: context ? `Context:\n${context}\n\nTask:\n${query}` : query }
   ];
-  const result = await runAgentLoop(history, mediaAgentConfig);
+  const result = await runAgentLoop(history, { ...mediaAgentConfig, maxToolCalls });
   await saveKnowledgeFromHistory(history, query);
   const toolSummary = Object.entries(result.toolsUsed)
     .map(([tool, count]) => `${tool}×${count}`)
