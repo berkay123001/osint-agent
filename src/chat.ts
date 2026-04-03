@@ -129,22 +129,23 @@ function printBanner() {
 printBanner()
 
 // ── Oturum yükleme ───────────────────────────────────────────────────────────
-// terminal:false → readline satırları stream olarak okur, stty canonical mode
-// backspace/echo terminale bırakılır; paste satırları tek data event'te gelir → debounce güvenilir
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false });
+const SLASH_COMMANDS = ['/help', '/resume', '/history', '/show', '/reset'];
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: true,
+  completer: (line: string): [string[], string] => {
+    if (line.startsWith('/')) {
+      const hits = SLASH_COMMANDS.filter(c => c.startsWith(line));
+      return [hits.length ? hits : SLASH_COMMANDS, line];
+    }
+    return [[], line];
+  },
+});
 
 let history: Message[] = [];
 let activeSessionMeta: { createdAt: string } | null = null;
 let existingSession = loadActiveSession();
-
-// ── Soru/paste yardımcıları ──────────────────────────────────────────────────
-let pendingQuestion: ((ans: string) => void) | null = null;
-
-/** rl.question() yerine kullanılır — paste buffer ile çakışmaz */
-function askQuestion(promptText: string, callback: (ans: string) => void): void {
-  pendingQuestion = callback;
-  process.stdout.write(promptText);
-}
 
 async function askResume(): Promise<boolean> {
   if (!existingSession) return false;
@@ -163,7 +164,7 @@ async function askResume(): Promise<boolean> {
         console.log(chalk.dim(`     Son: "${preview}${ellipsis}"`))
       }
     }
-    askQuestion(chalk.bold.yellow('\n  Kaldığın yerden devam etsem mi? [E/h] '), (ans) => {
+    rl.question(chalk.bold.yellow('\n  Kaldığın yerden devam etsem mi? [E/h] '), (ans) => {
       resolve(ans.trim().toLowerCase() !== 'h');
     });
   });
@@ -209,7 +210,7 @@ function handleResume(): void {
   }
 
   console.log();
-  askQuestion(chalk.bold.yellow('  Devam etmek istediğiniz oturum numarası (iptal: 0): '), (ans) => {
+  rl.question(chalk.bold.yellow('  Devam etmek istediğiniz oturum numarası (iptal: 0): '), (ans) => {
     const idx = parseInt(ans.trim(), 10);
     if (isNaN(idx) || idx < 1 || idx > allSessions.length) {
       console.log(chalk.dim('\n  İptal edildi.\n'));
@@ -246,7 +247,6 @@ function handleResume(): void {
 
 /** Oturum geçmişini terminale okunabilir şekilde yazdırır */
 function printHistory(msgs: Message[]): void {
-  // Sadece kullanıcı ve asistan (content'li) mesajları göster
   const visible = msgs.filter(
     (m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim().length > 0
   );
@@ -259,16 +259,12 @@ function printHistory(msgs: Message[]): void {
   for (const msg of visible) {
     const content = (msg.content as string).trim();
     if (msg.role === 'user') {
-      // Kullanıcı mesajı — tam göster ama çok uzunsa kırp
-      const maxLen = 300;
-      const text = content.length > maxLen
-        ? content.slice(0, maxLen) + chalk.dim('…')
-        : content;
-      console.log(chalk.bold.green('\n  ❯ ') + chalk.white(text));
+      // Kullanıcı mesajı — tam göster
+      console.log(chalk.bold.green('\n  ❯ ') + chalk.white(content));
     } else if (msg.role === 'assistant') {
-      // Asistan — son yanıtı geniş göster, öncekiler kısa
-      const isLast = msg === visible[visible.length - 1] || msg === visible[visible.length - 2];
-      const maxLen = isLast ? 800 : 150;
+      // Asistan yanıtı — son 2 mesajı geniş göster, öncekiler kısa
+      const isRecent = msg === visible[visible.length - 1] || msg === visible[visible.length - 2];
+      const maxLen = isRecent ? 1500 : 400;
       const text = content.length > maxLen
         ? content.slice(0, maxLen) + chalk.dim(` …[+${content.length - maxLen} karakter]`)
         : content;
@@ -311,11 +307,13 @@ let pasteBuffer: string[] = [];
 let pasteTimer: NodeJS.Timeout | null = null;
 let isProcessing = false;
 
-const PASTE_TIMEOUT_MS = 60;
+const PASTE_TIMEOUT_MS = 15;
+
+rl.setPrompt(chalk.bold.green('\n❯ '));
 
 function prompt(): void {
   if (!process.stdin.readable || isProcessing) return;
-  process.stdout.write(chalk.bold.green('\n❯ '));
+  rl.prompt();
 }
 
 async function handleUserInput(rawInput: string): Promise<void> {
@@ -392,29 +390,34 @@ async function handleUserInput(rawInput: string): Promise<void> {
   prompt();
 }
 
-async function flushPasteBuffer(): Promise<void> {
+function flushPasteBuffer(): void {
   pasteTimer = null;
   if (pasteBuffer.length === 0) return;
   const lines = pasteBuffer.splice(0);
-  const combined = lines.join('\n');
+
   if (lines.length > 1) {
+    // Çok satırlı paste → onay iste
     pasteCounter++;
-    const preview = combined.trim().slice(0, 50).replace(/\n/g, ' ');
-    const ellipsis = combined.trim().length > 50 ? '…' : '';
-    console.log(chalk.yellow(`\n  [paste #${pasteCounter}: "${preview}${ellipsis}" +${lines.length - 1} satır]`));
+    const combined = lines.join('\n');
+    const preview = combined.trim().slice(0, 60).replace(/\n/g, ' ');
+    const ellipsis = combined.trim().length > 60 ? '…' : '';
+    console.log(chalk.yellow(`\n  [paste #${pasteCounter}: "${preview}${ellipsis}" +${lines.length} satır]`));
+    rl.question(chalk.bold.yellow('  Gönder? [E/h] '), (ans) => {
+      if (ans.trim().toLowerCase() === 'h') {
+        console.log(chalk.dim('  İptal edildi.'));
+        prompt();
+      } else {
+        handleUserInput(combined);
+      }
+    });
+  } else {
+    // Tek satır — normal gönder
+    handleUserInput(lines[0]);
   }
-  await handleUserInput(combined);
 }
 
 rl.on('line', (line: string) => {
-  // rl.question() yerine askQuestion() kullananların callback'i
-  if (pendingQuestion) {
-    const cb = pendingQuestion;
-    pendingQuestion = null;
-    cb(line);
-    return;
-  }
-  if (isProcessing) return; // ajan çalışırken girdi yoksay
+  if (isProcessing) return;
   pasteBuffer.push(line);
   if (pasteTimer) clearTimeout(pasteTimer);
   pasteTimer = setTimeout(flushPasteBuffer, PASTE_TIMEOUT_MS);
