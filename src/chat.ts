@@ -128,7 +128,9 @@ function printBanner() {
 printBanner()
 
 // ── Oturum yükleme ───────────────────────────────────────────────────────────
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+// terminal:false → readline satırları stream olarak okur, stty canonical mode
+// backspace/echo terminale bırakılır; paste satırları tek data event'te gelir → debounce güvenilir
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false });
 
 let history: Message[] = [];
 let activeSessionMeta: { createdAt: string } | null = null;
@@ -290,12 +292,11 @@ let pasteBuffer: string[] = [];
 let pasteTimer: NodeJS.Timeout | null = null;
 let isProcessing = false;
 
-const PASTE_TIMEOUT_MS = 30;
-
-rl.setPrompt(chalk.bold.green('\n❯ '));
+const PASTE_TIMEOUT_MS = 60;
 
 function prompt(): void {
-  if (process.stdin.readable && !isProcessing) rl.prompt();
+  if (!process.stdin.readable || isProcessing) return;
+  process.stdout.write(chalk.bold.green('\n❯ '));
 }
 
 async function handleUserInput(rawInput: string): Promise<void> {
