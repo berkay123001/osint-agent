@@ -130,14 +130,14 @@ function printBanner() {
 printBanner()
 
 // ── Oturum yükleme ───────────────────────────────────────────────────────────
-const SLASH_COMMANDS = ['/help', '/resume', '/history', '/show', '/delete', '/reset'];
+const SLASH_COMMANDS = ['/delete', '/help', '/history', '/reset', '/resume', '/show'];
 const CMD_DESCRIPTIONS: Record<string, string> = {
-  '/help':    'Komutları listele',
-  '/resume':  'Kayıtlı oturum yükle',
-  '/history': 'Mesaj istatistikleri',
-  '/show':    'Geçmişi ekrana yazdır',
   '/delete':  'Oturum sil',
+  '/help':    'Komutları listele',
+  '/history': 'Mesaj istatistikleri',
   '/reset':   'Oturumu sıfırla',
+  '/resume':  'Kayıtlı oturum yükle',
+  '/show':    'Geçmişi ekrana yazdır',
 };
 
 // ── Inline slash-command tamamlama (/ yazınca görünür) ────────────────────────
@@ -145,26 +145,35 @@ let drawnCompletionCount = 0;
 
 function clearInlineCompletions(): void {
   if (drawnCompletionCount === 0) return;
-  // Kursörü kaydet, aşağı inerek satırları temizle, geri dön
-  process.stdout.write('\x1b[s');
   for (let i = 0; i < drawnCompletionCount; i++) {
-    process.stdout.write('\x1b[1B\x1b[2K');
+    readline.moveCursor(process.stdout, 0, 1);
+    readline.clearLine(process.stdout, 0);
   }
-  process.stdout.write('\x1b[u');
+  readline.moveCursor(process.stdout, 0, -drawnCompletionCount);
   drawnCompletionCount = 0;
 }
 
 function showInlineCompletions(currentLine: string): void {
   clearInlineCompletions();
   if (!currentLine.startsWith('/')) return;
-  const matches = SLASH_COMMANDS.filter(c => c.startsWith(currentLine));
+  const matches = SLASH_COMMANDS.filter(c => c.startsWith(currentLine)); // zaten alfabetik
   if (matches.length === 0) return;
-  process.stdout.write('\x1b[s');
+
+  // Kolon hizalaması için en uzun komut uzunluğunu bul
+  const maxLen = Math.max(...matches.map(c => c.length));
+  // Prompt '❯ ' (2 char) + typed text = cursor sütunu
+  const savedCol = currentLine.length + 3;
+
   for (const cmd of matches) {
-    process.stdout.write('\x1b[1B\r\x1b[2K');
-    process.stdout.write(`  ${chalk.bold.cyan(cmd)}  ${chalk.dim(CMD_DESCRIPTIONS[cmd] || '')}`);
+    readline.moveCursor(process.stdout, 0, 1);
+    readline.cursorTo(process.stdout, 0);
+    readline.clearLine(process.stdout, 0);
+    const padding = ' '.repeat(maxLen - cmd.length + 2);
+    process.stdout.write(`  ${chalk.bold.cyan(cmd)}${padding}${chalk.dim(CMD_DESCRIPTIONS[cmd] || '')}`);
   }
-  process.stdout.write('\x1b[u');
+  // Yukarı geri dön, cursor'u doğru kolona getir
+  readline.moveCursor(process.stdout, 0, -matches.length);
+  readline.cursorTo(process.stdout, savedCol);
   drawnCompletionCount = matches.length;
 }
 
@@ -535,15 +544,18 @@ rl.on('line', (line: string) => {
 
 // Keypress: / yazılınca anlık komut listesi
 if (process.stdin.isTTY) {
-  process.stdin.on('keypress', (_str, key) => {
+  readline.emitKeypressEvents(process.stdin);
+  process.stdin.on('keypress', (_str: string | undefined, key: { name?: string; sequence?: string } | undefined) => {
     if (!key) return;
+    // Enter / return — tamamlamayı temizle (rl.on('line') sonra alır)
     if (key.name === 'return' || key.name === 'enter') {
       clearInlineCompletions();
       return;
     }
-    setImmediate(() => {
-      if (isProcessing) return;
-      const line = (rl as any).line ?? '';
+    if (isProcessing) return;
+    // readline'nın satırını bir nextTick sonra oku (readline key işlemi tamamladıktan sonra)
+    process.nextTick(() => {
+      const line: string = (rl as unknown as { line: string }).line ?? '';
       if (line.startsWith('/')) {
         showInlineCompletions(line);
       } else {
