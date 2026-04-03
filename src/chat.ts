@@ -145,11 +145,13 @@ let drawnCompletionCount = 0;
 
 function clearInlineCompletions(): void {
   if (drawnCompletionCount === 0) return;
+  // Satırlar zaten var — scroll etmeden aşağı in, temizle, geri dön
   for (let i = 0; i < drawnCompletionCount; i++) {
-    readline.moveCursor(process.stdout, 0, 1);
+    process.stdout.write('\x1b[1B'); // cursor down (scroll etmez)
+    readline.cursorTo(process.stdout, 0);
     readline.clearLine(process.stdout, 0);
   }
-  readline.moveCursor(process.stdout, 0, -drawnCompletionCount);
+  process.stdout.write(`\x1b[${drawnCompletionCount}A`); // cursor up N
   drawnCompletionCount = 0;
 }
 
@@ -159,20 +161,20 @@ function showInlineCompletions(currentLine: string): void {
   const matches = SLASH_COMMANDS.filter(c => c.startsWith(currentLine)); // zaten alfabetik
   if (matches.length === 0) return;
 
-  // Kolon hizalaması için en uzun komut uzunluğunu bul
   const maxLen = Math.max(...matches.map(c => c.length));
-  // Prompt '❯ ' (2 char) + typed text = cursor sütunu
+  // Prompt '❯ ' (2 char) + boşluk (1) + yazılan = cursor sütunu
   const savedCol = currentLine.length + 3;
 
   for (const cmd of matches) {
-    readline.moveCursor(process.stdout, 0, 1);
+    // \n → scroll-safe satır ilerletme (terminalde son satırda da çalışır)
+    process.stdout.write('\n');
     readline.cursorTo(process.stdout, 0);
     readline.clearLine(process.stdout, 0);
     const padding = ' '.repeat(maxLen - cmd.length + 2);
     process.stdout.write(`  ${chalk.bold.cyan(cmd)}${padding}${chalk.dim(CMD_DESCRIPTIONS[cmd] || '')}`);
   }
   // Yukarı geri dön, cursor'u doğru kolona getir
-  readline.moveCursor(process.stdout, 0, -matches.length);
+  process.stdout.write(`\x1b[${matches.length}A`);
   readline.cursorTo(process.stdout, savedCol);
   drawnCompletionCount = matches.length;
 }
