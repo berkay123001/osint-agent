@@ -118,6 +118,7 @@ function printBanner() {
     chalk.cyan('/reset') + g(' · ') +
     chalk.cyan('/history') + g(' · ') +
     chalk.cyan('/resume') + g(' · ') +
+    chalk.cyan('/ ...') + g(' · ') +
     chalk.cyan('exit')
   )
   console.log(g('  ─────────────────────────────────────────────────────────'))
@@ -219,13 +220,33 @@ function handleResume(): void {
     // Arşivden yüklenen oturumu aktif yap
     if (!chosen.isActive) {
       saveSession(history);
-      console.log(chalk.green(`\n  ✔ Oturum yüklendi — ${chosen.data.history.filter(m => m.role === 'user').length} soru, ${new Date(chosen.data.lastActiveAt).toLocaleString('tr-TR')} tarihinden.\n`));
+      console.log(chalk.green(`\n  ✔ Oturum yüklendi — ${chosen.data.history.filter(m => m.role === 'user').length} soru, ${new Date(chosen.data.lastActiveAt).toLocaleString('tr-TR')} tarihinden.`));
     } else {
-      console.log(chalk.green(`\n  ✔ Aktif oturum zaten yüklü.\n`));
+      console.log(chalk.green(`\n  ✔ Aktif oturum zaten yüklü.`));
     }
+
+    // Yüklenen mesajları terminale yazdır
+    printHistory(history);
 
     prompt();
   });
+}
+
+/** Oturum geçmişini terminale okunabilir şekilde yazdırır */
+function printHistory(msgs: Message[]): void {
+  if (msgs.length === 0) return;
+  console.log(chalk.dim('  ─────────────────────────────────────────────────────────'));
+  for (const msg of msgs) {
+    if (msg.role === 'user' && typeof msg.content === 'string') {
+      console.log(chalk.bold.green('  ❯ ') + chalk.white(msg.content));
+    } else if (msg.role === 'assistant' && typeof msg.content === 'string') {
+      const text = msg.content.length > 200
+        ? msg.content.slice(0, 200) + '…'
+        : msg.content;
+      console.log(chalk.dim('  🤖 ') + text.split('\n').join('\n     '));
+    }
+  }
+  console.log(chalk.dim('  ─────────────────────────────────────────────────────────') + '\n');
 }
 
 (async () => {
@@ -234,7 +255,8 @@ function handleResume(): void {
     history = existingSession.history;
     activeSessionMeta = { createdAt: existingSession.createdAt };
     const resumeCount = history.filter(m => m.role === 'user').length;
-    console.log(chalk.green(`  ✔ Oturum devam ediyor — ${resumeCount} önceki soru yüklendi.\n`));
+    console.log(chalk.green(`  ✔ Oturum devam ediyor — ${resumeCount} önceki soru yüklendi.`));
+    printHistory(history);
   } else {
     // Kullanici devam etmek istemedi — once arşivle, sonra aktif dosyayı sil
     if (existingSession && existingSession.messageCount > 0) {
@@ -253,6 +275,9 @@ function handleResume(): void {
   prompt();
 })();
 
+// ── Paste sayacı ─────────────────────────────────────────────────────────────
+let pasteCounter = 0;
+
 // ── Ana soru döngüsü ─────────────────────────────────────────────────────────
 function prompt() {
   if (!process.stdin.readable) return;
@@ -260,7 +285,27 @@ function prompt() {
     const input = line.trim();
     if (!input) { prompt(); return; }
 
+    // Çok satırlı paste algılama
+    const rawLines = line.split('\n');
+    if (rawLines.length > 1) {
+      pasteCounter++;
+      const preview = input.slice(0, 50).replace(/\n/g, ' ');
+      const ellipsis = input.length > 50 ? '…' : '';
+      console.log(chalk.yellow(`  [paste #${pasteCounter}: "${preview}${ellipsis}" +${rawLines.length - 1} lines]`));
+    }
+
     // Özel komutlar
+    if (input === '/') {
+      console.log(chalk.cyan('\n  📋 Komutlar:\n'));
+      console.log(chalk.white('  /reset') + chalk.dim('    — Oturumu sıfırla'));
+      console.log(chalk.white('  /history') + chalk.dim('  — Mesaj istatistikleri'));
+      console.log(chalk.white('  /resume') + chalk.dim('   — Kayıtlı oturumları listele'));
+      console.log(chalk.white('  exit') + chalk.dim('      — Oturumu arşivle ve çık'));
+      console.log();
+      prompt();
+      return;
+    }
+
     if (input.toLowerCase() === 'exit') {
       archiveSession(history);
       deleteActiveSession();

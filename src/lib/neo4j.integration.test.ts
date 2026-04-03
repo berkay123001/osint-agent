@@ -14,6 +14,7 @@ import {
   pruneMisclassifiedFullNameUsernames,
   findLinkedIdentifiers,
   writeOsintToGraph,
+  batchWriteFindings,
 } from './neo4j.js'
 
 const driver = neo4j.driver(
@@ -299,4 +300,71 @@ test('findLinkedIdentifiers returns all verified links for a username', async ()
 test('findLinkedIdentifiers returns empty arrays for unknown username', async () => {
   const ids = await findLinkedIdentifiers('nonexistent')
   assert.deepEqual(ids, { emails: [], realNames: [], handles: [], websites: [] })
+})
+
+test('batchWriteFindings creates multiple nodes and relations in a single call', async () => {
+  const stats = await batchWriteFindings([
+    { subjectLabel: 'Username', subjectValue: 'batchuser', targetLabel: 'Email', targetValue: 'batch@test.com', relation: 'USES_EMAIL', confidence: 'verified' },
+    { subjectLabel: 'Username', subjectValue: 'batchuser', targetLabel: 'Person', targetValue: 'Batch User', relation: 'REAL_NAME', confidence: 'high' },
+    { subjectLabel: 'Person', subjectValue: 'Batch User', targetLabel: 'Organization', targetValue: 'BatchCorp', relation: 'WORKS_AT', confidence: 'medium' },
+  ])
+
+  assert.equal(stats.errors.length, 0)
+  assert.equal(stats.nodesCreated, 4) // batchuser, email, person, org
+  assert.equal(stats.relsCreated, 3)
+
+  const graphStats = await getGraphStats()
+  assert.deepEqual(graphStats, { nodes: 4, relationships: 3 })
+
+  // Verify relations
+  const connections = await getConnections('batchuser')
+  assert.equal(connections.length, 2)
+  const relationTypes = connections.map(c => c.relation).sort()
+  assert.deepEqual(relationTypes, ['REAL_NAME', 'USES_EMAIL'])
+})
+
+test('batchWriteFindings is idempotent — same findings do not grow graph', async () => {
+  const findings = [
+    { subjectLabel: 'Username', subjectValue: 'idemuser', targetLabel: 'Email', targetValue: 'idem@test.com', relation: 'USES_EMAIL' },
+  ]
+
+  const first = await batchWriteFindings(findings)
+  const second = await batchWriteFindings(findings)
+
+  assert.equal(first.nodesCreated, 2)
+  assert.equal(first.relsCreated, 1)
+  assert.equal(second.nodesCreated, 0)
+  assert.equal(second.relsCreated, 0)
+
+  assert.deepEqual(await getGraphStats(), { nodes: 2, relationships: 1 })
+})
+
+test('batchWriteFindings returns empty result for empty array', async () => {
+  const stats = await batchWriteFindings([])
+  assert.deepEqual(stats, { nodesCreated: 0, relsCreated: 0, errors: [] })
+})
+
+test('batchWriteFindings rejects arrays over 30 items', async () => {
+  const findings = Array.from({ length: 31 }, (_, i) => ({
+    subjectLabel: 'Username', subjectValue: `user${i}`, targetLabel: 'Email', targetValue: `u${i}@test.com`, relation: 'USES_EMAIL',
+  }))
+  const stats = await batchWriteFindings(findings)
+  assert.equal(stats.nodesCreated, 0)
+  assert.equal(stats.relsCreated, 0)
+  assert.ok(stats.errors.length > 0)
+  assert.ok(stats.errors[0].includes('30'))
+})
+
+test('batchWriteFindings stores confidence and evidence metadata', async () => {
+  await batchWriteFindings([
+    { subjectLabel: 'Username', subjectValue: 'metauser', targetLabel: 'Email', targetValue: 'meta@test.com', relation: 'USES_EMAIL', confidence: 'verified', evidence: 'GitHub API' },
+  ])
+
+  const result = await runQuery(
+    'MATCH (:Username {value: $u})-[r:USES_EMAIL]->(:Email {value: $e}) RETURN r.confidence AS conf, r.evidence AS ev, r.source AS src',
+    { u: 'metauser', e: 'meta@test.com' }
+  )
+  assert.equal(result.records[0]?.get('conf'), 'verified')
+  assert.equal(result.records[0]?.get('ev'), 'GitHub API')
+  assert.equal(result.records[0]?.get('src'), 'supervisor_llm')
 })

@@ -21,8 +21,8 @@ const __dirname = path.dirname(__filename);
  * - 4000+ karakter: ilk 3500 karakter + "kesildi" notu + dosya yolu
  * Supervisor detayları read_session_file ile okuyabilir.
  */
-const MAX_SUB_AGENT_RESPONSE = 4000;
-const KEEP_FIRST = 3500;
+const MAX_SUB_AGENT_RESPONSE = 12000;
+const KEEP_FIRST = 11000;
 
 function truncateSubAgentResponse(response: string, agentLabel: string): string {
   if (response.length <= MAX_SUB_AGENT_RESPONSE) return response
@@ -45,7 +45,7 @@ const SUPERVISOR_TOOLS = [
   'remove_false_positive', 'mark_false_positive',
   'generate_report', 'check_plagiarism',
   'obsidian_write', 'obsidian_append', 'obsidian_read', 'obsidian_daily', 'obsidian_list', 'obsidian_search', 'obsidian_write_profile',
-  'save_finding', 'save_ioc', 'link_entities',
+  'save_finding', 'batch_save_findings', 'save_ioc', 'link_entities',
 ];
 
 const supervisorNativeTools = tools.filter((t: any) => t.type === 'function' && SUPERVISOR_TOOLS.includes(t.function.name));
@@ -101,8 +101,22 @@ const supervisorMetaTools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'read_session_file',
-      description: 'En son akademik araştırma oturumunu disk\'ten okur. ask_academic_agent tamamlandıktan sonra follow-up sorularda kullan — AcademicAgent\'ı tekrar çağırma.',
-      parameters: { type: 'object', properties: {}, required: [] }
+      description: 'Sub-agent oturum dosyalarını disk\'ten okur. Belirli bir agent filtreleyebilir veya ham bilgi tabanını okuyabilirsin. Alt ajan raporunda detay eksikse veya kullanıcı follow-up soruyorsa kullan — agent\'ı tekrar çağırma.',
+      parameters: {
+        type: 'object',
+        properties: {
+          agent: {
+            type: 'string',
+            enum: ['academic', 'identity', 'media', 'all'],
+            description: 'Hangi agent\'ın oturum dosyası okunacak? Varsayılan: all (tüm agentlar)'
+          },
+          include_knowledge: {
+            type: 'boolean',
+            description: 'Ham araç çağrısı sonuçlarını (knowledge base) da dahil et? Varsayılan: false (sadece rapor)'
+          }
+        },
+        required: []
+      }
     }
   }
 ];
@@ -166,23 +180,35 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
     try {
       const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
       const { readFile } = await import('fs/promises');
-      // Tüm 3 ajan için dosyaları paralel oku
-      const files = [
-        { label: '📋 AcademicAgent Raporu', report: 'academic-last-session.md', knowledge: 'academic-knowledge.md' },
-        { label: '🕵️ IdentityAgent Raporu', report: 'identity-last-session.md', knowledge: 'identity-knowledge.md' },
-        { label: '📰 MediaAgent Raporu', report: 'media-last-session.md', knowledge: 'media-knowledge.md' },
+      const agentFilter = (args.agent as string) || 'all';
+      const includeKnowledge = args.include_knowledge === 'true';
+
+      const allFiles = [
+        { key: 'academic', label: 'AcademicAgent Raporu', report: 'academic-last-session.md', knowledge: 'academic-knowledge.md' },
+        { key: 'identity', label: 'IdentityAgent Raporu', report: 'identity-last-session.md', knowledge: 'identity-knowledge.md' },
+        { key: 'media', label: 'MediaAgent Raporu', report: 'media-last-session.md', knowledge: 'media-knowledge.md' },
       ];
+
+      const filtered = agentFilter === 'all'
+        ? allFiles
+        : allFiles.filter(f => f.key === agentFilter);
+
       const parts: string[] = [];
-      for (const f of files) {
-        const [report, knowledge] = await Promise.allSettled([
-          readFile(path.join(sessionDir, f.report), 'utf-8'),
-          readFile(path.join(sessionDir, f.knowledge), 'utf-8'),
-        ]);
-        if (report.status === 'fulfilled') parts.push(`# ${f.label}\n\n${report.value}`);
-        if (knowledge.status === 'fulfilled') parts.push(knowledge.value);
+      for (const f of filtered) {
+        const readTasks = [readFile(path.join(sessionDir, f.report), 'utf-8')];
+        if (includeKnowledge) readTasks.push(readFile(path.join(sessionDir, f.knowledge), 'utf-8'));
+
+        const results = await Promise.allSettled(readTasks);
+        if (results[0].status === 'fulfilled') {
+          parts.push(`# ${f.label}\n\n${results[0].value}`);
+        }
+        if (includeKnowledge && results[1]?.status === 'fulfilled') {
+          parts.push(results[1].value);
+        }
       }
       if (parts.length === 0) {
-        return '⚠️ Henüz kaydedilmiş araştırma oturumu yok. Önce bir sub-agent çağırın (ask_academic_agent, ask_identity_agent veya ask_media_agent).';
+        const hint = agentFilter === 'all' ? '' : ` (${agentFilter} agent için)`;
+        return `⚠️ Henüz kaydedilmiş araştırma oturumu yok${hint}. Önce bir sub-agent çağırın.`;
       }
       return parts.join('\n\n---\n\n');
     } catch {
@@ -321,6 +347,7 @@ Bir alt ajandan "[AGENT_DONE]" etiketi içeren yanıt aldıktan sonra:
 - Alt ajanın raporunu kendi analizinle zenginleştir
 - Sub-ajan sonucu SAYFALARsa — o sayfaları web_fetch ile aç, eksik soruyu sen araştır
 - Ajan zayıf sonuç döndürdüyse (404, 0 bulgu): o bilgiyi sen search_web ile tamamlayabilirsin
+- 📊 İÇERİK SUNUM: Alt ajan raporundaki zengin içeriği korumaya özen göster — tablolar, spesifik sayılar, model adları, dataset isimleri, linkler ve metrikleriklerden önemli ve ilgi çekici olanları kullanıcı aksini belirtmediği sürece koru. Kullanıcıyı çok fazla teknik detaya boğmasın  ama spesifik veriyi kesme. "Akademik araştırmada X modeli %95 accuracy" → gibi önemli,ilgi çekici ve konuyla doğrudan alakalı bir bilgi varsa kullanıcıya sun paraphrase etme. Kullanıcı detay isterse read_session_file ile genişlet.
 
 🚫 YAPILMAYACAKLAR:
 - Sub-ajanın ZATEN YAPTIĞI sorguları birebir tekrar etme (aynı anahtar kelimelerle aynı araçları)

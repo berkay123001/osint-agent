@@ -7,7 +7,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { logger } from './logger.js'
 import { githubOsint } from '../tools/githubTool.js'
-import { writeOsintToGraph, getConnections, getGraphStats, getGraphNodeCountsByLabel, listGraphNodes, pruneMisclassifiedFullNameUsernames, findLinkedIdentifiers, writeEmailRegistrations, writeBreachData, writeFollowingConnections, mergeRelation, closeNeo4j, clearGraph, deleteGraphNodeAndRelations, writeFinding, writeCybersecurityNode, linkEntities, markNodeMlLabel } from './neo4j.js'
+import { writeOsintToGraph, getConnections, getGraphStats, getGraphNodeCountsByLabel, listGraphNodes, pruneMisclassifiedFullNameUsernames, findLinkedIdentifiers, writeEmailRegistrations, writeBreachData, writeFollowingConnections, mergeRelation, closeNeo4j, clearGraph, deleteGraphNodeAndRelations, writeFinding, writeCybersecurityNode, linkEntities, markNodeMlLabel, batchWriteFindings } from './neo4j.js'
 import { normalizeAssistantMessage, normalizeToolContent, sanitizeHistoryForProvider } from './chatHistory.js'
 import { isLikelyUsernameCandidate } from './osintHeuristics.js'
 import { extractMetadataFromUrl, extractMetadataFromFile, formatMetadata } from '../tools/metadataTool.js'
@@ -153,6 +153,37 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
           evidence: { type: 'string', description: 'Bulgunun kanıtı (kaynak URL veya açıklama)' },
         },
         required: ['subject_label', 'subject_value', 'finding_type', 'target_label', 'target_value', 'relation'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'batch_save_findings',
+      description: 'Birden fazla OSINT bulgusunu tek seferde Neo4j grafına toplu yazar. save_finding yerine 5+ bulgu varsa bunu kullan — çok daha verimli (tek API call). Maksimum 30 bulgu. Her bulgu için subject→relation→target yapısı kullanılır.',
+      parameters: {
+        type: 'object',
+        properties: {
+          findings: {
+            type: 'array',
+            description: 'Bulgu listesi. Her eleman bir save_finding çağrısına denk gelir.',
+            items: {
+              type: 'object',
+              properties: {
+                subject_label: { type: 'string', description: 'Özne node tipi (Username, Email, Person, Website vb.)' },
+                subject_value: { type: 'string', description: 'Özne node değeri' },
+                target_label: { type: 'string', description: 'Hedef node tipi' },
+                target_value: { type: 'string', description: 'Hedef node değeri' },
+                relation: { type: 'string', description: 'İlişki tipi (USES_EMAIL, LOCATED_IN, WORKS_AT vb.)' },
+                confidence: { type: 'string', enum: ['verified', 'high', 'medium', 'low'], description: 'Güvenilirlik seviyesi' },
+                evidence: { type: 'string', description: 'Kısa kanıt notu (max 200 karakter)' },
+              },
+              required: ['subject_label', 'subject_value', 'target_label', 'target_value', 'relation'],
+            },
+            maxItems: 30,
+          },
+        },
+        required: ['findings'],
       },
     },
   },
@@ -958,6 +989,34 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
         result = formatGpxResult(gpxResult)
       } catch (e: any) {
         result = `❌ GPX analiz hatası: ${e.message}`
+      }
+    }
+    else if (name === 'batch_save_findings') {
+      const findings = args.findings
+      if (!Array.isArray(findings) || findings.length === 0) {
+        result = '❌ findings boş veya geçersiz — en az 1 bulgu gerekli.'
+      } else {
+        logger.info('TOOL', `💾 Toplu bulgu kaydı (Neo4j): ${findings.length} bulgu`)
+        try {
+          const stats = await batchWriteFindings(
+            findings.map((f: Record<string, string>) => ({
+              subjectLabel: f.subject_label,
+              subjectValue: f.subject_value,
+              targetLabel: f.target_label,
+              targetValue: f.target_value,
+              relation: f.relation,
+              confidence: (f.confidence as any) ?? 'medium',
+              evidence: f.evidence,
+            }))
+          )
+          const parts = [`✅ ${findings.length} bulgu toplu olarak Neo4j grafına yazıldı. (${stats.nodesCreated} node, ${stats.relsCreated} ilişki)`]
+          if (stats.errors.length > 0) {
+            parts.push(`⚠️ ${stats.errors.length} hata: ${stats.errors.join('; ')}`)
+          }
+          result = parts.join('\n')
+        } catch (e: any) {
+          result = `❌ Toplu graf yazma hatası: ${e.message}`
+        }
       }
     }
     else if (name === 'save_finding') {

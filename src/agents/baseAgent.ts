@@ -55,7 +55,13 @@ export async function runAgentLoop(
   // Tool call deduplication: aynı tool+args kombinasyonu önceden çağrıldıysa cache'den dön
   const callCache = new Map<string, string>();
   // Per-tool hard limiti: tek bir tool'un bütün bütçeyi yemesini engeller
-  const PER_TOOL_LIMITS: Record<string, number> = { search_academic_papers: 8, fact_check_to_graph: 2 };
+  // Varsayılan limitler maxToolCalls'a orantılı — agent bütçesi artarsa limitler de artar
+  const defaultToolLimits: Record<string, number> = {
+    search_academic_papers: Math.min(Math.ceil(maxToolCalls * 0.35), 15),  // bütçenin %35'i, max 15
+    web_fetch: Math.min(Math.ceil(maxToolCalls * 0.6), 40),                  // bütçenin %60'ı, max 40
+    fact_check_to_graph: 2,                                                    // her zaman sabit
+  };
+  const perToolLimits = { ...defaultToolLimits, ...config.toolLimits };
   const perToolCount: Record<string, number> = {};
   while (true) {
     const toolsDisabled = toolCallCount >= maxToolCalls;
@@ -371,7 +377,7 @@ export async function runAgentLoop(
 
         // Per-tool hard limit kontrolü
         perToolCount[toolName] = (perToolCount[toolName] ?? 0) + 1;
-        const toolLimit = PER_TOOL_LIMITS[toolName];
+        const toolLimit = perToolLimits[toolName];
         if (toolLimit && perToolCount[toolName] > toolLimit) {
           logger.warn('AGENT', `[${config.name}] ${toolName} hard limiti aşıldı (${toolLimit}). Atlanıyor.`);
           result = `[TOOL_LIMIT] ${toolName} bu oturumda ${toolLimit} kez çağrıldı — limit doldu. Elindeki verilerle devam et, rapor yaz.`;

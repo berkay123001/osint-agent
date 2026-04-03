@@ -11,6 +11,7 @@ export interface AgentConfig {
   maxToolCalls?: number;       // default 30; derin araştırma yapan ajanlar için artırılabilir
   maxTokens?: number;          // default 32768; Supervisor gibi büyük context'li ajanlar için artır
   maxEmptyRetries?: number;    // default 1; MediaAgent gibi uzun tool zincirlerinde artır
+  toolLimits?: Record<string, number>;  // per-tool hard limit'ler, varsayılanlarla birleşir
 }
 
 export type Message = OpenAI.Chat.ChatCompletionMessageParam;

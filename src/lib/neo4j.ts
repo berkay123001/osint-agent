@@ -786,6 +786,68 @@ export async function linkEntities(
   }
 }
 
+/**
+ * Birden fazla bulguyu tek Neo4j session'ında toplu yazar.
+ * Her finding için: subject node MERGE → target node MERGE → relation MERGE.
+ * Tek tek save_finding çağrılarına kıyasla 10+ bulguda ~80% daha az session açma.
+ */
+export async function batchWriteFindings(
+  findings: Array<{
+    subjectLabel: string
+    subjectValue: string
+    targetLabel: string
+    targetValue: string
+    relation: string
+    confidence?: ConfidenceLevel
+    evidence?: string
+  }>
+): Promise<{ nodesCreated: number; relsCreated: number; errors: string[] }> {
+  if (findings.length === 0) return { nodesCreated: 0, relsCreated: 0, errors: [] }
+  if (findings.length > 30) {
+    return { nodesCreated: 0, relsCreated: 0, errors: [`Maksimum 30 bulgu gönderilebilir, gelen: ${findings.length}`] }
+  }
+
+  const before = await getGraphStats()
+  const errors: string[] = []
+  const session = getDriver().session()
+
+  try {
+    for (const f of findings) {
+      try {
+        const sLabel = sanitizeLabel(f.subjectLabel)
+        const tLabel = sanitizeLabel(f.targetLabel)
+        const relType = sanitizeLabel(sanitizeRelType(f.relation))
+        const meta: Record<string, string> = {
+          source: 'supervisor_llm',
+          confidence: f.confidence ?? 'medium',
+        }
+        if (f.evidence) meta.evidence = f.evidence
+
+        await session.run(
+          `MERGE (a:${sLabel} {value: $sVal})
+           SET a += {value: $sVal, updatedAt: datetime()}
+           MERGE (b:${tLabel} {value: $tVal})
+           SET b += {value: $tVal, updatedAt: datetime()}
+           MERGE (a)-[r:${relType}]->(b)
+           SET r += $meta`,
+          { sVal: f.subjectValue, tVal: f.targetValue, meta }
+        )
+      } catch (e) {
+        errors.push(`${f.subjectLabel}:${f.subjectValue} → ${f.targetLabel}:${f.targetValue}: ${(e as Error).message}`)
+      }
+    }
+  } finally {
+    await session.close()
+  }
+
+  const after = await getGraphStats()
+  return {
+    nodesCreated: Math.max(after.nodes - before.nodes, 0),
+    relsCreated: Math.max(after.relationships - before.relationships, 0),
+    errors,
+  }
+}
+
 /** İlişki adını güvenli hale getirir — boşluk → _, özel char kaldır */
 function sanitizeRelType(rel: string): string {
   return rel.toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '')
