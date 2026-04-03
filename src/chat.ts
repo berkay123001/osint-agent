@@ -115,10 +115,11 @@ function printBanner() {
   console.log()
   console.log(
     g('  Komutlar: ') +
-    chalk.cyan('/reset') + g(' · ') +
-    chalk.cyan('/history') + g(' · ') +
     chalk.cyan('/resume') + g(' · ') +
-    chalk.cyan('/ ...') + g(' · ') +
+    chalk.cyan('/history') + g(' · ') +
+    chalk.cyan('/show') + g(' · ') +
+    chalk.cyan('/reset') + g(' · ') +
+    chalk.cyan('/help') + g(' · ') +
     chalk.cyan('exit')
   )
   console.log(g('  ─────────────────────────────────────────────────────────'))
@@ -245,19 +246,37 @@ function handleResume(): void {
 
 /** Oturum geçmişini terminale okunabilir şekilde yazdırır */
 function printHistory(msgs: Message[]): void {
-  if (msgs.length === 0) return;
-  console.log(chalk.dim('  ─────────────────────────────────────────────────────────'));
-  for (const msg of msgs) {
-    if (msg.role === 'user' && typeof msg.content === 'string') {
-      console.log(chalk.bold.green('  ❯ ') + chalk.white(msg.content));
-    } else if (msg.role === 'assistant' && typeof msg.content === 'string') {
-      const text = msg.content.length > 200
-        ? msg.content.slice(0, 200) + '…'
-        : msg.content;
-      console.log(chalk.dim('  🤖 ') + text.split('\n').join('\n     '));
+  // Sadece kullanıcı ve asistan (content'li) mesajları göster
+  const visible = msgs.filter(
+    (m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim().length > 0
+  );
+  if (visible.length === 0) return;
+
+  const userCount = visible.filter(m => m.role === 'user').length;
+  const asstCount = visible.filter(m => m.role === 'assistant').length;
+  console.log(chalk.dim(`\n  ── Yüklenen geçmiş: ${userCount} soru · ${asstCount} yanıt ──────────────────`));
+
+  for (const msg of visible) {
+    const content = (msg.content as string).trim();
+    if (msg.role === 'user') {
+      // Kullanıcı mesajı — tam göster ama çok uzunsa kırp
+      const maxLen = 300;
+      const text = content.length > maxLen
+        ? content.slice(0, maxLen) + chalk.dim('…')
+        : content;
+      console.log(chalk.bold.green('\n  ❯ ') + chalk.white(text));
+    } else if (msg.role === 'assistant') {
+      // Asistan — son yanıtı geniş göster, öncekiler kısa
+      const isLast = msg === visible[visible.length - 1] || msg === visible[visible.length - 2];
+      const maxLen = isLast ? 800 : 150;
+      const text = content.length > maxLen
+        ? content.slice(0, maxLen) + chalk.dim(` …[+${content.length - maxLen} karakter]`)
+        : content;
+      const indented = text.split('\n').join('\n     ');
+      console.log(chalk.dim('  🤖 ') + indented);
     }
   }
-  console.log(chalk.dim('  ─────────────────────────────────────────────────────────') + '\n');
+  console.log(chalk.dim('\n  ─────────────────────────────────────────────────────────\n'));
 }
 
 (async () => {
@@ -303,11 +322,12 @@ async function handleUserInput(rawInput: string): Promise<void> {
   const input = rawInput.trim();
   if (!input) { prompt(); return; }
 
-  if (input === '/') {
+  if (input === '/' || input === '/help') {
     console.log(chalk.cyan('\n  📋 Komutlar:\n'));
-    console.log(chalk.white('  /reset') + chalk.dim('    — Oturumu sıfırla'));
+    console.log(chalk.white('  /resume') + chalk.dim('   — Kayıtlı oturumları listele ve devam et'));
     console.log(chalk.white('  /history') + chalk.dim('  — Mesaj istatistikleri'));
-    console.log(chalk.white('  /resume') + chalk.dim('   — Kayıtlı oturumları listele'));
+    console.log(chalk.white('  /show') + chalk.dim('     — Mevcut oturum geçmişini ekrana yazdır'));
+    console.log(chalk.white('  /reset') + chalk.dim('    — Oturumu sıfırla'));
     console.log(chalk.white('  exit') + chalk.dim('      — Oturumu arşivle ve çık'));
     console.log();
     prompt();
@@ -335,14 +355,28 @@ async function handleUserInput(rawInput: string): Promise<void> {
 
   if (input.toLowerCase() === '/history') {
     const userMsgs = history.filter(m => m.role === 'user').length;
-    const agentMsgs = history.filter(m => m.role === 'assistant').length;
-    console.log(chalk.cyan(`\n  📋 ${userMsgs} soru · ${agentMsgs} yanıt · ${history.length} mesaj\n`));
+    const asstMsgs = history.filter(m => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim()).length;
+    const toolMsgs = history.filter(m => m.role === 'tool').length;
+    const created = activeSessionMeta?.createdAt
+      ? chalk.dim(` · başlangıç: ${new Date(activeSessionMeta.createdAt).toLocaleString('tr-TR')}`)
+      : '';
+    console.log(chalk.cyan(`\n  📋 ${userMsgs} soru · ${asstMsgs} yanıt · ${toolMsgs} araç çağrısı${created}\n`));
     prompt();
     return;
   }
 
   if (input.toLowerCase() === '/resume') {
     handleResume();
+    return;
+  }
+
+  if (input.toLowerCase() === '/show') {
+    if (history.length === 0) {
+      console.log(chalk.yellow('\n  📭 Henüz mesaj yok.\n'));
+    } else {
+      printHistory(history);
+    }
+    prompt();
     return;
   }
 
@@ -358,7 +392,7 @@ async function handleUserInput(rawInput: string): Promise<void> {
   prompt();
 }
 
-function flushPasteBuffer(): void {
+async function flushPasteBuffer(): Promise<void> {
   pasteTimer = null;
   if (pasteBuffer.length === 0) return;
   const lines = pasteBuffer.splice(0);
@@ -369,7 +403,7 @@ function flushPasteBuffer(): void {
     const ellipsis = combined.trim().length > 50 ? '…' : '';
     console.log(chalk.yellow(`\n  [paste #${pasteCounter}: "${preview}${ellipsis}" +${lines.length - 1} satır]`));
   }
-  handleUserInput(combined);
+  await handleUserInput(combined);
 }
 
 rl.on('line', (line: string) => {
