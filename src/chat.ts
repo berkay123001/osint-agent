@@ -118,6 +118,7 @@ function printBanner() {
     chalk.cyan('/resume') + g(' · ') +
     chalk.cyan('/history') + g(' · ') +
     chalk.cyan('/show') + g(' · ') +
+    chalk.cyan('/delete') + g(' · ') +
     chalk.cyan('/reset') + g(' · ') +
     chalk.cyan('/help') + g(' · ') +
     chalk.cyan('exit')
@@ -129,7 +130,44 @@ function printBanner() {
 printBanner()
 
 // ── Oturum yükleme ───────────────────────────────────────────────────────────
-const SLASH_COMMANDS = ['/help', '/resume', '/history', '/show', '/reset'];
+const SLASH_COMMANDS = ['/help', '/resume', '/history', '/show', '/delete', '/reset'];
+const CMD_DESCRIPTIONS: Record<string, string> = {
+  '/help':    'Komutları listele',
+  '/resume':  'Kayıtlı oturum yükle',
+  '/history': 'Mesaj istatistikleri',
+  '/show':    'Geçmişi ekrana yazdır',
+  '/delete':  'Oturum sil',
+  '/reset':   'Oturumu sıfırla',
+};
+
+// ── Inline slash-command tamamlama (/ yazınca görünür) ────────────────────────
+let drawnCompletionCount = 0;
+
+function clearInlineCompletions(): void {
+  if (drawnCompletionCount === 0) return;
+  // Kursörü kaydet, aşağı inerek satırları temizle, geri dön
+  process.stdout.write('\x1b[s');
+  for (let i = 0; i < drawnCompletionCount; i++) {
+    process.stdout.write('\x1b[1B\x1b[2K');
+  }
+  process.stdout.write('\x1b[u');
+  drawnCompletionCount = 0;
+}
+
+function showInlineCompletions(currentLine: string): void {
+  clearInlineCompletions();
+  if (!currentLine.startsWith('/')) return;
+  const matches = SLASH_COMMANDS.filter(c => c.startsWith(currentLine));
+  if (matches.length === 0) return;
+  process.stdout.write('\x1b[s');
+  for (const cmd of matches) {
+    process.stdout.write('\x1b[1B\r\x1b[2K');
+    process.stdout.write(`  ${chalk.bold.cyan(cmd)}  ${chalk.dim(CMD_DESCRIPTIONS[cmd] || '')}`);
+  }
+  process.stdout.write('\x1b[u');
+  drawnCompletionCount = matches.length;
+}
+
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
@@ -275,6 +313,83 @@ function printHistory(msgs: Message[]): void {
   console.log(chalk.dim('\n  ─────────────────────────────────────────────────────────\n'));
 }
 
+/** Kayıtlı oturumları listeler ve seçilen silinir */
+function handleDelete(): void {
+  const sessions = listSessions();
+  const active = loadActiveSession();
+  const allSessions: { filename: string; isActive: boolean; data: SessionData }[] = [];
+  if (active && active.messageCount > 0) {
+    allSessions.push({ filename: '(aktif)', isActive: true, data: active });
+  }
+  for (const s of sessions) {
+    allSessions.push({ filename: s.filename, isActive: false, data: s.data });
+  }
+
+  if (allSessions.length === 0) {
+    console.log(chalk.yellow('\n  📭 Silinecek oturum bulunamadı.\n'));
+    prompt();
+    return;
+  }
+
+  console.log(chalk.cyan('\n  🗑️  Kayıtlı oturumlar:\n'));
+  for (let i = 0; i < allSessions.length; i++) {
+    const s = allSessions[i];
+    const date = new Date(s.data.lastActiveAt).toLocaleString('tr-TR');
+    const userMsgs = s.data.history.filter(m => m.role === 'user').length;
+    const tag = s.isActive ? chalk.green(' [aktif]') : '';
+    process.stdout.write(`  ${chalk.bold.white(`${i + 1}.`)} ${chalk.dim(date)} · ${userMsgs} soru${tag}\n`);
+    const last = s.data.history.slice(-2).find(m => m.role === 'user');
+    if (last && typeof last.content === 'string') {
+      const preview = last.content.slice(0, 60);
+      const ellipsis = last.content.length > 60 ? '…' : '';
+      console.log(chalk.dim(`     "${preview}${ellipsis}"`));
+    }
+  }
+  console.log('\n  ' + chalk.bold.yellow('all') + chalk.dim(' — Tümünü sil'));
+  console.log();
+
+  rl.question(chalk.bold.yellow('  Silmek istediğiniz oturum (iptal: 0): '), (ans) => {
+    const trimmed = ans.trim().toLowerCase();
+    if (trimmed === '0' || trimmed === '' || trimmed === 'iptal') {
+      console.log(chalk.dim('\n  İptal edildi.\n'));
+      prompt();
+      return;
+    }
+    if (trimmed === 'all') {
+      let deleted = 0;
+      for (const s of allSessions) {
+        if (s.isActive) {
+          deleteActiveSession();
+          history = [];
+          activeSessionMeta = null;
+        } else {
+          try { fs.rmSync(path.join(SESSION_DIR, s.filename)); } catch { /* no-op */ }
+        }
+        deleted++;
+      }
+      console.log(chalk.green(`\n  ✔ ${deleted} oturum silindi.\n`));
+      prompt();
+      return;
+    }
+    const idx = parseInt(trimmed, 10);
+    if (isNaN(idx) || idx < 1 || idx > allSessions.length) {
+      console.log(chalk.red('\n  Geçersiz seçim.\n'));
+      prompt();
+      return;
+    }
+    const chosen = allSessions[idx - 1];
+    if (chosen.isActive) {
+      deleteActiveSession();
+      history = [];
+      activeSessionMeta = null;
+    } else {
+      try { fs.rmSync(path.join(SESSION_DIR, chosen.filename)); } catch { /* no-op */ }
+    }
+    console.log(chalk.green('\n  ✔ Oturum silindi.\n'));
+    prompt();
+  });
+}
+
 (async () => {
   const resume = await askResume();
   if (resume && existingSession) {
@@ -317,6 +432,7 @@ function prompt(): void {
 }
 
 async function handleUserInput(rawInput: string): Promise<void> {
+  clearInlineCompletions();
   const input = rawInput.trim();
   if (!input) { prompt(); return; }
 
@@ -325,6 +441,7 @@ async function handleUserInput(rawInput: string): Promise<void> {
     console.log(chalk.white('  /resume') + chalk.dim('   — Kayıtlı oturumları listele ve devam et'));
     console.log(chalk.white('  /history') + chalk.dim('  — Mesaj istatistikleri'));
     console.log(chalk.white('  /show') + chalk.dim('     — Mevcut oturum geçmişini ekrana yazdır'));
+    console.log(chalk.white('  /delete') + chalk.dim('   — Kayıtlı oturum sil'));
     console.log(chalk.white('  /reset') + chalk.dim('    — Oturumu sıfırla'));
     console.log(chalk.white('  exit') + chalk.dim('      — Oturumu arşivle ve çık'));
     console.log();
@@ -378,6 +495,11 @@ async function handleUserInput(rawInput: string): Promise<void> {
     return;
   }
 
+  if (input.toLowerCase() === '/delete') {
+    handleDelete();
+    return;
+  }
+
   isProcessing = true;
   try {
     history.push({ role: 'user', content: input });
@@ -394,26 +516,14 @@ function flushPasteBuffer(): void {
   pasteTimer = null;
   if (pasteBuffer.length === 0) return;
   const lines = pasteBuffer.splice(0);
-
+  const combined = lines.join('\n');
   if (lines.length > 1) {
-    // Çok satırlı paste → onay iste
     pasteCounter++;
-    const combined = lines.join('\n');
     const preview = combined.trim().slice(0, 60).replace(/\n/g, ' ');
     const ellipsis = combined.trim().length > 60 ? '…' : '';
     console.log(chalk.yellow(`\n  [paste #${pasteCounter}: "${preview}${ellipsis}" +${lines.length} satır]`));
-    rl.question(chalk.bold.yellow('  Gönder? [E/h] '), (ans) => {
-      if (ans.trim().toLowerCase() === 'h') {
-        console.log(chalk.dim('  İptal edildi.'));
-        prompt();
-      } else {
-        handleUserInput(combined);
-      }
-    });
-  } else {
-    // Tek satır — normal gönder
-    handleUserInput(lines[0]);
   }
+  handleUserInput(combined);
 }
 
 rl.on('line', (line: string) => {
@@ -422,6 +532,26 @@ rl.on('line', (line: string) => {
   if (pasteTimer) clearTimeout(pasteTimer);
   pasteTimer = setTimeout(flushPasteBuffer, PASTE_TIMEOUT_MS);
 });
+
+// Keypress: / yazılınca anlık komut listesi
+if (process.stdin.isTTY) {
+  process.stdin.on('keypress', (_str, key) => {
+    if (!key) return;
+    if (key.name === 'return' || key.name === 'enter') {
+      clearInlineCompletions();
+      return;
+    }
+    setImmediate(() => {
+      if (isProcessing) return;
+      const line = (rl as any).line ?? '';
+      if (line.startsWith('/')) {
+        showInlineCompletions(line);
+      } else {
+        clearInlineCompletions();
+      }
+    });
+  });
+}
 
 rl.on('close', async () => {
   saveSession(history);
