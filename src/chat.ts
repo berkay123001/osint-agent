@@ -134,6 +134,15 @@ let history: Message[] = [];
 let activeSessionMeta: { createdAt: string } | null = null;
 let existingSession = loadActiveSession();
 
+// ── Soru/paste yardımcıları ──────────────────────────────────────────────────
+let pendingQuestion: ((ans: string) => void) | null = null;
+
+/** rl.question() yerine kullanılır — paste buffer ile çakışmaz */
+function askQuestion(promptText: string, callback: (ans: string) => void): void {
+  pendingQuestion = callback;
+  process.stdout.write(promptText);
+}
+
 async function askResume(): Promise<boolean> {
   if (!existingSession) return false;
   const msgCount = existingSession.messageCount;
@@ -151,7 +160,7 @@ async function askResume(): Promise<boolean> {
         console.log(chalk.dim(`     Son: "${preview}${ellipsis}"`))
       }
     }
-    rl.question(chalk.bold.yellow('\n  Kaldığın yerden devam etsem mi? [E/h] '), (ans) => {
+    askQuestion(chalk.bold.yellow('\n  Kaldığın yerden devam etsem mi? [E/h] '), (ans) => {
       resolve(ans.trim().toLowerCase() !== 'h');
     });
   });
@@ -197,7 +206,7 @@ function handleResume(): void {
   }
 
   console.log();
-  rl.question(chalk.bold.yellow('  Devam etmek istediğiniz oturum numarası (iptal: 0): '), (ans) => {
+  askQuestion(chalk.bold.yellow('  Devam etmek istediğiniz oturum numarası (iptal: 0): '), (ans) => {
     const idx = parseInt(ans.trim(), 10);
     if (isNaN(idx) || idx < 1 || idx > allSessions.length) {
       console.log(chalk.dim('\n  İptal edildi.\n'));
@@ -275,81 +284,106 @@ function printHistory(msgs: Message[]): void {
   prompt();
 })();
 
-// ── Paste sayacı ─────────────────────────────────────────────────────────────
+// ── Paste buffer & ana giriş döngüsü ────────────────────────────────────────
 let pasteCounter = 0;
+let pasteBuffer: string[] = [];
+let pasteTimer: NodeJS.Timeout | null = null;
+let isProcessing = false;
 
-// ── Ana soru döngüsü ─────────────────────────────────────────────────────────
-function prompt() {
-  if (!process.stdin.readable) return;
-  rl.question(chalk.bold.green('\n  ❯ '), async (line) => {
-    const input = line.trim();
-    if (!input) { prompt(); return; }
+const PASTE_TIMEOUT_MS = 30;
 
-    // Çok satırlı paste algılama
-    const rawLines = line.split('\n');
-    if (rawLines.length > 1) {
-      pasteCounter++;
-      const preview = input.slice(0, 50).replace(/\n/g, ' ');
-      const ellipsis = input.length > 50 ? '…' : '';
-      console.log(chalk.yellow(`  [paste #${pasteCounter}: "${preview}${ellipsis}" +${rawLines.length - 1} lines]`));
-    }
+rl.setPrompt(chalk.bold.green('\n❯ '));
 
-    // Özel komutlar
-    if (input === '/') {
-      console.log(chalk.cyan('\n  📋 Komutlar:\n'));
-      console.log(chalk.white('  /reset') + chalk.dim('    — Oturumu sıfırla'));
-      console.log(chalk.white('  /history') + chalk.dim('  — Mesaj istatistikleri'));
-      console.log(chalk.white('  /resume') + chalk.dim('   — Kayıtlı oturumları listele'));
-      console.log(chalk.white('  exit') + chalk.dim('      — Oturumu arşivle ve çık'));
-      console.log();
-      prompt();
-      return;
-    }
-
-    if (input.toLowerCase() === 'exit') {
-      archiveSession(history);
-      deleteActiveSession();
-      console.log(chalk.dim('\n  💾 Oturum arşivlendi. Görüşürüz!'));
-      await closeNeo4j();
-      rl.close();
-      process.exit(0);
-    }
-
-    if (input.toLowerCase() === '/reset') {
-      archiveSession(history);
-      deleteActiveSession();
-      history = [];
-      activeSessionMeta = null;
-      console.log(chalk.yellow('  🔄 Oturum sıfırlandı. Yeni konuşma başlıyor.\n'));
-      prompt();
-      return;
-    }
-
-    if (input.toLowerCase() === '/history') {
-      const userMsgs = history.filter(m => m.role === 'user').length;
-      const agentMsgs = history.filter(m => m.role === 'assistant').length;
-      console.log(chalk.cyan(`\n  📋 ${userMsgs} soru · ${agentMsgs} yanıt · ${history.length} mesaj\n`));
-      prompt();
-      return;
-    }
-
-    if (input.toLowerCase() === '/resume') {
-      handleResume();
-      return;
-    }
-
-    try {
-      history.push({ role: 'user', content: input });
-      await runSupervisor(history);
-      // Her başarılı yanıttan sonra kaydet
-      saveSession(history);
-    } catch (e) {
-      console.log(chalk.red(`\n  ❌ Hata: ${(e as Error).message}`));
-    }
-
-    prompt();
-  });
+function prompt(): void {
+  if (process.stdin.readable && !isProcessing) rl.prompt();
 }
+
+async function handleUserInput(rawInput: string): Promise<void> {
+  const input = rawInput.trim();
+  if (!input) { prompt(); return; }
+
+  if (input === '/') {
+    console.log(chalk.cyan('\n  📋 Komutlar:\n'));
+    console.log(chalk.white('  /reset') + chalk.dim('    — Oturumu sıfırla'));
+    console.log(chalk.white('  /history') + chalk.dim('  — Mesaj istatistikleri'));
+    console.log(chalk.white('  /resume') + chalk.dim('   — Kayıtlı oturumları listele'));
+    console.log(chalk.white('  exit') + chalk.dim('      — Oturumu arşivle ve çık'));
+    console.log();
+    prompt();
+    return;
+  }
+
+  if (input.toLowerCase() === 'exit') {
+    archiveSession(history);
+    deleteActiveSession();
+    console.log(chalk.dim('\n  💾 Oturum arşivlendi. Görüşürüz!'));
+    await closeNeo4j();
+    rl.close();
+    process.exit(0);
+  }
+
+  if (input.toLowerCase() === '/reset') {
+    archiveSession(history);
+    deleteActiveSession();
+    history = [];
+    activeSessionMeta = null;
+    console.log(chalk.yellow('  🔄 Oturum sıfırlandı. Yeni konuşma başlıyor.\n'));
+    prompt();
+    return;
+  }
+
+  if (input.toLowerCase() === '/history') {
+    const userMsgs = history.filter(m => m.role === 'user').length;
+    const agentMsgs = history.filter(m => m.role === 'assistant').length;
+    console.log(chalk.cyan(`\n  📋 ${userMsgs} soru · ${agentMsgs} yanıt · ${history.length} mesaj\n`));
+    prompt();
+    return;
+  }
+
+  if (input.toLowerCase() === '/resume') {
+    handleResume();
+    return;
+  }
+
+  isProcessing = true;
+  try {
+    history.push({ role: 'user', content: input });
+    await runSupervisor(history);
+    saveSession(history);
+  } catch (e) {
+    console.log(chalk.red(`\n  ❌ Hata: ${(e as Error).message}`));
+  }
+  isProcessing = false;
+  prompt();
+}
+
+function flushPasteBuffer(): void {
+  pasteTimer = null;
+  if (pasteBuffer.length === 0) return;
+  const lines = pasteBuffer.splice(0);
+  const combined = lines.join('\n');
+  if (lines.length > 1) {
+    pasteCounter++;
+    const preview = combined.trim().slice(0, 50).replace(/\n/g, ' ');
+    const ellipsis = combined.trim().length > 50 ? '…' : '';
+    console.log(chalk.yellow(`\n  [paste #${pasteCounter}: "${preview}${ellipsis}" +${lines.length - 1} satır]`));
+  }
+  handleUserInput(combined);
+}
+
+rl.on('line', (line: string) => {
+  // rl.question() yerine askQuestion() kullananların callback'i
+  if (pendingQuestion) {
+    const cb = pendingQuestion;
+    pendingQuestion = null;
+    cb(line);
+    return;
+  }
+  if (isProcessing) return; // ajan çalışırken girdi yoksay
+  pasteBuffer.push(line);
+  if (pasteTimer) clearTimeout(pasteTimer);
+  pasteTimer = setTimeout(flushPasteBuffer, PASTE_TIMEOUT_MS);
+});
 
 rl.on('close', async () => {
   saveSession(history);
