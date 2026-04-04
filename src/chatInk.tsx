@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 import 'dotenv/config';
+import { emitProgress } from './lib/progressEmitter.js';
 
-// Ink stdout'u yönetir — tüm console.log çıktısını stderr'e yönlendir
+// Ink stdout'u yönetir — hiçbir şey stderr/stdout'a doğrudan yazmamalı
+// Tüm console.* çağrıları emitProgress üzerinden TUI log panel'ine yönlendirilir
 process.env.LOG_LEVEL = 'ERROR';
-const _origLog = console.log;
-const _origInfo = console.info;
-const _origWarn = console.warn;
-console.log = (...args: unknown[]) => process.stderr.write(args.map(String).join(' ') + '\n');
-console.info = (...args: unknown[]) => process.stderr.write(args.map(String).join(' ') + '\n');
-console.warn = (...args: unknown[]) => process.stderr.write(args.map(String).join(' ') + '\n');
+console.log = (...args: unknown[]) => emitProgress(args.map(String).join(' '));
+console.info = (...args: unknown[]) => emitProgress(args.map(String).join(' '));
+console.warn = (...args: unknown[]) => emitProgress(args.map(String).join(' '));
+console.error = (...args: unknown[]) => emitProgress(args.map(String).join(' '));
 
 import React from 'react';
 import { render } from 'ink';

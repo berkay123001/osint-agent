@@ -11,6 +11,8 @@ export interface SearchToolResponse {
   provider?: string;
 }
 
+import { emitProgress } from '../lib/progressEmitter.js'
+
 /**
  * SearXNG (self-hosted metasearch engine) üzerinden web araması yapar.
  * 100+ arama motorunu aggregate eder, API key gerektirmez.
@@ -233,7 +235,7 @@ export async function searchWeb(query: string, limit: number = 10): Promise<Sear
     if (!searxngResult.error && searxngResult.results.length > 0) {
       return searxngResult
     }
-    console.warn(`[SearchTool] SearXNG: ${searxngResult.error ?? 'sonuç yok'} — Brave'e geçiliyor...`)
+    emitProgress(`[SearchTool] SearXNG: ${searxngResult.error ?? 'sonuç yok'} → Brave'e geçiliyor...`)
   }
 
   // 1) Brave Search (secondary) — Brave'in zayıf olduğu sosyal medya sorgularında atla
@@ -243,7 +245,7 @@ export async function searchWeb(query: string, limit: number = 10): Promise<Sear
       return braveResult
     }
     const reason = braveResult.error?.includes('429') ? '429 rate limit' : 'index eksik / sonuç yok'
-    console.warn(`[SearchTool] Brave: ${reason} — Google CSE'ye geçiliyor...`)
+    emitProgress(`[SearchTool] Brave: ${reason} → Google CSE'ye geçiliyor...`)
   }
 
   // 2) Google Custom Search (tertiary) — büyük index, güvenilir kapsama alanı
@@ -252,7 +254,7 @@ export async function searchWeb(query: string, limit: number = 10): Promise<Sear
     if (!googleResult.error && googleResult.results.length > 0) {
       return googleResult
     }
-    console.warn(`[SearchTool] Google CSE: ${googleResult.error ?? 'sonuç yok'} — Tavily'ye geçiliyor...`)
+    emitProgress(`[SearchTool] Google CSE: ${googleResult.error ?? 'sonuç yok'} → Tavily'ye geçiliyor...`)
   }
 
   // 3) Tavily (son çare — kredi koruması)

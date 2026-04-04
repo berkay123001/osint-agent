@@ -11,6 +11,7 @@
  */
 
 import chalk from 'chalk'
+import { emitProgress } from './progressEmitter.js'
 
 // ─── Tipler ──────────────────────────────────────────────────────────────────
 type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR'
@@ -97,10 +98,10 @@ function formatJson(entry: LogEntry): string {
 function emit(entry: LogEntry): void {
   if (LEVEL_PRIORITY[entry.level] < getMinPriority()) return
 
-  const output = jsonMode ? formatJson(entry) : formatTerminal(entry)
-
-  // Tüm log çıktısı stderr'e — Ink stdout'u yönettiği için stdout'a yazmak render bozar
-  process.stderr.write(output + '\n')
+  // Tüm log çıktısını emitProgress üzerinden TUI log panel'ine yönlendir
+  // process.stderr.write kullanmak Ink layout'unu bozar
+  const label = entry.level === 'WARN' ? '⚠️' : entry.level === 'ERROR' ? '❌' : 'ℹ️'
+  emitProgress(`${label} [${entry.component}] ${entry.message}`)
 }
 
 // ─── Logger API ──────────────────────────────────────────────────────────────
