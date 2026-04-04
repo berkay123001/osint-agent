@@ -31,20 +31,17 @@ export function App(): React.ReactElement {
   const [view, setView] = useState<ViewMode>('chat');
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [progressLog, setProgressLog] = useState<string[]>([]);
+  const [showLog, setShowLog] = useState(false);
 
   // progressEmitter dinle — agent/tool loglarını UI'da göster
   useEffect(() => {
     const handler = (msg: string) => {
-      setProgressLog(prev => [...prev.slice(-50), msg]);
+      setProgressLog(prev => [...prev.slice(-200), msg]);
+      setShowLog(true); // İlk log gelince otomatik aç
     };
     progressEmitter.on('progress', handler);
     return () => { progressEmitter.off('progress', handler); };
   }, []);
-
-  // İşlem bitince logları temizle
-  useEffect(() => {
-    if (!isProcessing) setProgressLog([]);
-  }, [isProcessing]);
 
   // Esc → menüden çık
   useInput((_input, key) => {
@@ -59,6 +56,14 @@ export function App(): React.ReactElement {
 
     if (trimmed === '/' || trimmed === '/help') {
       setView('menu');
+      return;
+    }
+    if (trimmed === '/log') {
+      if (progressLog.length === 0) {
+        setStatusMsg('Henüz log yok.');
+      } else {
+        setShowLog(v => !v);
+      }
       return;
     }
     if (trimmed === '/history') {
@@ -189,16 +194,24 @@ export function App(): React.ReactElement {
           </Box>
         )}
 
-        {isProcessing && (
+        {progressLog.length > 0 && (
           <Box marginTop={1} flexDirection="column">
-            {progressLog.length > 0 && (
-              <Box flexDirection="column" marginBottom={1}>
-                {progressLog.slice(-12).map((line, i) => (
+            <Box>
+              <Text dimColor>── Aktivite logu ({progressLog.length} satır) </Text>
+              <Text dimColor color="cyan">[/log gizle/göster]</Text>
+            </Box>
+            {showLog && (
+              <Box flexDirection="column" marginTop={0}>
+                {progressLog.slice(-30).map((line, i) => (
                   <Text key={i} dimColor>{line.slice(0, 140)}</Text>
                 ))}
               </Box>
             )}
           </Box>
+        )}
+
+        {isProcessing && progressLog.length === 0 && (
+          <Box marginTop={1}><Text dimColor>...</Text></Box>
         )}
 
         {view === 'chat' && (

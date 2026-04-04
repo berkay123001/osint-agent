@@ -4,10 +4,11 @@ import { Box, Text, useInput } from 'ink';
 const COMMANDS = [
   { label: '/compact',  value: '/compact',  desc: 'Trim old messages' },
   { label: '/delete',   value: '/delete',   desc: 'Delete archived sessions' },
-  { label: '/history',  value: '/history',   desc: 'Message stats' },
-  { label: '/reset',    value: '/reset',     desc: 'Clear session' },
-  { label: '/resume',   value: '/resume',    desc: 'Load archived session' },
-  { label: 'exit',      value: 'exit',       desc: 'Quit' },
+  { label: '/history',  value: '/history',  desc: 'Message stats' },
+  { label: '/log',      value: '/log',      desc: 'Toggle activity log' },
+  { label: '/reset',    value: '/reset',    desc: 'Clear session' },
+  { label: '/resume',   value: '/resume',   desc: 'Load archived session' },
+  { label: 'exit',      value: 'exit',      desc: 'Quit' },
 ];
 
 interface Props {
