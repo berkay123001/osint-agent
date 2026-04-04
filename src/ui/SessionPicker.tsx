@@ -10,11 +10,11 @@ interface Props {
   title?: string;
 }
 
-export function SessionPicker({ sessions, onSelect, onCancel, title }: Props): React.ReactElement {
+export function SessionPicker({ sessions, onSelect, title }: Props): React.ReactElement {
   if (sessions.length === 0) {
     return (
-      <Box marginBottom={1}>
-        <Text color="yellow">  📭 Kayıtlı oturum bulunamadı.</Text>
+      <Box marginTop={1}>
+        <Text dimColor>Kayıtlı oturum yok.</Text>
       </Box>
     );
   }
@@ -25,7 +25,7 @@ export function SessionPicker({ sessions, onSelect, onCancel, title }: Props): R
     const tag = s.isActive ? ' [aktif]' : '';
     const last = s.data.history.slice(-2).find(m => m.role === 'user');
     const preview = last && typeof last.content === 'string'
-      ? ` "${last.content.slice(0, 50)}${last.content.length > 50 ? '…' : ''}"`
+      ? ` "${last.content.slice(0, 40)}${last.content.length > 40 ? '…' : ''}"`
       : '';
     return {
       label: `${date} · ${userMsgs} soru${tag}${preview}`,
@@ -34,9 +34,9 @@ export function SessionPicker({ sessions, onSelect, onCancel, title }: Props): R
   });
 
   return (
-    <Box flexDirection="column" marginTop={1} marginBottom={1}>
-      <Text bold color="cyan">  {title ?? '📂 Kayıtlı oturumlar:'}</Text>
-      <Box marginTop={1} marginLeft={2} flexDirection="column">
+    <Box flexDirection="column" marginTop={1}>
+      <Text dimColor>{title ?? 'Oturumlar:'}</Text>
+      <Box marginLeft={1} flexDirection="column">
         <SelectInput
           items={items}
           onSelect={(item) => {
@@ -47,7 +47,7 @@ export function SessionPicker({ sessions, onSelect, onCancel, title }: Props): R
           }}
         />
       </Box>
-      <Text dimColor>  Esc/q = iptal · ↑↓ = gezin · Enter = seç</Text>
+      <Text dimColor>Esc = geri</Text>
     </Box>
   );
 }

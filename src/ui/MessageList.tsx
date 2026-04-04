@@ -17,28 +17,23 @@ export function MessageList({ messages }: Props): React.ReactElement {
   if (visible.length === 0) return <></>;
 
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column">
       {visible.map((msg, i) => {
         const content = (msg.content as string).trim();
-        if (msg.role === 'user') {
-          return (
-            <Box key={i} marginTop={1}>
-              <Text bold color="green">❯ </Text>
-              <Text>{content}</Text>
-            </Box>
-          );
-        }
-        // assistant — son 2 mesajı geniş, öncekiler kısa
+        const isUser = msg.role === 'user';
         const isRecent = i >= visible.length - 2;
-        const maxLen = isRecent ? 1500 : 400;
+        const maxLen = isRecent ? 2000 : 500;
         const text =
           content.length > maxLen
-            ? content.slice(0, maxLen) + ` …[+${content.length - maxLen} karakter]`
+            ? content.slice(0, maxLen) + `\n… [+${content.length - maxLen} karakter]`
             : content;
+
         return (
-          <Box key={i} marginLeft={2}>
-            <Text dimColor>🤖 </Text>
-            <Text dimColor={!isRecent}>{text}</Text>
+          <Box key={i} flexDirection="column" marginTop={i > 0 ? 1 : 0}>
+            <Text bold color={isUser ? 'cyan' : 'magenta'}>
+              {isUser ? 'You' : 'Agent'}
+            </Text>
+            <Text dimColor={!isUser && !isRecent}>{text}</Text>
           </Box>
         );
       })}
