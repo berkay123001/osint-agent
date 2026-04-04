@@ -523,22 +523,39 @@ async function handleUserInput(rawInput: string): Promise<void> {
   prompt();
 }
 
+let pendingPaste: string | null = null;
+
 function flushPasteBuffer(): void {
   pasteTimer = null;
   if (pasteBuffer.length === 0) return;
   const lines = pasteBuffer.splice(0);
   const combined = lines.join('\n');
   if (lines.length > 1) {
+    // Çok satırlı paste: önizleme göster, Enter bekle
     pasteCounter++;
     const preview = combined.trim().slice(0, 60).replace(/\n/g, ' ');
     const ellipsis = combined.trim().length > 60 ? '…' : '';
-    console.log(chalk.yellow(`\n  [paste #${pasteCounter}: "${preview}${ellipsis}" +${lines.length} satır]`));
+    pendingPaste = combined;
+    process.stdout.write(chalk.yellow(`\n  [paste #${pasteCounter}: "${preview}${ellipsis}" +${lines.length} satır]\n`));
+    process.stdout.write(chalk.dim('  ↵ göndermek için Enter, yeni mesaj yaz veya Ctrl+C ile iptal\n'));
+    prompt();
+  } else {
+    // Tek satır: normal giriş gibi davran
+    handleUserInput(combined);
   }
-  handleUserInput(combined);
 }
 
 rl.on('line', (line: string) => {
   if (isProcessing) return;
+
+  // Bekleyen paste varsa: boş Enter → gönder, yeni metin → eski pasteyi iptal et yeni metni gönder
+  if (pendingPaste !== null) {
+    const toSend = line.trim() ? line : pendingPaste;
+    pendingPaste = null;
+    handleUserInput(toSend);
+    return;
+  }
+
   pasteBuffer.push(line);
   if (pasteTimer) clearTimeout(pasteTimer);
   pasteTimer = setTimeout(flushPasteBuffer, PASTE_TIMEOUT_MS);
