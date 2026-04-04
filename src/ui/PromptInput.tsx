@@ -3,6 +3,12 @@ import { Box, Text, useInput, useStdin } from 'ink';
 import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 
+interface PasteChunk {
+  id: number;
+  content: string;
+  lineCount: number;
+}
+
 interface Props {
   onSubmit: (value: string) => void;
   isProcessing: boolean;
@@ -10,10 +16,18 @@ interface Props {
 
 export function PromptInput({ onSubmit, isProcessing }: Props): React.ReactElement {
   const [value, setValue] = useState('');
-  const [pendingPaste, setPendingPaste] = useState<string | null>(null);
+  const [pendingPastes, setPendingPastes] = useState<PasteChunk[]>([]);
   const { stdin } = useStdin();
-  // Synchronous flag — prevents TextInput.onChange from accepting paste chars
   const pasteActiveRef = useRef(false);
+  const pasteIdRef = useRef(0);
+
+  // Enable/disable bracketed paste mode (DECSET 2004)
+  useEffect(() => {
+    process.stdout.write('\x1b[?2004h');
+    return () => {
+      process.stdout.write('\x1b[?2004l');
+    };
+  }, []);
 
   // Bracketed paste mode: terminal wraps paste in \x1b[200~...\x1b[201~
   useEffect(() => {
@@ -40,46 +54,64 @@ export function PromptInput({ onSubmit, isProcessing }: Props): React.ReactEleme
         const content = buf.slice(0, ei).replace(/\r\n/g, '\n').trimEnd();
         buf = '';
         pasteActiveRef.current = true;
-        setPendingPaste(content);
+        pasteIdRef.current++;
+        setPendingPastes(prev => [...prev, {
+          id: pasteIdRef.current,
+          content,
+          lineCount: content.split('\n').length,
+        }]);
         setValue('');
         setTimeout(() => { pasteActiveRef.current = false; }, 0);
       }
     };
 
-    stdin.on('data', handler);
-    return () => { stdin.off('data', handler); };
+    stdin.prependListener('data', handler);
+    return () => { stdin.removeListener('data', handler); };
   }, [stdin]);
 
-  // Block TextInput from showing paste characters
+  // Block TextInput from showing paste characters + newline fallback
   const handleChange = useCallback((v: string) => {
     if (pasteActiveRef.current) {
       setValue('');
       return;
     }
+    // Fallback: detect paste that bypassed bracketed paste detection
+    if (v.includes('\n') || v.includes('\r')) {
+      const content = v.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+      if (content) {
+        pasteActiveRef.current = true;
+        pasteIdRef.current++;
+        setPendingPastes(prev => [...prev, {
+          id: pasteIdRef.current,
+          content,
+          lineCount: content.split('\n').length,
+        }]);
+        setValue('');
+        setTimeout(() => { pasteActiveRef.current = false; }, 0);
+      }
+      return;
+    }
     setValue(v);
   }, []);
 
-  // Enter/Esc when paste is pending
+  // Esc → clear all pastes · Backspace on empty → remove last paste
   useInput((_input, key) => {
-    if (pendingPaste === null) return;
-    if (key.return) {
-      const toSend = pendingPaste;
-      setPendingPaste(null);
+    if (key.escape && pendingPastes.length > 0) {
+      setPendingPastes([]);
       setValue('');
-      onSubmit(toSend);
-    } else if (key.escape) {
-      setPendingPaste(null);
-      setValue('');
+    }
+    if (key.backspace && value === '' && pendingPastes.length > 0) {
+      setPendingPastes(prev => prev.slice(0, -1));
     }
   });
 
-  // "/" → open command menu immediately
+  // "/" → open command menu immediately (only when no pastes)
   useEffect(() => {
-    if (value === '/') {
+    if (value === '/' && pendingPastes.length === 0) {
       setValue('');
       onSubmit('/');
     }
-  }, [value, onSubmit]);
+  }, [value, onSubmit, pendingPastes.length]);
 
   if (isProcessing) {
     return (
@@ -90,38 +122,45 @@ export function PromptInput({ onSubmit, isProcessing }: Props): React.ReactEleme
     );
   }
 
-  if (pendingPaste !== null) {
-    return (
-      <Box flexDirection="column">
-        <Box marginBottom={1}>
-          <Text color="yellow" bold>
-            {'  '}{pendingPaste.split('\n').length} satır yapıştırıldı
-          </Text>
-          <Text dimColor>
-            {'  '}{pendingPaste.slice(0, 80).replace(/\n/g, '↵')}
-            {pendingPaste.length > 80 ? '…' : ''}
-          </Text>
-        </Box>
-        <Text dimColor>Enter göndermek için · Esc iptal</Text>
-      </Box>
-    );
-  }
+  const handleTextInputSubmit = (v: string) => {
+    if (isProcessing) return;
+    const trimmed = v.trim();
+
+    if (pendingPastes.length > 0) {
+      const pasteContent = pendingPastes.map(p => p.content).join('\n');
+      const additional = trimmed ? '\n' + trimmed : '';
+      setPendingPastes([]);
+      setValue('');
+      onSubmit(pasteContent + additional);
+      return;
+    }
+
+    if (!trimmed) return;
+    setValue('');
+    onSubmit(trimmed);
+  };
 
   return (
-    <Box>
-      <Text color="cyan" bold>&gt; </Text>
-      <TextInput
-        value={value}
-        onChange={handleChange}
-        onSubmit={(v) => {
-          if (isProcessing) return;
-          const trimmed = v.trim();
-          if (!trimmed) return;
-          setValue('');
-          onSubmit(trimmed);
-        }}
-        placeholder="Message..."
-      />
+    <Box flexDirection="column">
+      {pendingPastes.length > 0 && (
+        <Box flexDirection="column">
+          <Box>
+            <Text color="yellow">
+              {pendingPastes.map(p => `[paste #${p.id} +${p.lineCount} lines]`).join(' ')}
+            </Text>
+          </Box>
+          <Text dimColor>  ⌫ remove last · Esc clear all · Enter send</Text>
+        </Box>
+      )}
+      <Box>
+        <Text color="cyan" bold>&gt; </Text>
+        <TextInput
+          value={value}
+          onChange={handleChange}
+          onSubmit={handleTextInputSubmit}
+          placeholder={pendingPastes.length > 0 ? 'Add text or Enter to send...' : 'Message...'}
+        />
+      </Box>
     </Box>
   );
 }

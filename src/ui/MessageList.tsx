@@ -16,12 +16,35 @@ export function MessageList({ messages }: Props): React.ReactElement {
 
   if (visible.length === 0) return <></>;
 
+  let pasteCounter = 0;
+
   return (
     <Box flexDirection="column">
       {visible.map((msg, i) => {
         const content = (msg.content as string).trim();
         const isUser = msg.role === 'user';
         const isRecent = i >= visible.length - 2;
+
+        // Multi-line user message → compact paste format
+        if (isUser && content.includes('\n')) {
+          pasteCounter++;
+          const lines = content.split('\n');
+          const firstLine = (lines.find(l => l.trim().length > 0) || lines[0]).trim();
+          const preview = firstLine.slice(0, 80);
+          const extraLines = lines.length - 1;
+          const needsEllipsis = firstLine.length > 80 || extraLines > 0;
+
+          return (
+            <Box key={i} flexDirection="column" marginTop={i > 0 ? 1 : 0}>
+              <Text bold color="cyan">You</Text>
+              <Text dimColor>
+                [paste #{pasteCounter} &quot;{preview}{needsEllipsis ? '…' : ''}&quot; +{extraLines} lines]
+              </Text>
+            </Box>
+          );
+        }
+
+        // Normal message display
         const maxLen = isRecent ? 2000 : 500;
         const text =
           content.length > maxLen

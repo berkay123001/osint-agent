@@ -20,7 +20,7 @@ import { MessageList } from './MessageList.js';
 import { CommandMenu } from './CommandMenu.js';
 import { PromptInput } from './PromptInput.js';
 
-type ViewMode = 'chat' | 'menu' | 'resume';
+type ViewMode = 'chat' | 'menu' | 'resume' | 'delete';
 
 export function App(): React.ReactElement {
   const { exit } = useApp();
@@ -83,8 +83,11 @@ export function App(): React.ReactElement {
     }
     if (trimmed === '/delete') {
       const sessions = listSessions();
-      sessions.forEach((s: SessionEntry) => deleteSession(s.filename));
-      setStatusMsg(`Deleted ${sessions.length} archived sessions.`);
+      if (sessions.length === 0) {
+        setStatusMsg('No archived sessions to delete.');
+        return;
+      }
+      setView('delete');
       return;
     }
     if (trimmed.toLowerCase() === 'exit') {
@@ -137,6 +140,26 @@ export function App(): React.ReactElement {
     setView('chat');
   }, [messages, createdAt, archivedSessions]);
 
+  const handleDeleteSelect = useCallback((item: { value: string }) => {
+    const sessions = listSessions();
+    if (item.value === '__all__') {
+      sessions.forEach((s: SessionEntry) => deleteSession(s.filename));
+      setStatusMsg(`Deleted ${sessions.length} sessions.`);
+      setView('chat');
+      return;
+    }
+    const idx = parseInt(item.value, 10);
+    const session = sessions[idx];
+    if (!session) return;
+    deleteSession(session.filename);
+    const remaining = listSessions();
+    if (remaining.length === 0) {
+      setStatusMsg('Deleted. No sessions left.');
+      setView('chat');
+    }
+    // Stay in delete view so user can delete more
+  }, []);
+
   return (
     <Box flexDirection="column" paddingX={2} paddingTop={1}>
       <Header />
@@ -169,6 +192,23 @@ export function App(): React.ReactElement {
             <SelectInput
               items={resumeItems}
               onSelect={handleResumeSelect}
+            />
+          </Box>
+        )}
+
+        {view === 'delete' && (
+          <Box flexDirection="column" marginTop={1}>
+            <Text dimColor>Select session to delete (Esc back):</Text>
+            <SelectInput
+              items={[
+                { label: '⚠ Delete ALL sessions', value: '__all__' },
+                ...archivedSessions.map((s, i) => {
+                  const date = new Date(s.data.lastActiveAt).toLocaleString('tr-TR');
+                  const q = s.data.history.filter(m => m.role === 'user').length;
+                  return { label: `${date} · ${q} questions`, value: String(i) };
+                }),
+              ]}
+              onSelect={handleDeleteSelect}
             />
           </Box>
         )}
