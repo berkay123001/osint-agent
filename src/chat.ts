@@ -140,130 +140,32 @@ const CMD_DESCRIPTIONS: Record<string, string> = {
   '/show':    'Geçmişi ekrana yazdır',
 };
 
-// ── İnteraktif slash-command menüsü (ok tuşları + Enter) ───────────────────
-let menuActive = false;
+// ── Numaralı komut menüsü (ı yaz + Enter → açılır, sefer ile seç, 0/Enter=iptal) ──────
+function showCommandMenu(): Promise<void> {
+  const maxLen = Math.max(...SLASH_COMMANDS.map(c => c.length));
+  console.log(chalk.cyan('\n  Komutlar:\n'));
+  for (let i = 0; i < SLASH_COMMANDS.length; i++) {
+    const cmd = SLASH_COMMANDS[i];
+    const num = chalk.bold.white(`${i + 1}.`);
+    const pad = ' '.repeat(maxLen - cmd.length + 2);
+    console.log(`  ${num} ${chalk.bold.cyan(cmd)}${pad}${chalk.dim(CMD_DESCRIPTIONS[cmd])}`);
+  }
+  console.log();
 
-/**
- * readline'ı duraklat → raw mode → ok tuşu navigasyon → Enter'da seç, Esc'de iptal.
- * Seçilen komut string döner, iptal halinde null.
- */
-function enterMenuMode(startLine: string): Promise<string | null> {
   return new Promise((resolve) => {
-    let prefix   = startLine;
-    let items    = SLASH_COMMANDS.filter(c => c.startsWith(prefix));
-    if (items.length === 0) { resolve(null); return; }
-
-    let selected = 0;
-    let drawn    = 0;
-    // Hizalama için tüm komutların max uzunluğu (sabit kolon)
-    const maxLen = Math.max(...SLASH_COMMANDS.map(c => c.length));
-    // Prompt '❯ ' = 2 sütun
-    const promptCols = 2;
-
-    function drawMenu(): void {
-      // Önceki menü satırlarını temizle
-      if (drawn > 0) {
-        for (let i = 0; i < drawn; i++) {
-          process.stdout.write('\x1b[1B');   // aşağı (scroll etmez — satırlar zaten var)
-          readline.cursorTo(process.stdout, 0);
-          readline.clearLine(process.stdout, 0);
-        }
-        process.stdout.write(`\x1b[${drawn}A`);
+    rl.question(chalk.bold.yellow(`  Seçim (1–${SLASH_COMMANDS.length}, Enter=iptal): `), (ans) => {
+      const trimmed = ans.trim();
+      if (!trimmed) { prompt(); resolve(); return; }
+      const idx = parseInt(trimmed, 10);
+      if (!isNaN(idx) && idx >= 1 && idx <= SLASH_COMMANDS.length) {
+        const cmd = SLASH_COMMANDS[idx - 1];
+        handleUserInput(cmd).then(resolve);
+      } else {
+        console.log(chalk.dim('  İptal.\n'));
+        prompt();
+        resolve();
       }
-      // Menü satırlarını çiz
-      for (let i = 0; i < items.length; i++) {
-        process.stdout.write('\n');
-        readline.cursorTo(process.stdout, 0);
-        readline.clearLine(process.stdout, 0);
-        const isSel  = i === selected;
-        const arrow  = isSel ? chalk.bold.yellow(' →') : '   ';
-        const cmd    = isSel ? chalk.bold.yellow(items[i]) : chalk.bold.cyan(items[i]);
-        const pad    = ' '.repeat(maxLen - items[i].length + 3);
-        const desc   = isSel
-          ? chalk.white(CMD_DESCRIPTIONS[items[i]] || '')
-          : chalk.dim(CMD_DESCRIPTIONS[items[i]] || '');
-        process.stdout.write(`${arrow} ${cmd}${pad}${desc}`);
-      }
-      drawn = items.length;
-      // İmleç prompt satırına, yazılan prefix sonuna geri dön
-      process.stdout.write(`\x1b[${drawn}A`);
-      readline.cursorTo(process.stdout, promptCols + prefix.length);
-    }
-
-    function updatePromptLine(): void {
-      readline.cursorTo(process.stdout, 0);
-      readline.clearLine(process.stdout, 0);
-      process.stdout.write(chalk.bold.green('❯ ') + prefix);
-    }
-
-    function cleanup(): void {
-      // Menü satırlarını sil
-      for (let i = 0; i < drawn; i++) {
-        process.stdout.write('\x1b[1B');
-        readline.cursorTo(process.stdout, 0);
-        readline.clearLine(process.stdout, 0);
-      }
-      if (drawn > 0) process.stdout.write(`\x1b[${drawn}A`);
-      // Prompt satırını temizle (/ veya kısmen yazılanı kaldır)
-      readline.cursorTo(process.stdout, 0);
-      readline.clearLine(process.stdout, 0);
-      process.stdin.removeListener('data', onKey);
-      if (process.stdin.isTTY) process.stdin.setRawMode(false);
-      // readline internal buffer'ı temizle
-      (rl as unknown as { line: string; cursor: number }).line   = '';
-      (rl as unknown as { line: string; cursor: number }).cursor = 0;
-      rl.resume();
-    }
-
-    // readline'ı durdur, raw mode al ve ilk çizimi yap
-    rl.pause();
-    if (process.stdin.isTTY) process.stdin.setRawMode(true);
-    drawMenu();
-
-    function onKey(buf: Buffer): void {
-      const str = buf.toString();
-
-      if (str === '\x1b[A') {                            // ↑
-        selected = (selected - 1 + items.length) % items.length;
-        drawMenu();
-      } else if (str === '\x1b[B') {                     // ↓
-        selected = (selected + 1) % items.length;
-        drawMenu();
-      } else if (str === '\r' || str === '\n') {         // Enter → seç
-        const chosenCmd = items[selected];
-        cleanup();
-        resolve(chosenCmd);
-      } else if (str === '\x1b' || str === '\x03') {    // Esc / Ctrl+C → iptal
-        cleanup();
-        resolve(null);
-      } else if (str === '\x7f') {                       // Backspace
-        if (prefix.length > 1) {
-          prefix = prefix.slice(0, -1);
-          items  = SLASH_COMMANDS.filter(c => c.startsWith(prefix));
-          selected = Math.min(selected, items.length - 1);
-          updatePromptLine();
-          drawMenu();
-        } else {
-          // Sadece '/' kaldı, sil → menüden çık
-          cleanup();
-          resolve(null);
-        }
-      } else if (/^[a-z]$/i.test(str)) {                // Harf → daralt
-        const newPrefix = prefix + str;
-        const newItems  = SLASH_COMMANDS.filter(c => c.startsWith(newPrefix));
-        if (newItems.length > 0) {
-          prefix   = newPrefix;
-          items    = newItems;
-          selected = 0;
-          updatePromptLine();
-          drawMenu();
-        }
-        // Eşleşme yok → tuşu yoksay
-      }
-      // Diğer tuşlar (Tab vs.) → yoksay
-    }
-
-    process.stdin.on('data', onKey);
+    });
   });
 }
 
@@ -271,13 +173,6 @@ const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
   terminal: true,
-  completer: (line: string): [string[], string] => {
-    if (line.startsWith('/')) {
-      const hits = SLASH_COMMANDS.filter(c => c.startsWith(line));
-      return [hits.length ? hits : SLASH_COMMANDS, line];
-    }
-    return [[], line];
-  },
 });
 
 let history: Message[] = [];
@@ -521,7 +416,7 @@ let pasteBuffer: string[] = [];
 let pasteTimer: NodeJS.Timeout | null = null;
 let isProcessing = false;
 
-const PASTE_TIMEOUT_MS = 15;
+const PASTE_TIMEOUT_MS = 80;
 
 rl.setPrompt(chalk.bold.green('\n❯ '));
 
@@ -535,15 +430,7 @@ async function handleUserInput(rawInput: string): Promise<void> {
   if (!input) { prompt(); return; }
 
   if (input === '/' || input === '/help') {
-    console.log(chalk.cyan('\n  📋 Komutlar:\n'));
-    console.log(chalk.white('  /resume') + chalk.dim('   — Kayıtlı oturumları listele ve devam et'));
-    console.log(chalk.white('  /history') + chalk.dim('  — Mesaj istatistikleri'));
-    console.log(chalk.white('  /show') + chalk.dim('     — Mevcut oturum geçmişini ekrana yazdır'));
-    console.log(chalk.white('  /delete') + chalk.dim('   — Kayıtlı oturum sil'));
-    console.log(chalk.white('  /reset') + chalk.dim('    — Oturumu sıfırla'));
-    console.log(chalk.white('  exit') + chalk.dim('      — Oturumu arşivle ve çık'));
-    console.log();
-    prompt();
+    await showCommandMenu();
     return;
   }
 
@@ -648,31 +535,7 @@ rl.on('line', (line: string) => {
   pasteTimer = setTimeout(flushPasteBuffer, PASTE_TIMEOUT_MS);
 });
 
-// Keypress: / yazılınca interaktif menü aç
-if (process.stdin.isTTY) {
-  readline.emitKeypressEvents(process.stdin);
-  process.stdin.on('keypress', (_str: string | undefined, key: { name?: string; sequence?: string } | undefined) => {
-    if (!key || isProcessing || menuActive) return;
-    // readline key'i işledikten sonra rl.line'ı oku
-    process.nextTick(() => {
-      if (menuActive) return;
-      const line: string = (rl as unknown as { line: string }).line ?? '';
-      if (line.startsWith('/')) {
-        menuActive = true;
-        enterMenuMode(line).then(selected => {
-          menuActive = false;
-          if (selected !== null) {
-            // Seçimi terminale yazdır ve çalıştır
-            process.stdout.write(chalk.bold.green('❯ ') + chalk.cyan(selected) + '\n');
-            handleUserInput(selected);
-          } else {
-            prompt();
-          }
-        });
-      }
-    });
-  });
-}
+// Keypress olayı artık kullanılmıyor — tüm girdi rl.on('line') üzerinden alınır
 
 rl.on('close', async () => {
   saveSession(history);
