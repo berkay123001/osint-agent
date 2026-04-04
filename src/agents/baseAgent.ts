@@ -66,10 +66,14 @@ export async function runAgentLoop(
 
     logger.agentThinking(config.name);
 
-    // Upstream API hatalarını (502, geçersiz JSON argümanlar) yakala ve yönet
-    // any: create() overload'u Stream|ChatCompletion union döndürür; streaming kullanmıyoruz
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let response: any;
+    // OpenAI SDK: create() metodu 2 overload'a sahip:
+    //   1) stream:false → ChatCompletion döner
+    //   2) stream:true  → Stream<ChatCompletionChunk> döner
+    // TypeScript her iki durumu da kapsayan union tip çıkarımı yapar: Stream | ChatCompletion
+    // Biz stream:true kullanmadığımız için her zaman ChatCompletion gelir,
+    // ama TS bunu bilemez → .choices erişimi derleme hatası verir (Stream'de .choices yok).
+    // Çözüm: `any` tipi ile TS tip kontrolünü atlıyoruz + her çağrıda `as ChatCompletion` cast.
+    let response: ChatCompletion | undefined;
     try {
       response = (await _client.chat.completions.create({
         model: config.model ?? DEFAULT_MODEL,
