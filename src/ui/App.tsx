@@ -43,10 +43,23 @@ export function App(): React.ReactElement {
     return () => { progressEmitter.off('progress', handler); };
   }, []);
 
-  // Esc → menüden çık
+  // Startup: önceki aktif oturumu arşivle — /resume listesinde görünsün
+  useEffect(() => {
+    const existing = loadActiveSession();
+    if (existing && existing.messageCount > 0) {
+      archiveSession(existing.history, existing.createdAt);
+      deleteActiveSession();
+    }
+  }, []);
+
+  // Esc → menüden çık; L → log toggle
   useInput((_input, key) => {
     if (key.escape && view !== 'chat') {
       setView('chat');
+      return;
+    }
+    if (_input === 'l' && view === 'chat' && !key.ctrl && !key.meta) {
+      if (progressLog.length > 0) setShowLog(v => !v);
     }
   });
 
@@ -139,33 +152,30 @@ export function App(): React.ReactElement {
     handleSubmit(cmd);
   }, [handleSubmit]);
 
-  // Resume: oturum seçimi
-  const archivedSessions = listSessions();
-  const resumeItems = archivedSessions.map((s, i) => {
-    const date = new Date(s.data.lastActiveAt).toLocaleString('tr-TR');
-    const q = s.data.history.filter(m => m.role === 'user').length;
-    return { label: `${date} · ${q} questions`, value: String(i) };
-  });
+  // Resume — her render'da taze liste
+  const getArchivedSessions = () => listSessions();
 
   const handleResumeSelect = useCallback((item: { value: string }) => {
+    const sessions = listSessions(); // taze oku
     const idx = parseInt(item.value, 10);
-    const session = archivedSessions[idx];
+    const session = sessions[idx];
     if (!session) return;
     if (messages.length > 0) {
       archiveSession(messages, createdAt);
+      deleteActiveSession();
     }
     setMessages(session.data.history);
     setCreatedAt(session.data.createdAt);
     saveSession(session.data.history, session.data.createdAt);
-    setStatusMsg(`Loaded session (${session.data.history.filter(m => m.role === 'user').length} questions).`);
+    setStatusMsg(`Oturum yükle: ${session.data.history.filter(m => m.role === 'user').length} soru.`);
     setView('chat');
-  }, [messages, createdAt, archivedSessions]);
+  }, [messages, createdAt]);
 
   const handleDeleteSelect = useCallback((item: { value: string }) => {
-    const sessions = listSessions();
+    const sessions = listSessions(); // taze oku
     if (item.value === '__all__') {
       sessions.forEach((s: SessionEntry) => deleteSession(s.filename));
-      setStatusMsg(`Deleted ${sessions.length} sessions.`);
+      setStatusMsg(`${sessions.length} oturum silindi.`);
       setView('chat');
       return;
     }
@@ -175,10 +185,9 @@ export function App(): React.ReactElement {
     deleteSession(session.filename);
     const remaining = listSessions();
     if (remaining.length === 0) {
-      setStatusMsg('Deleted. No sessions left.');
+      setStatusMsg('Silindi. Oturum kalmadı.');
       setView('chat');
     }
-    // Stay in delete view so user can delete more
   }, []);
 
   return (
@@ -196,22 +205,23 @@ export function App(): React.ReactElement {
 
         {progressLog.length > 0 && (
           <Box marginTop={1} flexDirection="column">
-            <Box>
-              <Text dimColor>── Aktivite logu ({progressLog.length} satır) </Text>
-              <Text dimColor color="cyan">[/log gizle/göster]</Text>
+            <Box gap={1}>
+              <Text color="cyan" dimColor>{showLog ? '▼' : '▶'}</Text>
+              <Text dimColor>
+                {progressLog.length} satır
+                {' — '}
+                {showLog ? 'açık' : 'kapalı'}
+              </Text>
+              <Text color="cyan" dimColor>[L]</Text>
             </Box>
             {showLog && (
-              <Box flexDirection="column" marginTop={0}>
+              <Box flexDirection="column" marginTop={0} marginLeft={2}>
                 {progressLog.slice(-30).map((line, i) => (
                   <Text key={i} dimColor>{line.slice(0, 140)}</Text>
                 ))}
               </Box>
             )}
           </Box>
-        )}
-
-        {isProcessing && progressLog.length === 0 && (
-          <Box marginTop={1}><Text dimColor>...</Text></Box>
         )}
 
         {view === 'chat' && (
@@ -229,9 +239,12 @@ export function App(): React.ReactElement {
 
         {view === 'resume' && (
           <Box flexDirection="column" marginTop={1}>
-            <Text dimColor>Select session (Esc back):</Text>
+            <Text dimColor>Oturum seç (Esc geri):</Text>
             <SelectInput
-              items={resumeItems}
+              items={getArchivedSessions().map((s, i) => ({
+                label: `${new Date(s.data.lastActiveAt).toLocaleString('tr-TR')} · ${s.data.history.filter(m => m.role === 'user').length} soru`,
+                value: String(i),
+              }))}
               onSelect={handleResumeSelect}
             />
           </Box>
@@ -239,15 +252,14 @@ export function App(): React.ReactElement {
 
         {view === 'delete' && (
           <Box flexDirection="column" marginTop={1}>
-            <Text dimColor>Select session to delete (Esc back):</Text>
+            <Text dimColor>Silinecek oturumu seç (Esc geri):</Text>
             <SelectInput
               items={[
-                { label: '⚠ Delete ALL sessions', value: '__all__' },
-                ...archivedSessions.map((s, i) => {
-                  const date = new Date(s.data.lastActiveAt).toLocaleString('tr-TR');
-                  const q = s.data.history.filter(m => m.role === 'user').length;
-                  return { label: `${date} · ${q} questions`, value: String(i) };
-                }),
+                { label: '⚠ Tüm oturumları sil', value: '__all__' },
+                ...getArchivedSessions().map((s, i) => ({
+                  label: `${new Date(s.data.lastActiveAt).toLocaleString('tr-TR')} · ${s.data.history.filter((m: Message) => m.role === 'user').length} soru`,
+                  value: String(i),
+                })),
               ]}
               onSelect={handleDeleteSelect}
             />
