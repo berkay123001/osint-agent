@@ -32,11 +32,13 @@ export function App(): React.ReactElement {
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [progressLog, setProgressLog] = useState<string[]>([]);
   const [showLog, setShowLog] = useState(false);
+  const [logScrollOffset, setLogScrollOffset] = useState(0);
 
   // progressEmitter dinle — agent/tool loglarını UI'da göster
   useEffect(() => {
     const handler = (msg: string) => {
       setProgressLog(prev => [...prev.slice(-200), msg]);
+      setLogScrollOffset(0); // Yeni log gelince en alta döndür
       setShowLog(true); // İlk log gelince otomatik aç
     };
     progressEmitter.on('progress', handler);
@@ -60,6 +62,15 @@ export function App(): React.ReactElement {
     }
     if (_input === 'l' && view === 'chat' && !key.ctrl && !key.meta) {
       if (progressLog.length > 0) setShowLog(v => !v);
+    }
+    const LOG_LINES = 30;
+    if (showLog && view === 'chat') {
+      if (key.upArrow) {
+        setLogScrollOffset(prev => Math.min(prev + 5, Math.max(0, progressLog.length - LOG_LINES)));
+      }
+      if (key.downArrow) {
+        setLogScrollOffset(prev => Math.max(0, prev - 5));
+      }
     }
   });
 
@@ -134,6 +145,8 @@ export function App(): React.ReactElement {
     // Normal mesaj → supervisor
     setIsProcessing(true);
     setStatusMsg(null);
+    setProgressLog([]);        // Önceki sorgunun loglarını temizle
+    setLogScrollOffset(0);
     const newMessages: Message[] = [...messages, { role: 'user', content: trimmed }];
     setMessages(newMessages);
 
@@ -203,26 +216,36 @@ export function App(): React.ReactElement {
           </Box>
         )}
 
-        {progressLog.length > 0 && (
+        {progressLog.length > 0 && (() => {
+          const LOG_LINES = 30;
+          const scrollStart = Math.max(0, progressLog.length - LOG_LINES - logScrollOffset);
+          const visibleLines = progressLog.slice(scrollStart, scrollStart + LOG_LINES);
+          const canScrollUp = logScrollOffset < progressLog.length - LOG_LINES;
+          const canScrollDown = logScrollOffset > 0;
+          return (
           <Box marginTop={1} flexDirection="column">
             <Box gap={1}>
               <Text color="cyan" dimColor>{showLog ? '▼' : '▶'}</Text>
               <Text dimColor>
                 {progressLog.length} satır
+                {logScrollOffset > 0 ? ` (${progressLog.length - LOG_LINES - logScrollOffset + 1}-${Math.min(progressLog.length, scrollStart + LOG_LINES)})` : ''}
                 {' — '}
                 {showLog ? 'açık' : 'kapalı'}
               </Text>
-              <Text color="cyan" dimColor>[L]</Text>
+              <Text color="cyan" dimColor>[L]{showLog ? '  ↑↓ kaydır' : ''}</Text>
             </Box>
             {showLog && (
               <Box flexDirection="column" marginTop={0} marginLeft={2}>
-                {progressLog.slice(-30).map((line, i) => (
+                {canScrollUp && <Text dimColor color="cyan">  ↑ daha eski loglar var</Text>}
+                {visibleLines.map((line, i) => (
                   <Text key={i} dimColor>{line.slice(0, 140)}</Text>
                 ))}
+                {canScrollDown && <Text dimColor color="cyan">  ↓ daha yeni loglar var</Text>}
               </Box>
             )}
           </Box>
-        )}
+          );
+        })()}
 
         {view === 'chat' && (
           <Box marginTop={1}>
