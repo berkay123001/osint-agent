@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 
@@ -42,6 +42,14 @@ export function PromptInput({ onSubmit, isProcessing }: Props): React.ReactEleme
     setValue('');
     onSubmit(trimmed);
   }, [onSubmit, isProcessing, pendingPaste]);
+
+  // "/" yazılır yazılmaz anında komut menüsünü aç (Enter gerekmeden)
+  useEffect(() => {
+    if (value === '/') {
+      setValue('');
+      onSubmit('/');
+    }
+  }, [value, onSubmit]);
 
   // Esc ile bekleyen paste iptal
   useInput((input, key) => {

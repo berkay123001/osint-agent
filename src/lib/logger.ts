@@ -95,11 +95,8 @@ function emit(entry: LogEntry): void {
 
   const output = jsonMode ? formatJson(entry) : formatTerminal(entry)
 
-  if (entry.level === 'ERROR') {
-    process.stderr.write(output + '\n')
-  } else {
-    process.stdout.write(output + '\n')
-  }
+  // Tüm log çıktısı stderr'e — Ink stdout'u yönettiği için stdout'a yazmak render bozar
+  process.stderr.write(output + '\n')
 }
 
 // ─── Logger API ──────────────────────────────────────────────────────────────

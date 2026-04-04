@@ -61,7 +61,7 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
     const dir = path.resolve(__dirname, '../../.osint-sessions');
     await mkdir(dir, { recursive: true });
     await writeFile(path.join(dir, 'identity-knowledge.md'), md, 'utf-8');
-    console.log(chalk.gray(`   🧠 Kimlik ham bilgi tabanı kaydedildi → .osint-sessions/identity-knowledge.md (${calls.length} araç sonucu)`));
+    process.stderr.write(chalk.gray(`   🧠 Kimlik ham bilgi tabanı kaydedildi → .osint-sessions/identity-knowledge.md (${calls.length} araç sonucu)`) + '\n');
   } catch { /* sessizce geç */ }
 }
 
@@ -109,7 +109,7 @@ const DEPTH_MULTIPLIERS: Record<string, number> = { quick: 0.5, normal: 1, deep:
 export async function runIdentityAgent(query: string, context?: string, depth?: string): Promise<string> {
   const multiplier = DEPTH_MULTIPLIERS[depth ?? 'normal'] ?? 1;
   const maxToolCalls = Math.ceil((identityAgentConfig.maxToolCalls ?? 30) * multiplier);
-  console.log(chalk.cyan.bold(`\n🕵️‍♂️ Dış Görevlendirme: IdentityAgent -> "${query}"`) + chalk.dim(` [derinlik: ${depth ?? 'normal'}, bütçe: ${maxToolCalls}]`));
+  process.stderr.write(chalk.cyan.bold(`\n🕵️‍♂️ Dış Görevlendirme: IdentityAgent -> "${query}"`) + chalk.dim(` [derinlik: ${depth ?? 'normal'}, bütçe: ${maxToolCalls}]`) + '\n');
   const history: Message[] = [
     { role: 'system', content: identityAgentConfig.systemPrompt },
     { role: 'user', content: context ? `Context:\n${context}\n\nTask:\n${query}` : query }
@@ -119,8 +119,8 @@ export async function runIdentityAgent(query: string, context?: string, depth?: 
   const toolSummary = Object.entries(result.toolsUsed)
     .map(([tool, count]) => `${tool}×${count}`)
     .join(', ');
-  console.log(chalk.green(`\n✅ IdentityAgent Raporu Tamamlandı.`) +
-    chalk.gray(` [${result.toolCallCount} araç çağrısı: ${toolSummary || 'yok'}]`));
+  process.stderr.write(chalk.green(`\n✅ IdentityAgent Raporu Tamamlandı.`) +
+    chalk.gray(` [${result.toolCallCount} araç çağrısı: ${toolSummary || 'yok'}]`) + '\n');
   const meta = `\n\n---\n**[META] IdentityAgent araç istatistikleri:** ${toolSummary || 'araç kullanılmadı'} (toplam: ${result.toolCallCount})`;
   return result.finalResponse + meta;
 }
