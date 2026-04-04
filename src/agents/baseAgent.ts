@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import type { ChatCompletion } from 'openai/resources/chat/completions';
 import { sanitizeHistoryForProvider, normalizeAssistantMessage, normalizeToolContent } from '../lib/chatHistory.js';
 import { logger } from '../lib/logger.js';
 import { readFile } from 'fs/promises';
@@ -51,17 +52,10 @@ export async function runAgentLoop(
   let forceTextRetries = 0; // Metin zorlama deneme sayacı
   const toolsUsed: Record<string, number> = {};
   const maxToolCalls = config.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
-  const maxEmptyRetries = config.maxEmptyRetries ?? 1;
   // Tool call deduplication: aynı tool+args kombinasyonu önceden çağrıldıysa cache'den dön
   const callCache = new Map<string, string>();
   // Per-tool hard limiti: tek bir tool'un bütün bütçeyi yemesini engeller
-  // Varsayılan limitler maxToolCalls'a orantılı — agent bütçesi artarsa limitler de artar
-  const defaultToolLimits: Record<string, number> = {
-    search_academic_papers: Math.min(Math.ceil(maxToolCalls * 0.35), 15),  // bütçenin %35'i, max 15
-    web_fetch: Math.min(Math.ceil(maxToolCalls * 0.6), 40),                  // bütçenin %60'ı, max 40
-    fact_check_to_graph: 2,                                                    // her zaman sabit
-  };
-  const perToolLimits = { ...defaultToolLimits, ...config.toolLimits };
+  const PER_TOOL_LIMITS: Record<string, number> = { search_academic_papers: 8 };
   const perToolCount: Record<string, number> = {};
   while (true) {
     const toolsDisabled = toolCallCount >= maxToolCalls;
@@ -73,15 +67,17 @@ export async function runAgentLoop(
     logger.agentThinking(config.name);
 
     // Upstream API hatalarını (502, geçersiz JSON argümanlar) yakala ve yönet
-    let response: Awaited<ReturnType<typeof _client.chat.completions.create>>;
+    // any: create() overload'u Stream|ChatCompletion union döndürür; streaming kullanmıyoruz
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let response: any;
     try {
-      response = await _client.chat.completions.create({
+      response = (await _client.chat.completions.create({
         model: config.model ?? DEFAULT_MODEL,
         messages: sanitizeHistoryForProvider(history),
         tools: config.tools.length > 0 ? config.tools : undefined,
         tool_choice: config.tools.length > 0 ? toolChoice : undefined,
         max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-      });
+      }) as ChatCompletion);
     } catch (apiError: unknown) {
       const msg = apiError instanceof Error ? apiError.message : String(apiError);
       const currentModel = config.model ?? DEFAULT_MODEL;
@@ -91,13 +87,13 @@ export async function runAgentLoop(
         const fallbackModel = FALLBACK_MODELS[0]; // Gemini
         logger.warn('AGENT', `[${config.name}] Alibaba içerik filtresi → ${fallbackModel} modeline geçiliyor...`);
         try {
-          response = await _client.chat.completions.create({
+          response = (await _client.chat.completions.create({
             model: fallbackModel,
             messages: sanitizeHistoryForProvider(history),
             tools: config.tools.length > 0 ? config.tools : undefined,
             tool_choice: config.tools.length > 0 ? toolChoice : undefined,
             max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-          });
+          }) as ChatCompletion);
         } catch (fallbackErr) {
           // Fallback model de reddedirse → graceful degradation, crash etme
           logger.warn('AGENT', `[${config.name}] Fallback model de başarısız — içerik filtresi atlanamıyor.`);
@@ -115,13 +111,13 @@ export async function runAgentLoop(
         logger.warn('AGENT', `[${config.name}] Rate limit (429) — ${waitMs / 1000}s bekleyip tekrar deneniyor...`);
         await _delay(waitMs);
         try {
-          response = await _client.chat.completions.create({
+          response = (await _client.chat.completions.create({
             model: currentModel,
             messages: sanitizeHistoryForProvider(history),
             tools: config.tools.length > 0 ? config.tools : undefined,
             tool_choice: config.tools.length > 0 ? toolChoice : undefined,
             max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-          });
+          }) as ChatCompletion);
         } catch (retryErr) {
           // 2. deneme: fallback modelleri sirayla dene
           const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
@@ -131,13 +127,13 @@ export async function runAgentLoop(
               logger.warn('AGENT', `[${config.name}] 429 devam — fallback deneniyor: ${fbModel}`);
               await _delay(2000);
               try {
-                response = await _client.chat.completions.create({
+                response = (await _client.chat.completions.create({
                   model: fbModel,
                   messages: sanitizeHistoryForProvider(history),
                   tools: config.tools.length > 0 ? config.tools : undefined,
                   tool_choice: config.tools.length > 0 ? toolChoice : undefined,
                   max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-                });
+                }) as ChatCompletion);
                 logger.info('AGENT', `[${config.name}] Fallback basarili: ${fbModel}`);
                 break; // basarili → donguden cik
               } catch {
@@ -157,13 +153,13 @@ export async function runAgentLoop(
       else if (msg.includes('502') || msg.includes('529') || msg.includes('InternalError')) {
         logger.warn('AGENT', `[${config.name}] API geçici hata (${msg.slice(0, 60)}...), 3s bekleyip tekrar deneniyor...`);
         await _delay(3000);
-        response = await _client.chat.completions.create({
+        response = (await _client.chat.completions.create({
           model: currentModel,
           messages: sanitizeHistoryForProvider(history),
           tools: config.tools.length > 0 ? config.tools : undefined,
           tool_choice: config.tools.length > 0 ? toolChoice : undefined,
           max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-        });
+        }) as ChatCompletion);
       }
       else {
         throw apiError;
@@ -182,13 +178,13 @@ export async function runAgentLoop(
         if (upstreamErr.includes('DataInspectionFailed')) {
           const fallbackModel = FALLBACK_MODELS[0];
           logger.warn('AGENT', `[${config.name}] Alibaba DataInspection → ${fallbackModel} fallback deneniyor...`);
-          response = await _client.chat.completions.create({
+          response = (await _client.chat.completions.create({
             model: fallbackModel,
             messages: sanitizeHistoryForProvider(history),
             tools: config.tools.length > 0 ? config.tools : undefined,
             tool_choice: config.tools.length > 0 ? toolChoice : undefined,
             max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-          });
+          }) as ChatCompletion);
           // Fallback sonrası tekrar kontrol et
           if (!response?.choices?.[0]) {
             throw new Error(`Model hatası (fallback de başarısız): ${upstreamErr.slice(0, 200)}`);
@@ -241,7 +237,7 @@ export async function runAgentLoop(
               const userQuestion = lastUserMsg && typeof lastUserMsg.content === 'string' ? lastUserMsg.content : 'Kullanıcı sorusu'
 
               try {
-                const cleanResponse = await _client.chat.completions.create({
+                const cleanResponse = (await _client.chat.completions.create({
                   model: config.model ?? DEFAULT_MODEL,
                   messages: [
                     { role: 'system', content: 'Sen OSINT araştırma asistanısın. Sana verilen araştırma verilerini analiz edip Markdown formatında özetle. Hiçbir araç çağırma — sadece düz metin yaz.' },
@@ -249,7 +245,7 @@ export async function runAgentLoop(
                   ],
                   // tools parametresi yok — model araç çağıramaz
                   max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-                })
+                }) as ChatCompletion)
                 const text = cleanResponse.choices?.[0]?.message?.content?.trim()
                 if (text) {
                   const cleaned = stripThinkingTokens(text)
@@ -343,8 +339,8 @@ export async function runAgentLoop(
         ? message.refusal
         : '';
 
-      // Model sadece <think/> döndürüp boş bıraktıysa, tekrar dene
-      if (cleanContent.length === 0 && toolCallCount > 0 && emptyRetries < maxEmptyRetries) {
+      // Model sadece <think/> döndürüp boş bıraktıysa, bir kez daha dene
+      if (cleanContent.length === 0 && toolCallCount > 0 && emptyRetries < 1) {
         emptyRetries++;
         logger.warn('AGENT', `[${config.name}] Model boş yanıt döndürdü, tekrar deneniyor...`);
         history.push({
@@ -377,7 +373,7 @@ export async function runAgentLoop(
 
         // Per-tool hard limit kontrolü
         perToolCount[toolName] = (perToolCount[toolName] ?? 0) + 1;
-        const toolLimit = perToolLimits[toolName];
+        const toolLimit = PER_TOOL_LIMITS[toolName];
         if (toolLimit && perToolCount[toolName] > toolLimit) {
           logger.warn('AGENT', `[${config.name}] ${toolName} hard limiti aşıldı (${toolLimit}). Atlanıyor.`);
           result = `[TOOL_LIMIT] ${toolName} bu oturumda ${toolLimit} kez çağrıldı — limit doldu. Elindeki verilerle devam et, rapor yaz.`;
