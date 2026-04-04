@@ -17,7 +17,8 @@
   "type": "module",
   "scripts": {
     "dev": "npx genkit start -- tsx src/index.ts",
-    "chat": "tsx src/chat.ts",
+    "chat": "tsx src/chatInk.tsx",
+    "chat:old": "tsx src/chat.ts",
     "agent:chat": "tsx src/tools/codingAgentChat.ts",
     "graph": "tsx src/graphServer.ts",
     "build": "tsc",
@@ -41,6 +42,10 @@
     "fast-levenshtein": "^3.0.0",
     "genkit": "^1.29.0",
     "genkitx-openai": "^0.30.0",
+    "ink": "^6.8.0",
+    "ink-select-input": "^6.2.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
     "jimp": "^0.22.12",
     "neo4j-driver": "^6.0.1",
     "openai": "^6.27.0",
@@ -51,6 +56,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.3.5",
+    "@types/react": "^19.2.14",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
