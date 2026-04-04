@@ -30,15 +30,6 @@ export function App(): React.ReactElement {
   const [view, setView] = useState<ViewMode>('chat');
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
-  // Aktif oturumu sessizce yükle — soru sormadan devam et
-  useEffect(() => {
-    const existing = loadActiveSession();
-    if (existing && existing.messageCount > 0) {
-      setMessages(existing.history);
-      setCreatedAt(existing.createdAt);
-    }
-  }, []);
-
   // Esc → menüden çık
   useInput((_input, key) => {
     if (key.escape && view !== 'chat') {
