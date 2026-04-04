@@ -34,9 +34,13 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
 }
 
 // ─── Konfigürasyon ───────────────────────────────────────────────────────────
-const configuredLevel = (process.env.LOG_LEVEL ?? 'INFO').toUpperCase() as LogLevel
-const minPriority = LEVEL_PRIORITY[configuredLevel] ?? LEVEL_PRIORITY.INFO
+// Lazy evaluation — ESM import hoisting'den etkilenmez
 const jsonMode = process.env.LOG_FORMAT?.toUpperCase() === 'JSON'
+
+function getMinPriority(): number {
+  const level = (process.env.LOG_LEVEL ?? 'INFO').toUpperCase() as LogLevel
+  return LEVEL_PRIORITY[level] ?? LEVEL_PRIORITY.INFO
+}
 
 // ─── Renkler ─────────────────────────────────────────────────────────────────
 const LEVEL_COLORS: Record<LogLevel, (s: string) => string> = {
@@ -91,7 +95,7 @@ function formatJson(entry: LogEntry): string {
 
 // ─── Core Log Fonksiyonu ─────────────────────────────────────────────────────
 function emit(entry: LogEntry): void {
-  if (LEVEL_PRIORITY[entry.level] < minPriority) return
+  if (LEVEL_PRIORITY[entry.level] < getMinPriority()) return
 
   const output = jsonMode ? formatJson(entry) : formatTerminal(entry)
 

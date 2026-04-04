@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
+import SelectInput from 'ink-select-input';
 
 import { runSupervisor } from '../agents/supervisorAgent.js';
 import { closeNeo4j } from '../lib/neo4j.js';
@@ -19,7 +20,7 @@ import { MessageList } from './MessageList.js';
 import { CommandMenu } from './CommandMenu.js';
 import { PromptInput } from './PromptInput.js';
 
-type ViewMode = 'chat' | 'menu';
+type ViewMode = 'chat' | 'menu' | 'resume';
 
 export function App(): React.ReactElement {
   const { exit } = useApp();
@@ -40,7 +41,7 @@ export function App(): React.ReactElement {
 
   // Esc → menüden çık
   useInput((_input, key) => {
-    if (key.escape && view === 'menu') {
+    if (key.escape && view !== 'chat') {
       setView('chat');
     }
   });
@@ -65,6 +66,28 @@ export function App(): React.ReactElement {
       setMessages([]);
       setCreatedAt(new Date().toISOString());
       setStatusMsg('Session cleared.');
+      return;
+    }
+    if (trimmed === '/compact') {
+      // Eski mesajları kırp — son 10 mesajı tut, gerisini at
+      const KEEP = 10;
+      if (messages.length <= KEEP) {
+        setStatusMsg(`Already compact (${messages.length} messages).`);
+        return;
+      }
+      const trimmed2 = messages.slice(-KEEP);
+      setMessages(trimmed2);
+      saveSession(trimmed2, createdAt);
+      setStatusMsg(`Compacted: ${messages.length} → ${trimmed2.length} messages.`);
+      return;
+    }
+    if (trimmed === '/resume') {
+      const sessions = listSessions();
+      if (sessions.length === 0) {
+        setStatusMsg('No archived sessions.');
+        return;
+      }
+      setView('resume');
       return;
     }
     if (trimmed === '/delete') {
@@ -101,6 +124,28 @@ export function App(): React.ReactElement {
     handleSubmit(cmd);
   }, [handleSubmit]);
 
+  // Resume: oturum seçimi
+  const archivedSessions = listSessions();
+  const resumeItems = archivedSessions.map((s, i) => {
+    const date = new Date(s.data.lastActiveAt).toLocaleString('tr-TR');
+    const q = s.data.history.filter(m => m.role === 'user').length;
+    return { label: `${date} · ${q} questions`, value: String(i) };
+  });
+
+  const handleResumeSelect = useCallback((item: { value: string }) => {
+    const idx = parseInt(item.value, 10);
+    const session = archivedSessions[idx];
+    if (!session) return;
+    if (messages.length > 0) {
+      archiveSession(messages, createdAt);
+    }
+    setMessages(session.data.history);
+    setCreatedAt(session.data.createdAt);
+    saveSession(session.data.history, session.data.createdAt);
+    setStatusMsg(`Loaded session (${session.data.history.filter(m => m.role === 'user').length} questions).`);
+    setView('chat');
+  }, [messages, createdAt, archivedSessions]);
+
   return (
     <Box flexDirection="column" paddingX={2} paddingTop={1}>
       <Header />
@@ -125,6 +170,16 @@ export function App(): React.ReactElement {
             onSelect={handleMenuSelect}
             onCancel={() => setView('chat')}
           />
+        )}
+
+        {view === 'resume' && (
+          <Box flexDirection="column" marginTop={1}>
+            <Text dimColor>Select session (Esc back):</Text>
+            <SelectInput
+              items={resumeItems}
+              onSelect={handleResumeSelect}
+            />
+          </Box>
         )}
       </Box>
 
