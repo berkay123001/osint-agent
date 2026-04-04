@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import type { ChatCompletion } from 'openai/resources/chat/completions';
 import { sanitizeHistoryForProvider, normalizeAssistantMessage, normalizeToolContent } from '../lib/chatHistory.js';
 import { logger } from '../lib/logger.js';
+import { emitProgress } from '../lib/progressEmitter.js';
 import { readFile } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -385,11 +386,21 @@ export async function runAgentLoop(
           logger.warn('AGENT', `[${config.name}] Duplikat tool çağrısı engellendi: ${toolName} (aynı argümanlar)`);
           result = `[DUPLICATE_CALL] Bu sorgu daha önce çağrıldı ve sonuç zaten history'de. Farklı bir sorgu dene ya da bir sonraki faza geç.\n\n[cached: ${(callCache.get(cacheKey) ?? '').slice(0, 500)}...]`;
         } else {
+          // Kısa bir arg özeti oluştur (log paneline yazar)
+          const argSummary = Object.entries(args)
+            .slice(0, 2)
+            .map(([k, v]) => `${k}=${String(v).slice(0, 40)}`)
+            .join(', ');
+          emitProgress(`  🔧 ${toolName}(${argSummary})`);
           result = await config.executeTool(toolName, args);
           callCache.set(cacheKey, result);
+          // Kısa sonuç özeti — sadece ilk satır veya 80 karakter
+          const resultPreview = result.split('\n')[0].slice(0, 80);
+          emitProgress(`  ✓ ${toolName} → ${resultPreview}`);
         }
       } catch (error) {
         result = `Tool hatası (${toolName}): ${(error as Error).message}`;
+        emitProgress(`  ❌ ${toolName} → ${(error as Error).message.slice(0, 80)}`);
       }
       history.push({
         role: 'tool',
