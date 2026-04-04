@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { emitProgress } from '../lib/progressEmitter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -61,7 +62,7 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
     const dir = path.resolve(__dirname, '../../.osint-sessions');
     await mkdir(dir, { recursive: true });
     await writeFile(path.join(dir, 'identity-knowledge.md'), md, 'utf-8');
-    process.stderr.write(chalk.gray(`   🧠 Kimlik ham bilgi tabanı kaydedildi → .osint-sessions/identity-knowledge.md (${calls.length} araç sonucu)`) + '\n');
+    emitProgress(`🧠 Kimlik bilgi tabanı kaydedildi (${calls.length} araç sonucu)`);
   } catch { /* sessizce geç */ }
 }
 
@@ -109,7 +110,7 @@ const DEPTH_MULTIPLIERS: Record<string, number> = { quick: 0.5, normal: 1, deep:
 export async function runIdentityAgent(query: string, context?: string, depth?: string): Promise<string> {
   const multiplier = DEPTH_MULTIPLIERS[depth ?? 'normal'] ?? 1;
   const maxToolCalls = Math.ceil((identityAgentConfig.maxToolCalls ?? 30) * multiplier);
-  process.stderr.write(chalk.cyan.bold(`\n🕵️‍♂️ Dış Görevlendirme: IdentityAgent -> "${query}"`) + chalk.dim(` [derinlik: ${depth ?? 'normal'}, bütçe: ${maxToolCalls}]`) + '\n');
+  emitProgress(`🕵️‍♂️ IdentityAgent → "${query.slice(0, 80)}" [derinlik: ${depth ?? 'normal'}, bütçe: ${maxToolCalls}]`);
   const history: Message[] = [
     { role: 'system', content: identityAgentConfig.systemPrompt },
     { role: 'user', content: context ? `Context:\n${context}\n\nTask:\n${query}` : query }
@@ -119,8 +120,7 @@ export async function runIdentityAgent(query: string, context?: string, depth?: 
   const toolSummary = Object.entries(result.toolsUsed)
     .map(([tool, count]) => `${tool}×${count}`)
     .join(', ');
-  process.stderr.write(chalk.green(`\n✅ IdentityAgent Raporu Tamamlandı.`) +
-    chalk.gray(` [${result.toolCallCount} araç çağrısı: ${toolSummary || 'yok'}]`) + '\n');
+  emitProgress(`✅ IdentityAgent tamamlandı [${result.toolCallCount} araç: ${toolSummary || 'yok'}]`);
   const meta = `\n\n---\n**[META] IdentityAgent araç istatistikleri:** ${toolSummary || 'araç kullanılmadı'} (toplam: ${result.toolCallCount})`;
   return result.finalResponse + meta;
 }

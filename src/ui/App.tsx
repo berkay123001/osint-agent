@@ -5,6 +5,7 @@ import SelectInput from 'ink-select-input';
 import { runSupervisor } from '../agents/supervisorAgent.js';
 import { closeNeo4j } from '../lib/neo4j.js';
 import type { Message } from '../agents/types.js';
+import { progressEmitter } from '../lib/progressEmitter.js';
 import {
   loadActiveSession,
   saveSession,
@@ -29,6 +30,21 @@ export function App(): React.ReactElement {
   const [isProcessing, setIsProcessing] = useState(false);
   const [view, setView] = useState<ViewMode>('chat');
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [progressLog, setProgressLog] = useState<string[]>([]);
+
+  // progressEmitter dinle — agent/tool loglarını UI'da göster
+  useEffect(() => {
+    const handler = (msg: string) => {
+      setProgressLog(prev => [...prev.slice(-50), msg]);
+    };
+    progressEmitter.on('progress', handler);
+    return () => { progressEmitter.off('progress', handler); };
+  }, []);
+
+  // İşlem bitince logları temizle
+  useEffect(() => {
+    if (!isProcessing) setProgressLog([]);
+  }, [isProcessing]);
 
   // Esc → menüden çık
   useInput((_input, key) => {
@@ -170,6 +186,18 @@ export function App(): React.ReactElement {
         {statusMsg && (
           <Box marginTop={1}>
             <Text dimColor>{statusMsg}</Text>
+          </Box>
+        )}
+
+        {isProcessing && (
+          <Box marginTop={1} flexDirection="column">
+            {progressLog.length > 0 && (
+              <Box flexDirection="column" marginBottom={1}>
+                {progressLog.slice(-12).map((line, i) => (
+                  <Text key={i} dimColor>{line.slice(0, 140)}</Text>
+                ))}
+              </Box>
+            )}
           </Box>
         )}
 

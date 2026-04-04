@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { emitProgress } from '../lib/progressEmitter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -74,7 +75,7 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
     const dir = path.resolve(__dirname, '../../.osint-sessions');
     await mkdir(dir, { recursive: true });
     await writeFile(path.join(dir, 'academic-knowledge.md'), md, 'utf-8');
-    process.stderr.write(chalk.gray(`   🧠 Ham bilgi tabanı kaydedildi → .osint-sessions/academic-knowledge.md (${calls.length} araç sonucu)`) + '\n');
+    emitProgress(`🧠 Akademik bilgi tabanı kaydedildi (${calls.length} araç sonucu)`);
   } catch { /* sessizce geç */ }
 }
 
@@ -287,7 +288,7 @@ const DEPTH_MULTIPLIERS: Record<string, number> = { quick: 0.5, normal: 1, deep:
 export async function runAcademicAgent(query: string, context?: string, depth?: string): Promise<string> {
   const multiplier = DEPTH_MULTIPLIERS[depth ?? 'normal'] ?? 1;
   const maxToolCalls = Math.ceil((academicAgentConfig.maxToolCalls ?? 30) * multiplier);
-  process.stderr.write(chalk.cyan.bold(`\n📚 Dış Görevlendirme: AcademicAgent -> "${query}"`) + chalk.dim(` [derinlik: ${depth ?? 'normal'}, bütçe: ${maxToolCalls}]`) + '\n');
+  emitProgress(`📚 AcademicAgent → "${query.slice(0, 80)}" [derinlik: ${depth ?? 'normal'}, bütçe: ${maxToolCalls}]`);
   const history: Message[] = [
     { role: 'system', content: academicAgentConfig.systemPrompt },
     { role: 'user', content: context ? `Context:\n${context}\n\nAraştırma Görevi:\n${query}` : query }
@@ -302,8 +303,7 @@ export async function runAcademicAgent(query: string, context?: string, depth?: 
     .map(([tool, count]) => `${tool}×${count}`)
     .join(', ');
   
-  process.stderr.write(chalk.green(`\n✅ AcademicAgent Raporu Tamamlandı.`) +
-    chalk.gray(` [${result.toolCallCount} araç çağrısı: ${toolSummary || 'yok'}]`) + '\n');
+  emitProgress(`✅ AcademicAgent tamamlandı [${result.toolCallCount} araç: ${toolSummary || 'yok'}]`);
   
   // Meta veriyi rapora ekle — Supervisor'ın özeleştiri sorusuna doğru yanıt verebilmesi için
   const meta = `\n\n---\n**[META] AcademicAgent araç istatistikleri:** ${toolSummary || 'araç kullanılmadı'} (toplam: ${result.toolCallCount})`;

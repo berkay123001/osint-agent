@@ -3,6 +3,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
+import { emitProgress } from '../lib/progressEmitter.js'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -263,7 +264,7 @@ async function fallbackPuppeteerScrape(url: string): Promise<ScrapeResult> {
       metadataAlerts: await processMetadataForLinks(uniqueLinks),
     };
   } catch (err: any) {
-    console.log(`[Scrape] Puppeteer başarısız (${(err as Error).message})`)
+    emitProgress(`[Scrape] Puppeteer başarısız (${(err as Error).message})`)
     return {
       url,
       markdown: '',
@@ -289,7 +290,7 @@ async function fallbackScraplingFetch(url: string): Promise<ScrapeResult> {
       ? '--dynamic'
       : '--stealth'
 
-    console.log(`[Scrape] Scrapling (${mode}) kullanılıyor: ${url}`)
+    emitProgress(`[Scrape] Scrapling (${mode}) kullanılıyor: ${url}`)
     const { stdout, stderr } = await execFileAsync(
       SCRAPLING_PYTHON,
       [SCRAPLING_RUNNER, url, mode],
@@ -297,7 +298,7 @@ async function fallbackScraplingFetch(url: string): Promise<ScrapeResult> {
     )
 
     if (stderr && stderr.trim()) {
-      console.warn(`[Scrapling] stderr: ${stderr.slice(0, 200)}`)
+      emitProgress(`[Scrapling] ${stderr.slice(0, 120).split('\n')[0]}`)
     }
 
     const result = JSON.parse(stdout.trim()) as {
@@ -356,7 +357,7 @@ async function fallbackScraplingFetch(url: string): Promise<ScrapeResult> {
 export async function scrapeProfile(url: string): Promise<ScrapeResult> {
 
   if (isInterestingFile(url)) {
-    console.log(`[Scrape] URL bir dosya/medya olduğu için doğrudan Metadata aracı çalıştırılıyor: ${url}`);
+    emitProgress(`[Scrape] Medya/belge dosyası: ${url}`);
     const m = await extractMetadataFromUrl(url);
     const alerts = [];
     if (Object.keys(m.interestingFields).length > 0) {
@@ -375,33 +376,33 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
   }
 
   // 1) Scrapling (birincil) — Cloudflare bypass, anti-bot, stealth tarama
-  console.log(`[Scrape] Scrapling ile çekiliyor: ${url}`)
+  emitProgress(`[Scrape] Scrapling ile çekiliyor: ${url}`)
   const scraplingResult = await fallbackScraplingFetch(url)
   if (!scraplingResult.error && scraplingResult.markdown.length > 100) {
-    console.log(`[Scrape] Scrapling başarılı (${scraplingResult.markdown.length} char): ${url}`)
+    emitProgress(`[Scrape] ✓ Scrapling (${scraplingResult.markdown.length} char): ${url}`)
     return { ...scraplingResult, loginWallDetected: detectLoginWall(scraplingResult.markdown, scraplingResult.title) }
   }
   if (scraplingResult.error) {
-    console.log(`[Scrape] Scrapling başarısız: ${scraplingResult.error}, Puppeteer deneniyor...`)
+    emitProgress(`[Scrape] Scrapling başarısız → Puppeteer: ${url}`)
   } else {
-    console.log(`[Scrape] Scrapling yetersiz içerik (${scraplingResult.markdown.length} char), Puppeteer deneniyor...`)
+    emitProgress(`[Scrape] Scrapling yetersiz (${scraplingResult.markdown.length} char) → Puppeteer: ${url}`)
   }
 
   // 2) Puppeteer Stealth (JS rendering gerektiren sayfalar için)
-  console.log(`[Scrape] Puppeteer Stealth ile çekiliyor: ${url}`)
+  emitProgress(`[Scrape] Puppeteer Stealth ile çekiliyor: ${url}`)
   const puppeteerResult = await fallbackPuppeteerScrape(url)
   if (!puppeteerResult.error && puppeteerResult.markdown.length > 100) {
-    console.log(`[Scrape] Puppeteer başarılı (${puppeteerResult.markdown.length} char): ${url}`)
+    emitProgress(`[Scrape] ✓ Puppeteer (${puppeteerResult.markdown.length} char): ${url}`)
     return { ...puppeteerResult, loginWallDetected: detectLoginWall(puppeteerResult.markdown, puppeteerResult.title) }
   }
   if (puppeteerResult.error) {
-    console.log(`[Scrape] Puppeteer başarısız: ${puppeteerResult.error}`)
+    emitProgress(`[Scrape] Puppeteer başarısız: ${puppeteerResult.error}`)
   }
 
   // 3) Firecrawl cloud (son çare, 500 req/ay limit)
   const apiKey = process.env.FIRECRAWL_API_KEY
   if (apiKey) {
-    console.log(`[Scrape] Firecrawl cloud ile çekiliyor (son çare): ${url}`)
+    emitProgress(`[Scrape] Firecrawl cloud (son çare): ${url}`)
     const cloudHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
@@ -410,7 +411,7 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
     if (cloudResult.ok && cloudResult.body) {
       const parsed = parseFirecrawlResponse(cloudResult.body, url)
       if (parsed && parsed.markdown.length > 0) {
-        console.log(`[Scrape] Cloud Firecrawl başarılı: ${url}`)
+        emitProgress(`[Scrape] ✓ Cloud Firecrawl: ${url}`)
         const usageWarning = cloudResult.status === 429
           ? '⚠️ Firecrawl aylık 500 istek kotası dolmuş.'
           : undefined
@@ -422,7 +423,7 @@ export async function scrapeProfile(url: string): Promise<ScrapeResult> {
         }
       }
     }
-    console.log(`[Scrape] Cloud Firecrawl da başarısız`)
+    emitProgress(`[Scrape] Cloud Firecrawl da başarısız`)
   }
 
   // Scrapling'in sonucunu döndür (içerik az olsa bile)
