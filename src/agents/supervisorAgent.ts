@@ -225,7 +225,7 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
 
 export const supervisorAgentConfig: AgentConfig = {
   name: 'Supervisor',
-  model: 'qwen/qwen3.6-plus:free',
+  model: 'arcee-ai/trinity-large-thinking',
   maxTokens: 32768, // Büyük sub-agent raporları + thinking tokens için geniş bütçe
   maxToolCalls: 40, // Kapsamlı OSINT araştırmalarında arama + Neo4j yazma + rapor toplamı
   tools: supervisorMetaTools,

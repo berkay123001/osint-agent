@@ -11,15 +11,15 @@ import type { Message, AgentConfig, AgentResult } from './types.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DEFAULT_MODEL = 'qwen/qwen3.6-plus:free';
-const SUPERVISOR_MODEL = 'qwen/qwen3.6-plus:free';
+const DEFAULT_MODEL = 'arcee-ai/trinity-large-thinking';
+const SUPERVISOR_MODEL = 'arcee-ai/trinity-large-thinking';
 export { DEFAULT_MODEL, SUPERVISOR_MODEL };
 
 // Fallback modeller — content filter (PII) VEYA rate limit durumunda sirayla denenir
 const FALLBACK_MODELS = [
-  'qwen/qwen3.6-plus:free',
   'google/gemini-2.0-flash-001',
   'deepseek/deepseek-chat-v3-0324',
+  'qwen/qwen3-235b-a22b:free',
 ];
 
 const DEFAULT_MAX_TOOL_CALLS = 30;
@@ -154,8 +154,8 @@ export async function runAgentLoop(
           }
         }
       }
-      // Diğer geçici hatalar (502, 529) için aynı modelde retry
-      else if (msg.includes('502') || msg.includes('529') || msg.includes('InternalError')) {
+        // Diğer geçici hatalar (502, 504, 529) için aynı modelde retry
+      else if (msg.includes('502') || msg.includes('504') || msg.includes('529') || msg.includes('InternalError') || msg.toLowerCase().includes('aborted') || msg.toLowerCase().includes('timeout')) {
         logger.warn('AGENT', `[${config.name}] API geçici hata (${msg.slice(0, 60)}...), 3s bekleyip tekrar deneniyor...`);
         await _delay(3000);
         response = (await _client.chat.completions.create({
@@ -179,8 +179,35 @@ export async function runAgentLoop(
         // Gerçek hata içeriğini logla — neyin kırıldığını anlamak için
         logger.error('AGENT', `[${config.name}] OpenRouter upstream hatası: ${upstreamErr.slice(0, 500)}`);
 
+        // 429 rate limit → fallback model zinciri dene (response body içinde gelen 429)
+        if (upstreamErr.includes('429') || upstreamErr.toLowerCase().includes('rate limit') || upstreamErr.toLowerCase().includes('too many requests')) {
+          const currentModel = config.model ?? DEFAULT_MODEL;
+          for (const fbModel of FALLBACK_MODELS) {
+            if (fbModel === currentModel) continue;
+            logger.warn('AGENT', `[${config.name}] Response-body 429 → fallback deneniyor: ${fbModel}`);
+            await _delay(2000);
+            try {
+              response = (await _client.chat.completions.create({
+                model: fbModel,
+                messages: sanitizeHistoryForProvider(history),
+                tools: config.tools.length > 0 ? config.tools : undefined,
+                tool_choice: config.tools.length > 0 ? toolChoice : undefined,
+                max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
+              }) as ChatCompletion);
+              if (response?.choices?.[0]) {
+                logger.info('AGENT', `[${config.name}] Fallback başarılı: ${fbModel}`);
+                break;
+              }
+            } catch {
+              continue;
+            }
+          }
+          if (!response?.choices?.[0]) {
+            throw new Error(`Tüm modeller rate limit (429) — biraz bekle ve tekrar dene.`);
+          }
+        }
         // Alibaba içerik filtresi → fallback modele geç
-        if (upstreamErr.includes('DataInspectionFailed')) {
+        else if (upstreamErr.includes('DataInspectionFailed')) {
           const fallbackModel = FALLBACK_MODELS[0];
           logger.warn('AGENT', `[${config.name}] Alibaba DataInspection → ${fallbackModel} fallback deneniyor...`);
           response = (await _client.chat.completions.create({
@@ -196,6 +223,33 @@ export async function runAgentLoop(
           }
         }
         // Geçersiz JSON argümanı hatası → modele düzeltme fırsatı ver (maks 3 deneme)
+        // 504 upstream timeout / operation aborted → fallback model zinciri dene
+        else if (upstreamErr.includes('504') || upstreamErr.toLowerCase().includes('aborted') || upstreamErr.toLowerCase().includes('timeout')) {
+          const currentModel504 = config.model ?? DEFAULT_MODEL;
+          logger.warn('AGENT', `[${config.name}] 504/timeout upstream hatası → fallback model zinciri deneniyor...`);
+          let recovered = false;
+          for (const fbModel of FALLBACK_MODELS) {
+            if (fbModel === currentModel504) continue;
+            await _delay(3000);
+            try {
+              response = (await _client.chat.completions.create({
+                model: fbModel,
+                messages: sanitizeHistoryForProvider(history),
+                tools: config.tools.length > 0 ? config.tools : undefined,
+                tool_choice: config.tools.length > 0 ? toolChoice : undefined,
+                max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
+              }) as ChatCompletion);
+              if (response?.choices?.[0]) {
+                logger.info('AGENT', `[${config.name}] 504 sonrası fallback başarılı: ${fbModel}`);
+                recovered = true;
+                break;
+              }
+            } catch { continue; }
+          }
+          if (!recovered || !response?.choices?.[0]) {
+            throw new Error(`504 upstream timeout — tüm fallback modeller başarısız. Biraz bekleyip tekrar dene.`);
+          }
+        }
         else if (upstreamErr.includes('function.arguments') || upstreamErr.includes('InvalidParameter')) {
           // Araçlar devre dışıyken veya 3 düzeltme sonrası model hâlâ araç çağırıyorsa
           if (toolsDisabled || totalCorrectionAttempts >= 3) {

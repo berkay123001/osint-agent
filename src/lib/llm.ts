@@ -1,6 +1,6 @@
 import OpenAI from 'openai'
 
-const MODEL = 'qwen/qwen3.6-plus:free'
+const MODEL = 'arcee-ai/trinity-large-thinking'
 
 const client = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
