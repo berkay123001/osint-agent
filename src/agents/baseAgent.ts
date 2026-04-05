@@ -11,8 +11,8 @@ import type { Message, AgentConfig, AgentResult } from './types.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DEFAULT_MODEL = 'arcee-ai/trinity-large-thinking';
-const SUPERVISOR_MODEL = 'arcee-ai/trinity-large-thinking';
+const DEFAULT_MODEL = 'minimax/minimax-m2.7';
+const SUPERVISOR_MODEL = 'minimax/minimax-m2.7';
 export { DEFAULT_MODEL, SUPERVISOR_MODEL };
 
 // Fallback modeller — content filter (PII) VEYA rate limit durumunda sirayla denenir
