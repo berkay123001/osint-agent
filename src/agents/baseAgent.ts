@@ -398,14 +398,53 @@ export async function runAgentLoop(
         ? message.refusal
         : '';
 
-      // Model sadece <think/> döndürüp boş bıraktıysa, bir kez daha dene
-      if (cleanContent.length === 0 && toolCallCount > 0 && emptyRetries < 1) {
+      // Thinking model <think>...</think> içine her şeyi yazıp final cevabı boş bırakabilir.
+      // stripThinkingTokens() bunları siler → cleanContent = "".
+      // Çözüm: artan agresiflikte 3 retry:
+      //   1. Nazikçe raporla iste
+      //   2. Araçları kapat, sadece metin iste
+      //   3. Yeni bir temiz API çağrısı yap (system prompt + sadece son tool sonuçları)
+      if (cleanContent.length === 0 && emptyRetries < 3) {
         emptyRetries++;
-        logger.warn('AGENT', `[${config.name}] Model boş yanıt döndürdü, tekrar deneniyor...`);
-        history.push({
-          role: 'user',
-          content: 'Lütfen topladığın tüm verileri analiz edip kullanıcıya detaylı bir Markdown raporu olarak sun. Boş yanıt dönme.'
-        });
+        logger.warn('AGENT', `[${config.name}] Model boş yanıt döndürdü (deneme ${emptyRetries}/3)...`);
+
+        if (emptyRetries === 1) {
+          history.push({
+            role: 'user',
+            content: 'ÖNEMLI: Yukarıdaki araç sonuçlarını kullanarak şimdi kapsamlı bir Markdown raporu yaz. ' +
+              'Cevabını DOĞRUDAN <think> etiketi DIŞINDA yaz. Düşünme bloğu değil, nihai rapor istiyorum.'
+          });
+        } else if (emptyRetries === 2) {
+          // Araçları tamamen kapat, sadece metin yanıtı iste
+          config = { ...config, tools: [] };
+          history.push({
+            role: 'user',
+            content: 'Araç çağırmayı bırak. Yukarıda topladığın tüm bilgileri SADECE DÜZ METİN olarak özetle. ' +
+              'Markdown başlıkları, listeler kullan. <think> etiketleri kullanma — sadece final cevap yaz.'
+          });
+        } else {
+          // 3. deneme: history'den tool sonuçlarını alıp temiz çağrı yap
+          const toolResults = history
+            .filter(m => m.role === 'tool' && typeof m.content === 'string')
+            .map(m => m.content as string)
+            .join('\n---\n')
+            .slice(0, 8000);
+          try {
+            const cleanResp = (await _client.chat.completions.create({
+              model: config.model ?? DEFAULT_MODEL,
+              messages: [
+                { role: 'system', content: 'Araştırma verilerini Markdown formatında özetleyen bir asistansın. Sadece final raporu yaz, <think> kullanma.' },
+                { role: 'user', content: `Araştırma verileri:\n${toolResults}\n\nBu verileri kullanarak detaylı bir Markdown raporu oluştur.` },
+              ],
+              max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
+            }) as ChatCompletion);
+            const text = cleanResp.choices?.[0]?.message?.content?.trim() ?? '';
+            const cleaned = stripThinkingTokens(text);
+            if (cleaned.length > 50) {
+              return { finalResponse: cleaned, toolCallCount, toolsUsed };
+            }
+          } catch { /* temiz çağrı da başarısız → aşağıdaki fallback mesajını döndür */ }
+        }
         continue;
       }
 
