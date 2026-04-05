@@ -67,7 +67,7 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
 }
 
 const IDENTITY_TOOLS = [
-  'run_sherlock', 'run_github_osint', 'parse_gpg_key', 
+  'run_sherlock', 'run_maigret', 'run_github_osint', 'parse_gpg_key', 
   'check_email_registrations', 'check_breaches', 'search_person', 
   'cross_reference', 'verify_profiles', 'unexplored_pivots', 'nitter_profile',
   'search_web', 'search_web_multi', 'scrape_profile', 'verify_claim'
@@ -117,7 +117,7 @@ Farklı kişiler → HER BİRİNİ AYRI profil olarak raporla
 # ARAŞTIRMA STRATEJİSİ (Bu sırayı takip et)
 
 **FAZ 1 — Keşif:**
-1. Username → run_sherlock + run_github_osint
+1. Username → run_sherlock + run_maigret + run_github_osint
 2. Email → check_email_registrations + check_breaches
 3. İsim → search_person + search_web
 
@@ -154,6 +154,7 @@ Hangi araçlar çağrıldı, ne bulundu
 # ARAÇ KULLANIM KURALLARI
 - search_web_multi: Aynı konuyu farklı açılardan ara (max 3 sorgu, virgülle ayır)
 - verify_claim: Eğitim/iş/kurum iddiası → ZORUNLU çağır
+- run_maigret: Sherlock'u tamamlar, Pinterest/Discord/Instagram kapsar. top_sites=500 normal, 1500 deep için
 - "Bedava/ücretsiz" iddiası → verify_claim ile doğrula`
 };
 

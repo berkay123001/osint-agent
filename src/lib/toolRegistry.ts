@@ -33,6 +33,7 @@ import type { AcademicSearchResult } from '../tools/academicSearchTool.js'
 import { generateOsintReport } from '../tools/reportTool.js'
 import { checkPlagiarism } from '../tools/plagiarismTool.js'
 import { analyzeGpxFiles, formatGpxResult } from '../tools/gpxAnalyzerTool.js'
+import { runMaigret, formatMaigretResult } from '../tools/maigretTool.js'
 import { obsidianWrite, obsidianAppend, obsidianRead, obsidianDailyLog, obsidianList, obsidianSearch, obsidianWriteProfile } from '../tools/obsidianTool.js'
 import os from 'os'
 import { writeFile, unlink } from 'fs/promises'
@@ -406,6 +407,21 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
         type: 'object',
         properties: {
           username: { type: 'string', description: 'The username or nickname to search' },
+        },
+        required: ['username'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_maigret',
+      description: 'Search for a username across 3000+ platforms using Maigret. Complements Sherlock — uses different detection methods and covers more platforms (Pinterest, Discord, Facebook, Instagram, etc.). Slower than Sherlock but broader coverage. Use after run_sherlock for deeper username investigation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          username: { type: 'string', description: 'Username to search for' },
+          top_sites: { type: 'number', description: 'Number of top sites to check (default: 500, max ~3000). Use 500 for normal, 1500 for deep searches.' },
         },
         required: ['username'],
       },
@@ -912,7 +928,7 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     args: Record<string, string>
   ): Promise<string> {
     const cacheableTools = new Set([
-      'run_sherlock', 'run_github_osint', 'cross_reference', 'extract_metadata',
+      'run_sherlock', 'run_maigret', 'run_github_osint', 'cross_reference', 'extract_metadata',
       'parse_gpg_key', 'wayback_search', 'web_fetch', 'check_email_registrations',
       'check_breaches', 'search_web', 'search_web_multi', 'scrape_profile', 'verify_profiles',
       'nitter_profile', 'search_person', 'fact_check_to_graph', 'analyze_gpx', 'verify_claim'
@@ -928,6 +944,10 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     let result = '';
     
     if (name === 'run_sherlock') result = await runSherlock(args.username)
+    else if (name === 'run_maigret') {
+      const maigretResult = await runMaigret(args.username, args.top_sites ? Number(args.top_sites) : 500)
+      result = formatMaigretResult(maigretResult)
+    }
     else if (name === 'run_github_osint') result = await runGithubOsint(args.username, args.deep === 'true')
     else if (name === 'query_graph') result = await queryGraph(args.value)
     else if (name === 'graph_stats') result = await graphStats()
