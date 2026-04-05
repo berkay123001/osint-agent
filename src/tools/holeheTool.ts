@@ -41,7 +41,7 @@ export async function checkEmailRegistrations(email: string): Promise<HoleheResu
     const { stdout, stderr } = await execFileAsync(
       PYTHON,
       [RUNNER_SCRIPT, email],
-      { timeout: 120_000 }
+      { timeout: 180_000 }
     )
 
     if (!stdout.trim()) {
