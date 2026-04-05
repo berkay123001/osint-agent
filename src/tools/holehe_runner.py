@@ -22,9 +22,14 @@ async def check(email: str):
             for website in websites:
                 nursery.start_soon(launch_module, website, email, client, out)
 
-    used = []
+    found = []
+    rate_limited = []
     for r in out:
-        if r.get("exists"):
+        # Rate limit → kesinlikle dahil etme, ayrı listede say
+        if r.get("rateLimit") or r.get("rate_limit"):
+            rate_limited.append(r["name"])
+            continue
+        if r.get("exists") is True:
             entry = {
                 "name": r["name"],
                 "exists": True,
@@ -32,12 +37,14 @@ async def check(email: str):
                 "phoneNumber": r.get("phoneNumber"),
                 "others": r.get("others"),
             }
-            used.append(entry)
+            found.append(entry)
 
     result = {
         "email": email,
-        "services": used,
+        "services": found,
         "totalChecked": len(out),
+        "rateLimitedCount": len(rate_limited),
+        "rateLimitedPlatforms": rate_limited,
     }
     print(json.dumps(result, ensure_ascii=False))
 

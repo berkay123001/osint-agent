@@ -22,6 +22,8 @@ export interface HoleheResult {
   email: string
   services: HoleheService[]
   totalChecked: number
+  rateLimitedCount?: number
+  rateLimitedPlatforms?: string[]
   error?: string
 }
 
@@ -60,9 +62,13 @@ export function formatHoleheResult(result: HoleheResult): string {
     return `Email kayıt kontrolü hatası: ${result.error}`
   }
 
+  const rlInfo = result.rateLimitedCount
+    ? ` | Rate limit: ${result.rateLimitedCount} (atlandı)`
+    : ''
+
   const lines = [
     `📧 Email Kayıt Kontrolü: ${result.email}`,
-    `Taranan platform: ${result.totalChecked} | Kayıtlı bulunan: ${result.services.length}`,
+    `Taranan platform: ${result.totalChecked} | Kayıtlı bulunan: ${result.services.length}${rlInfo}`,
     '',
   ]
 
