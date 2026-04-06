@@ -11,12 +11,13 @@ import type { Message, AgentConfig, AgentResult } from './types.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DEFAULT_MODEL = 'minimax/minimax-m2.7';
-const SUPERVISOR_MODEL = 'minimax/minimax-m2.7';
+const DEFAULT_MODEL = 'kwaipilot/kat-coder-pro-v2';
+const SUPERVISOR_MODEL = 'qwen/qwen3.6-plus:free';
 export { DEFAULT_MODEL, SUPERVISOR_MODEL };
 
 // Fallback modeller — content filter (PII) VEYA rate limit durumunda sirayla denenir
 const FALLBACK_MODELS = [
+  'kwaipilot/kat-coder-pro-v2',
   'google/gemini-2.0-flash-001',
   'deepseek/deepseek-chat-v3-0324',
   'qwen/qwen3-235b-a22b:free',
