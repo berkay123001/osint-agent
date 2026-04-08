@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 const PYTHON = process.env.PYTHON_PATH || '/home/berkayhsrt/anaconda3/bin/python'
-const SHERLOCK_DIR = path.resolve(__dirname, '../../../osint_collection/sherlock')
+const SHERLOCK_BIN = process.env.SHERLOCK_BIN || '/home/berkayhsrt/anaconda3/bin/sherlock'
 
 export const sherlockTool = ai.defineTool(
   {
@@ -48,8 +48,13 @@ export function runSherlockCLI(
   spawnFn: SpawnFunction = spawn
 ): Promise<Array<{ platform: string; url: string }>> {
   return new Promise((resolve, reject) => {
-    const args = ['-m', 'sherlock_project', username, '--print-found', '--json', '-']
-    const proc = spawnFn(PYTHON, args, { cwd: SHERLOCK_DIR, timeout: 120000 })
+    // Önce sherlock binary'yi direkt dene, fallback olarak python -m kullan
+    const useDirectBin = process.env.SHERLOCK_BIN !== '0'
+    const command = useDirectBin ? SHERLOCK_BIN : PYTHON
+    const args = useDirectBin
+      ? [username, '--print-found', '--json', '-']
+      : ['-m', 'sherlock_project', username, '--print-found', '--json', '-']
+    const proc = spawnFn(command, args, { timeout: 120000 })
 
     let stdout = ''
     let stderr = ''

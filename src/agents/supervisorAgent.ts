@@ -21,8 +21,8 @@ const __dirname = path.dirname(__filename);
  * - 4000+ karakter: ilk 3500 karakter + "kesildi" notu + dosya yolu
  * Supervisor detayları read_session_file ile okuyabilir.
  */
-const MAX_SUB_AGENT_RESPONSE = 12000;
-const KEEP_FIRST = 11000;
+const MAX_SUB_AGENT_RESPONSE = 30000;
+const KEEP_FIRST = 29000;
 
 function truncateSubAgentResponse(response: string, agentLabel: string): string {
   if (response.length <= MAX_SUB_AGENT_RESPONSE) return response
@@ -225,7 +225,7 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
 
 export const supervisorAgentConfig: AgentConfig = {
   name: 'Supervisor',
-  model: 'minimax/minimax-m2.7',
+  model: 'qwen/qwen3.6-plus:free',
   maxTokens: 32768, // Büyük sub-agent raporları + thinking tokens için geniş bütçe
   maxToolCalls: 40, // Kapsamlı OSINT araştırmalarında arama + Neo4j yazma + rapor toplamı
   tools: supervisorMetaTools,

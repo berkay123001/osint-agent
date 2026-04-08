@@ -836,18 +836,18 @@ async function runSherlock(username: string): Promise<string> {
     return `Sherlock yalnızca username/handle aramaları için uygundur. "${username}" boşluk içeriyor; bu bir gerçek isim gibi görünüyor ve yanlış pozitif üretebilir.`
   }
 
-  const sherlockDir = path.resolve(__dirname, '../../osint_collection/sherlock')
+  const SHERLOCK_BIN = process.env.SHERLOCK_BIN || '/home/berkayhsrt/anaconda3/bin/sherlock'
   return new Promise((resolve) => {
     logger.info('TOOL', `🌐 Sherlock ${username} için taranıyor...`)
     logger.info('TOOL', '(Bu işlem 1-2 dk sürebilir)')
     const proc = spawn(
-      PYTHON,
+      SHERLOCK_BIN,
       [
-        '-m', 'sherlock_project', username,
+        username,
         '--print-found',
         '--timeout', '10',
       ],
-      { cwd: sherlockDir, timeout: 180000 }
+      { timeout: 180000 }
     )
     let out = ''
     proc.stdout.on('data', (d: Buffer) => { out += d.toString() })
@@ -1376,6 +1376,25 @@ async function runWebFetch(url: string): Promise<string> {
     if (isDeepReadUrl) logger.debug('TOOL', `📖 Deep-read modu aktif (${limit.toLocaleString()} char)`)
     return result.textContent.slice(0, limit)
   }
+
+  // PDF → text dönüşümü (pdftotext CLI)
+  if (result.savedTo && result.contentType?.includes('pdf')) {
+    try {
+      const { execFileSync } = await import('child_process')
+      const txtOutput = result.savedTo.replace(/\.pdf$/, '.txt')
+      execFileSync('pdftotext', ['-layout', result.savedTo, txtOutput], { timeout: 15000 })
+      const { readFile: readPdf } = await import('fs/promises')
+      const pdfText = await readPdf(txtOutput, 'utf-8')
+      const limit = 50000
+      if (pdfText && pdfText.trim().length > 50) {
+        logger.info('TOOL', `📄 PDF → text dönüştürüldü (${pdfText.length} char)`)
+        return pdfText.slice(0, limit)
+      }
+    } catch (pdfErr) {
+      logger.warn('TOOL', `PDF dönüştürme hatası: ${(pdfErr as Error).message}`)
+    }
+  }
+
   return `Binary dosya indirildi: ${result.savedTo} (${result.contentType})`
 }
 

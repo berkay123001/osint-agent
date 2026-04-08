@@ -1,6 +1,6 @@
 import OpenAI from 'openai'
 
-const MODEL = 'arcee-ai/trinity-large-thinking'
+const MODEL = 'minimax/minimax-m2.7'
 
 const client = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,

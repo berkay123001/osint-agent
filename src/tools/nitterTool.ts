@@ -16,7 +16,7 @@ import { fileURLToPath } from 'url'
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-const SCRAPLING_PYTHON = process.env.PYTHON_PATH || '/home/berkayhsrt/anaconda3/envs/scrapling/bin/python'
+const SCRAPLING_PYTHON = process.env.SCRAPLING_PYTHON || '/home/berkayhsrt/anaconda3/envs/scrapling/bin/python'
 const SCRAPLING_RUNNER = path.join(__dirname, 'scrapling_runner.py')
 
 export interface NitterProfile {
