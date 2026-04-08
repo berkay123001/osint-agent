@@ -12,7 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const DEFAULT_MODEL = 'kwaipilot/kat-coder-pro-v2';
-const SUPERVISOR_MODEL = 'qwen/qwen3.6-plus:free';
+const SUPERVISOR_MODEL = 'qwen/qwen3.6-plus';
 export { DEFAULT_MODEL, SUPERVISOR_MODEL };
 
 // Fallback modeller — content filter (PII) VEYA rate limit durumunda sirayla denenir
