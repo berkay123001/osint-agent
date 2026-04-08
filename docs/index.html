@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>OSINT Agent — W13 2026 Raporu</title>
+  <title>OSINT Agent — W14-W15 2026 Geliştirme Raporu</title>
   <style>
     /* ── Reset & Base ─────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -407,11 +407,11 @@
   <div class="container">
     <div class="hero-badge">
       <span class="dot"></span>
-      Haftalık Geliştirme Raporu · W13 2026
+      2 Haftalık Geliştirme Raporu · W14-W15 2026
     </div>
     <h1>OSINT Agent</h1>
     <p class="hero-sub">Çok-Ajanlı Açık Kaynak İstihbarat Sistemi</p>
-    <p class="hero-date">24 Mart – 2 Nisan 2026 &nbsp;·&nbsp; Berkay Hasret</p>
+    <p class="hero-date">24 Mart – 9 Nisan 2026 &nbsp;·&nbsp; Berkay Hasret</p>
   </div>
 </section>
 
@@ -420,15 +420,15 @@
   <div class="container">
     <div class="stats-grid">
       <div class="stat-item">
-        <span class="stat-number">67</span>
+        <span class="stat-number">120</span>
         <span class="stat-label">Commit</span>
       </div>
       <div class="stat-item green">
-        <span class="stat-number">+6,959</span>
+        <span class="stat-number">+19,212</span>
         <span class="stat-label">Eklenen Satır</span>
       </div>
       <div class="stat-item">
-        <span class="stat-number">44</span>
+        <span class="stat-number">101</span>
         <span class="stat-label">Değişen Dosya</span>
       </div>
       <div class="stat-item purple">
@@ -436,12 +436,12 @@
         <span class="stat-label">Test (hepsi ✔)</span>
       </div>
       <div class="stat-item orange">
-        <span class="stat-number">4</span>
-        <span class="stat-label">Aktif Ajan</span>
+        <span class="stat-number">10+</span>
+        <span class="stat-label">Model Benchmark</span>
       </div>
       <div class="stat-item yellow">
-        <span class="stat-number">30+</span>
-        <span class="stat-label">Tool</span>
+        <span class="stat-number">12</span>
+        <span class="stat-label">Yeni Tool</span>
       </div>
     </div>
   </div>
@@ -460,6 +460,7 @@
 
     <p style="color:var(--muted); margin-bottom: 24px;">
       Harici API'lere bağımlılık kaldırıldı. Docker üzerinde öz kaynaklı SearXNG ile 100+ arama motoru tek noktada toplandı.
+      2 haftada 120 commit, 10+ model benchmark, tam TUI yeniden yazım.
     </p>
 
     <div class="pipeline">
@@ -543,7 +544,7 @@
       <div class="agent-card">
         <div class="agent-emoji">🎯</div>
         <div class="agent-name">Supervisor</div>
-        <div class="agent-model">qwen3.6-plus-preview:free</div>
+        <div class="agent-model">qwen/qwen3.6-plus:free</div>
         <div class="agent-caps">
           <div class="agent-cap">Yönlendirme</div>
           <div class="agent-cap">Genel arama</div>
@@ -554,7 +555,7 @@
       <div class="agent-card">
         <div class="agent-emoji">🔎</div>
         <div class="agent-name">Identity Agent</div>
-        <div class="agent-model">qwen3.6-plus-preview:free</div>
+        <div class="agent-model">kwaipilot/kat-coder-pro-v2</div>
         <div class="agent-caps">
           <div class="agent-cap">Username OSINT</div>
           <div class="agent-cap">Email araştırma</div>
@@ -565,7 +566,7 @@
       <div class="agent-card">
         <div class="agent-emoji">🖼️</div>
         <div class="agent-name">Media Agent</div>
-        <div class="agent-model">qwen3.6-plus-preview:free</div>
+        <div class="agent-model">kwaipilot/kat-coder-pro-v2</div>
         <div class="agent-caps">
           <div class="agent-cap">Görsel analizi</div>
           <div class="agent-cap">EXIF metadata</div>
@@ -575,8 +576,8 @@
       </div>
       <div class="agent-card new-agent">
         <div class="agent-emoji">🎓</div>
-        <div class="agent-name">Academic Agent <span class="tag new" style="font-size:10px;">YENİ</span></div>
-        <div class="agent-model">qwen3.6-plus-preview:free</div>
+        <div class="agent-name">Academic Agent</div>
+        <div class="agent-model">deepseek/deepseek-chat-v3-0324</div>
         <div class="agent-caps">
           <div class="agent-cap">arXiv + Semantic Scholar</div>
           <div class="agent-cap">Tam makale okuma</div>
@@ -603,14 +604,21 @@
       <div class="error-card">
         <div class="error-icon">⏱️</div>
         <div>
-          <div class="error-scenario">429 Rate Limit</div>
+          <div class="error-scenario">429 Rate Limit (HTTP)</div>
           <div class="error-action">5s bekle → aynı model ile retry</div>
+        </div>
+      </div>
+      <div class="error-card">
+        <div class="error-icon">⏱️</div>
+        <div>
+          <div class="error-scenario">429 Rate Limit (body)</div>
+          <div class="error-action">Fallback zinciri → kat-coder → gemini → deepseek → qwen</div>
         </div>
       </div>
       <div class="error-card">
         <div class="error-icon">🔌</div>
         <div>
-          <div class="error-scenario">502 / 529 Bad Gateway</div>
+          <div class="error-scenario">502 / 504 Gateway</div>
           <div class="error-action">3s bekle → aynı model ile retry</div>
         </div>
       </div>
@@ -624,8 +632,8 @@
       <div class="error-card">
         <div class="error-icon">📛</div>
         <div>
-          <div class="error-scenario">Fallback da başarısız</div>
-          <div class="error-action">Graceful degradation — crash yok</div>
+          <div class="error-scenario">Supervisor JSON Crash</div>
+          <div class="error-action">History trim + max_tokens 32768 + graceful return</div>
         </div>
       </div>
       <div class="error-card">
@@ -638,8 +646,15 @@
       <div class="error-card">
         <div class="error-icon">💨</div>
         <div>
-          <div class="error-scenario">Boş yanıt (<think/> only)</div>
+          <div class="error-scenario">Boş yanıt (&lt;think/&gt; only)</div>
           <div class="error-action">3 deneme → forceText modu</div>
+        </div>
+      </div>
+      <div class="error-card">
+        <div class="error-icon">🔄</div>
+        <div>
+          <div class="error-scenario">Fallback da başarısız</div>
+          <div class="error-action">Graceful degradation — crash yok</div>
         </div>
       </div>
     </div>
@@ -648,50 +663,186 @@
       <p style="font-size:13px; color:var(--muted); margin-bottom: 12px;">Örnek log çıktısı:</p>
       <div class="log-block">
         <span class="l-time">[01:52:24]</span> <span class="l-info">[INFO]  [AGENT]</span> <span class="l-text">⚙️  [Supervisor] Düşünüyor...</span><br>
-        <span class="l-time">[01:52:42]</span> <span class="l-tool">[TOOL]  </span> <span class="l-text">🔬 Akademik Araştırma: LLM quantization...</span><br>
-        <span class="l-time">[01:52:45]</span> <span class="l-graph">[GRAPH]</span> <span class="l-text">💾 Grafa yazıldı: 25 makale</span><br>
-        <span class="l-time">[01:52:48]</span> <span class="l-warn">[WARN]  [AGENT]</span> <span class="l-text">Rate limit (429) — 5s bekleniyor...</span><br>
-        <span class="l-time">[01:52:53]</span> <span class="l-info">[INFO]  [AGENT]</span> <span class="l-text">⚙️  [Supervisor] Düşünüyor... (retry)</span>
+        <span class="l-time">[01:52:42]</span> <span class="l-tool">[TOOL]  </span> <span class="l-text">🔧 IdentityAgent → sherlock(vitalik_buterin)</span><br>
+        <span class="l-time">[01:52:45]</span> <span class="l-tool">[TOOL]  </span> <span class="l-text">✓ Sherlock: 12 platform bulundu</span><br>
+        <span class="l-time">[01:52:48]</span> <span class="l-tool">[TOOL]  </span> <span class="l-text">🔧 Maigret → 3000+ platform taraması</span><br>
+        <span class="l-time">[01:52:51]</span> <span class="l-graph">[GRAPH]</span> <span class="l-text">💾 Grafa yazıldı: 18 node, 24 edge</span><br>
+        <span class="l-time">[01:52:53]</span> <span class="l-warn">[WARN]  [AGENT]</span> <span class="l-text">Rate limit (429) — fallback → kat-coder</span><br>
+        <span class="l-time">[01:52:58]</span> <span class="l-info">[INFO]  [AGENT]</span> <span class="l-text">⚙️  [Supervisor] Rapor üretiliyor...</span>
+      </div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ── 5. YENİ TOOLLAR ────────────────────────────────── -->
+<!-- ── 5. MODEL BENCHMARK ──────────────────────────────── -->
+<section class="section">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-icon yellow">📊</div>
+      <div>
+        <div class="section-num">Bölüm 05</div>
+        <h2>Model Benchmark (Karpathy + Vitalik)</h2>
+      </div>
+    </div>
+
+    <p style="color:var(--muted); margin-bottom: 24px;">
+      10+ model, gerçek OSINT senaryolarında test edildi. Karpathy ve Vitalik Buterin araştırmaları benchmark olarak kullanıldı.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Model</th><th>Puan</th><th>Maliyet</th><th>Notlar</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>kwaipilot/kat-coder-pro-v2</code></td>
+            <td style="color:var(--green)">9/10</td>
+            <td>$0.30/$1.20</td>
+            <td>En doğru, false positive tespiti iyi</td>
+          </tr>
+          <tr>
+            <td><code>deepseek/deepseek-chat-v3-0324</code></td>
+            <td style="color:var(--green)">8/10</td>
+            <td>$0.26/$0.38</td>
+            <td>Detaylı araştırma, verbose</td>
+          </tr>
+          <tr>
+            <td><code>openai/gpt-oss-120b:free</code></td>
+            <td style="color:var(--accent)">7.5/10</td>
+            <td>$0</td>
+            <td>İyi doğrulama, düşük context</td>
+          </tr>
+          <tr>
+            <td><code>qwen/qwen3.6-plus:free</code></td>
+            <td style="color:var(--accent)">7/10</td>
+            <td>$0</td>
+            <td>Supervisor için ideal</td>
+          </tr>
+          <tr>
+            <td><code>x-ai/grok-4.1-fast</code></td>
+            <td style="color:var(--yellow)">6/10</td>
+            <td>$0.20/$0.50</td>
+            <td>2M context, yüzeysel</td>
+          </tr>
+          <tr>
+            <td><code>google/gemini-flash-lite</code></td>
+            <td style="color:var(--red)">3/10</td>
+            <td>$0</td>
+            <td>Tool kullanmadı</td>
+          </tr>
+          <tr>
+            <td><code>arcee-ai/trinity-large</code></td>
+            <td style="color:var(--red)">2/10</td>
+            <td>$0</td>
+            <td>Kendinden emin ama yanlış</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div style="margin-top:24px;">
+      <p style="font-size:13px; color:var(--muted); margin-bottom:12px;">Final Hibrit Konfigürasyon:</p>
+      <div class="pipeline">
+        <div class="pipe-step primary">Supervisor: qwen-free</div>
+        <span class="pipe-arrow">→</span>
+        <div class="pipe-step primary">Identity/Media: kat-coder</div>
+        <span class="pipe-arrow">→</span>
+        <div class="pipe-step primary">Academic: deepseek-v3</div>
+      </div>
+      <p style="font-size:12px; color:var(--muted); margin-top:8px;">Fallback: kat-coder → gemini-flash → deepseek-v3 → qwen-free</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── 6. TUI YENİDEN YAZIM ───────────────────────────── -->
+<section class="section">
+  <div class="container">
+    <div class="section-header">
+      <div class="section-icon purple">🖥️</div>
+      <div>
+        <div class="section-num">Bölüm 06</div>
+        <h2>TUI / CLI Yeniden Yazım</h2>
+      </div>
+    </div>
+
+    <p style="color:var(--muted); margin-bottom: 24px;">
+      Eski readline tabanlı CLI tamamen yeniden yazıldı. Ink (React for CLI) ile modern terminal deneyimi.
+    </p>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-title">🎨 Ink TUI <span class="tag new">Yeni</span></div>
+        <p>React bileşenleri gibi CLI UI. ClaudeCode tarzı minimal tasarım.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">⌨️ Slash Komutları <span class="tag new">Yeni</span></div>
+        <p><code>/resume</code>, <code>/delete</code>, <code>/log</code> + interaktif ok tuşlu menü.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">📋 Paste Desteği <span class="tag new">Yeni</span></div>
+        <p>Çok satırlı Ctrl+V paste, Enter ile gönderim, debounce.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">📊 Log Paneli <span class="tag new">Yeni</span></div>
+        <p>Her tool call için 🔧/✓/❌ satırı. Canlı aktivite takibi.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">📝 Markdown Renderer <span class="tag new">Yeni</span></div>
+        <p>Agent çıktıları formatlı görünüm. Zengin metin gösterimi.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">🚀 CLI Dağıtım <span class="tag new">Yeni</span></div>
+        <p>npm global CLI (<code>osint</code>). Kurulum/kaldırma sihirbazı. Dinamik derinlik.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 7. YENİ TOOLLAR ────────────────────────────────── -->
 <section class="section">
   <div class="container">
     <div class="section-header">
       <div class="section-icon orange">🧰</div>
       <div>
-        <div class="section-num">Bölüm 05</div>
+        <div class="section-num">Bölüm 07</div>
         <h2>Yeni Tool'lar &amp; Entegrasyonlar</h2>
       </div>
     </div>
 
     <div class="cards">
       <div class="card">
+        <div class="card-title">🕵️ Maigret <span class="tag new">Yeni</span></div>
+        <p>3000+ platformda username taraması (Pinterest, Discord, Instagram, GitHub...). Sherlock'dan 60x daha fazla platform desteği.</p>
+      </div>
+      <div class="card">
         <div class="card-title">🗺️ GPX Analyzer <span class="tag new">Yeni</span></div>
-        <p>GPS/GPX dosyası analizi. Hotspot tespiti, haversine ile coğrafi merkez, Nominatim reverse geocoding. Eyfel Kulesi OSINT Challenge başarıyla çözüldü.</p>
+        <p>GPS/GPX dosyası analizi. Hotspot tespiti, haversine ile coğrafi merkez, Nominatim reverse geocoding.</p>
       </div>
       <div class="card">
         <div class="card-title">📔 Obsidian Sync <span class="tag new">Yeni</span></div>
-        <p>Tüm ajan çıktıları otomatik Obsidian vault'una yazılır. <code>obsidian_write</code>, <code>obsidian_append</code>, <code>obsidian_search</code>, <code>obsidian_daily_log</code>.</p>
+        <p>Tüm ajan çıktıları otomatik Obsidian vault'una yazılır. <code>obsidian_write</code>, <code>obsidian_append</code>, <code>obsidian_search</code>, <code>obsidian_write_profile</code>.</p>
       </div>
       <div class="card">
         <div class="card-title">🎓 Plagiarism Checker <span class="tag new">Yeni</span></div>
-        <p>Akademik intihal/özgünlük analizi. arXiv + Semantic Scholar çift kaynak, yazar profili çıkarma.</p>
-      </div>
-      <div class="card">
-        <div class="card-title">🕸️ Graph UI <span class="tag improved">Geliştirildi</span></div>
-        <p>Neo4j veritabanı için interaktif browser (<code>npm run graph</code>, port 3333). Force-directed layout, renkli node tipleri.</p>
+        <p>Akademik intihal/özgünlük analizi. Jaccard shingle + CrossRef/S2 + Neo4j SIMILAR_TO graph.</p>
       </div>
       <div class="card">
         <div class="card-title">🏷️ ML Label Sistemi <span class="tag new">Yeni</span></div>
         <p>GNN eğitimi için soft labeling. <code>mark_false_positive</code> tool'u ile negatif/pozitif örnekler Cypher sorgusu ile çekilebilir.</p>
       </div>
       <div class="card">
-        <div class="card-title">⚠️ Claim / Fact Grafı <span class="tag new">Yeni</span></div>
-        <p>Fact-check döngüsü için <code>Claim</code>, <code>Fact</code>, <code>Source</code> node tipleri eklendi. IOC ve tehdit aktörü grafı da hazır.</p>
+        <div class="card-title">⚠️ Cybersecurity Graph <span class="tag new">Yeni</span></div>
+        <p>IOC, ThreatActor, Malware, Campaign node tipleri. Fact-check için Claim/Fact/Source graph yapısı.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">🕸️ Graph UI <span class="tag improved">Geliştirildi</span></div>
+        <p>Neo4j veritabanı için interaktif browser (<code>npm run graph</code>, port 3333). Force-directed layout, renkli node tipleri.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">📄 PDF Reader <span class="tag new">Yeni</span></div>
+        <p><code>pdftotext</code> CLI ile PDF'leri otomatik metne dönüştürür. Web fetch artık PDF'leri okuyabilir.</p>
       </div>
     </div>
   </div>
@@ -703,7 +854,7 @@
     <div class="section-header">
       <div class="section-icon green">🧪</div>
       <div>
-        <div class="section-num">Bölüm 06</div>
+        <div class="section-num">Bölüm 08</div>
         <h2>Test Altyapısı</h2>
       </div>
     </div>
@@ -756,7 +907,7 @@
     <div class="section-header">
       <div class="section-icon yellow">🗺️</div>
       <div>
-        <div class="section-num">Bölüm 07</div>
+        <div class="section-num">Bölüm 09</div>
         <h2>Sonraki Adımlar</h2>
       </div>
     </div>
@@ -794,6 +945,22 @@
         </div>
         <span class="roadmap-impact tag improved">Süreklilik ↑</span>
       </div>
+      <div class="roadmap-item">
+        <div class="roadmap-num">5</div>
+        <div>
+          <div class="roadmap-title">MCP Server</div>
+          <div class="roadmap-desc">Python tool'larını standart arayüze sarma — modülerlik</div>
+        </div>
+        <span class="roadmap-impact tag new">Modülerlik ↑</span>
+      </div>
+      <div class="roadmap-item">
+        <div class="roadmap-num">6</div>
+        <div>
+          <div class="roadmap-title">GNN Training</div>
+          <div class="roadmap-desc">mark_false_positive etiketleri ile graph neural network eğitimi</div>
+        </div>
+        <span class="roadmap-impact tag improved">Akıllılık ↑</span>
+      </div>
     </div>
   </div>
 </section>
@@ -801,11 +968,12 @@
 <!-- ── FOOTER ─────────────────────────────────────────── -->
 <footer class="footer">
   <div class="container">
-    <p><strong>OSINT Agent</strong> — W13 2026 Haftalık Raporu</p>
-    <p style="margin-top:6px;">Berkay Hasret &nbsp;·&nbsp; 2 Nisan 2026</p>
+    <p><strong>OSINT Agent</strong> — W14-W15 2026 Geliştirme Raporu</p>
+    <p style="margin-top:6px;">Berkay Hasret &nbsp;·&nbsp; 9 Nisan 2026</p>
     <div class="footer-links">
       <a href="https://github.com/berkay123001/osint-agent">GitHub →</a>
-      <a href="WEEKLY_REPORT_2026_W13.md">Markdown Raporu →</a>
+      <a href="WEEKLY_REPORT_2026_W14-W15.md">W14-W15 Markdown Raporu →</a>
+      <a href="WEEKLY_REPORT_2026_W13.md">W13 Raporu →</a>
     </div>
   </div>
 </footer>
