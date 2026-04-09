@@ -32,6 +32,29 @@ async function searchSearXNG(query: string, limit: number = 10): Promise<SearchT
     const data = await response.json()
     const rawResults: any[] = data?.results ?? []
     if (!Array.isArray(rawResults) || rawResults.length === 0) {
+      // Tırnak içeren sorgular SearXNG'de çalışan motorlarda (AOL) 0 sonuç verebilir.
+      // Tırnakları kaldırarak tekrar dene.
+      const hasQuotes = query.includes('"')
+      if (hasQuotes) {
+        const unquoted = query.replace(/"/g, '')
+        const retryUrl = `${baseUrl}/search?q=${encodeURIComponent(unquoted)}&format=json&categories=general&language=all`
+        const retryResp = await fetch(retryUrl, {
+          headers: { 'Accept': 'application/json' },
+          signal: AbortSignal.timeout(15000),
+        })
+        if (retryResp.ok) {
+          const retryData = await retryResp.json()
+          const retryResults: any[] = retryData?.results ?? []
+          if (Array.isArray(retryResults) && retryResults.length > 0) {
+            const results: SearchResult[] = retryResults.slice(0, limit).map((r: any) => ({
+              title: r.title || 'Başlıksız',
+              snippet: (r.content || '').slice(0, 400).replace(/\n+/g, ' ').trim(),
+              url: r.url || '',
+            }))
+            return { query, results, provider: 'SearXNG' }
+          }
+        }
+      }
       return { query, results: [], error: 'SearXNG sonuç döndürmedi.' }
     }
     const results: SearchResult[] = rawResults.slice(0, limit).map((r: any) => ({
