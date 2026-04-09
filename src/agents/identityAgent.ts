@@ -75,6 +75,7 @@ const IDENTITY_TOOLS = [
 
 export const identityAgentConfig: AgentConfig = {
   name: 'IdentityAgent',
+  model: 'deepseek/deepseek-v3.2-speciale',
   tools: tools.filter((t: any) => t.type === 'function' && IDENTITY_TOOLS.includes(t.function.name)),
   executeTool: executeTool,
   maxToolCalls: 40,
@@ -92,6 +93,19 @@ Görevin: Bir kişinin dijital izlerini, hesaplarını, bağlarını ve kimliği
    - ⚠️ Tek kaynak / zayıf kanıt
    - ❓ Doğrulanamadı
    - [BAĞLANTI DOĞRULANAMADI] — platform bağlantısı kanıtsızsa CÖMERTCE kullan
+
+# ⛔ ANTİ-HALLUSİNASYON KURALLARI (HAYATİ ÖNCELİK)
+
+1. **ARAÇ NE DÖNDÜRDÜYSE ONU YAZ**: public_repos: 0 ise "5 proje" YAZMA. followers: 0 ise "2 takipçi" YAZMA.
+2. **BOŞ VERİ = BİLGİ YOK**: Araç boş sonuç, hata veya erişim engeli (login ekranı) döndürse:
+   - "Bilinmiyor" veya "Veri Yok" veya "Erişilemedi" yaz
+   - ASLA boşluğu doldurmak için tahmin/varsayım üretme
+3. **LOGIN EKRANI = VERİ YOK**: scrape_profile sonucu "Sign Up", "Login", "Agree & Join" içeriyorsa → profil okunamadı demektir. "Profil detaylı incelendi" YAZMA.
+4. **İSİM UYUMSUZLUĞU = FARKLI KİŞİ**: Profil adı hedef kişiyle eşleşmiyorsa ("ramazan daghan" vs "Dağhan Efe Barış") → "Başka bir kişi" olarak işaretle, uyumlu diye sunma.
+5. **KANITSIZ BAĞLANTI YASAK**: İki profili aynı kişiye bağlamak için en az 1 somut kanıt gereklidir:
+   - Aynı email hash, aynı avatar, cross-link, bio'da aynı kurum
+   - "İsim benzerliği" tek başına kanıt DEĞİLDİR
+6. **RAKAM YAZMAK İÇİN ARAÇ ÇAĞIR**: Repo sayısı, takipçi sayısı, yayın sayısı gibi rakamları ASLA tahmin etme — sadece araç çıktısındaki sayıyı yaz.
 
 # HAM VERİ ÇIKARIM YASAĞI
 
