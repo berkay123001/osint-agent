@@ -33,10 +33,11 @@ export interface PersonSearchResult {
 
 /**
  * İsimden olası username'ler türet.
- * Örn: "Berkay Hasırcı" → ["berkayhasirci", "bhasirci", "berkay-hasirci", "hasirciberkay"]
+ * Örn: "Dağhan Efe Barış" → ["daghanefebaris", "daghan.baris", "daghanbaris", ...]
+ * Orta isim varsa: firstmiddlelast (Twitter'da en yaygın format) da türetilir.
  */
 function generateUsernameVariants(fullName: string): string[] {
-  const parts = fullName
+  const normalized = fullName
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '') // aksan kaldır
@@ -48,24 +49,51 @@ function generateUsernameVariants(fullName: string): string[] {
     .replace(/ğ/g, 'g')
     .replace(/[^a-z0-9\s]/g, '')
     .trim()
-    .split(/\s+/)
-    .filter(Boolean)
+
+  const parts = normalized.split(/\s+/).filter(Boolean)
 
   if (parts.length < 2) return parts
 
   const first = parts[0]
   const last = parts[parts.length - 1]
 
-  return [
-    `${first}${last}`,           // berkayhasirci
-    `${first}.${last}`,          // berkay.hasirci
-    `${first}-${last}`,          // berkay-hasirci
-    `${first}_${last}`,          // berkay_hasirci
-    `${first[0]}${last}`,        // bhasirci
-    `${last}${first}`,           // hasirciberkay
-    `${last}${first[0]}`,        // hasircib
-    `${first}${last[0]}`,        // berkayh
-  ]
+  // Orta isim desteği: "daghan efe baris" → middle = "efe"
+  const middle = parts.length >= 3 ? parts.slice(1, -1).join('') : ''
+  const allJoined = parts.join('') // daghanefebaris
+
+  const variants = new Set<string>()
+
+  // Tam birleşik (Twitter'da en yaygın): daghanefebaris
+  variants.add(allJoined)
+  // İlk + son: daghanbaris
+  variants.add(`${first}${last}`)
+  // İlk.son: daghan.baris
+  variants.add(`${first}.${last}`)
+  // İlk-son: daghan-baris
+  variants.add(`${first}-${last}`)
+  // İlk_son: daghan_baris
+  variants.add(`${first}_${last}`)
+  // Son + ilk: barisdaghan
+  variants.add(`${last}${first}`)
+  // İlk harf + son: dbaris
+  variants.add(`${first[0]}${last}`)
+  // İlk + son harf: daghanb
+  variants.add(`${first}${last[0]}`)
+  // Son + ilk harf: barisd
+  variants.add(`${last}${first[0]}`)
+
+  // Orta isim varsa ek varyantlar
+  if (middle) {
+    // ilk + orta + son (ayırıcılı): daghan.efe.baris, daghan_efe_baris
+    variants.add(`${first}.${middle}.${last}`)
+    variants.add(`${first}_${middle}_${last}`)
+    // ilk + orta: daghanefe
+    variants.add(`${first}${middle}`)
+    // orta + son: efebaris
+    variants.add(`${middle}${last}`)
+  }
+
+  return [...variants]
 }
 
 /**
@@ -98,7 +126,7 @@ export async function searchPerson(
   // 3. Web araması (isim + opsiyonel bağlam)
   const query = context
     ? `"${name}" ${context}`
-    : `"${name}" site:github.com OR site:linkedin.com OR site:twitter.com`
+    : `"${name}" site:github.com OR site:linkedin.com OR site:x.com OR site:twitter.com`
 
   try {
     const webResult = await searchWeb(query, 5)
