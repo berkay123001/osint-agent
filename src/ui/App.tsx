@@ -35,14 +35,33 @@ export function App(): React.ReactElement {
   const [logScrollOffset, setLogScrollOffset] = useState(0);
 
   // progressEmitter dinle — agent/tool loglarını UI'da göster
+  // Batch: 150ms içinde gelen logları tek seferde render et — titreme önler
   useEffect(() => {
+    let buffer: string[] = [];
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const flush = () => {
+      timer = null;
+      if (buffer.length === 0) return;
+      const batch = buffer;
+      buffer = [];
+      setProgressLog(prev => [...prev.slice(-200), ...batch]);
+      // Scroll offset sadece kullanıcı scroll yapmadıysa sıfırla
+      setLogScrollOffset(prev => prev === 0 ? 0 : prev);
+      setShowLog(true);
+    };
+
     const handler = (msg: string) => {
-      setProgressLog(prev => [...prev.slice(-200), msg]);
-      setLogScrollOffset(0); // Yeni log gelince en alta döndür
-      setShowLog(true); // İlk log gelince otomatik aç
+      buffer.push(msg);
+      if (!timer) {
+        timer = setTimeout(flush, 150);
+      }
     };
     progressEmitter.on('progress', handler);
-    return () => { progressEmitter.off('progress', handler); };
+    return () => {
+      progressEmitter.off('progress', handler);
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   // Startup: önceki aktif oturumu arşivle — /resume listesinde görünsün
