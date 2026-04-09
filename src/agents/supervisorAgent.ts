@@ -3,6 +3,7 @@ import { runAgentLoop } from './baseAgent.js';
 import { runIdentityAgent } from './identityAgent.js';
 import { runMediaAgent } from './mediaAgent.js';
 import { runAcademicAgent } from './academicAgent.js';
+import { createStrategyPlan, reviewStrategyResult } from './strategyAgent.js';
 import { tools, executeTool, setReportContentBuffer } from '../lib/toolRegistry.js';
 import type OpenAI from 'openai';
 import { logger } from '../lib/logger.js';
@@ -146,7 +147,17 @@ async function saveToObsidianDirect(agentLabel: string, query: string, result: s
 
 async function supervisorExecuteTool(name: string, args: Record<string, string>): Promise<string> {
   if (name === 'ask_identity_agent') {
-    const r = await runIdentityAgent(args.query, args.context, args.depth);
+    // Plan → Execute → Review
+    const plan = await createStrategyPlan('identity', args.query, args.context);
+    const planContext = plan ? `\n\n[STRATEJİ PLANI — Bu plana göre araştır]:\n${plan}` : '';
+    const r = await runIdentityAgent(args.query, (args.context || '') + planContext, args.depth);
+    // Review — sadece sonuç yeterince uzunsa
+    if (r.length > 200) {
+      const { approved, feedback } = await reviewStrategyResult('IdentityAgent', args.query, r, plan);
+      if (!approved && feedback) {
+        logger.info('AGENT', `[Strategy] IdentityAgent review düzeltme önerisi var`);
+      }
+    }
     setReportContentBuffer(r);
     try {
       const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
@@ -157,7 +168,12 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
     saveToObsidianDirect('IdentityAgent', args.query, r)
     return truncateSubAgentResponse(r, 'IdentityAgent');
   } else if (name === 'ask_media_agent') {
-    const r = await runMediaAgent(args.query, args.context, args.depth);
+    const plan = await createStrategyPlan('media', args.query, args.context);
+    const planContext = plan ? `\n\n[STRATEJİ PLANI — Bu plana göre araştır]:\n${plan}` : '';
+    const r = await runMediaAgent(args.query, (args.context || '') + planContext, args.depth);
+    if (r.length > 200) {
+      await reviewStrategyResult('MediaAgent', args.query, r, plan);
+    }
     setReportContentBuffer(r);
     try {
       const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
@@ -168,7 +184,12 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
     saveToObsidianDirect('MediaAgent', args.query, r)
     return truncateSubAgentResponse(r, 'MediaAgent');
   } else if (name === 'ask_academic_agent') {
-    const r = await runAcademicAgent(args.query, args.context, args.depth);
+    const plan = await createStrategyPlan('academic', args.query, args.context);
+    const planContext = plan ? `\n\n[STRATEJİ PLANI — Bu plana göre araştır]:\n${plan}` : '';
+    const r = await runAcademicAgent(args.query, (args.context || '') + planContext, args.depth);
+    if (r.length > 200) {
+      await reviewStrategyResult('AcademicAgent', args.query, r, plan);
+    }
     setReportContentBuffer(r);
     try {
       const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
