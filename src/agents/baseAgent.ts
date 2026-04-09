@@ -52,6 +52,7 @@ export async function runAgentLoop(
   let correctionRetries = 0;
   let totalCorrectionAttempts = 0; // Global cap — sonsuz döngüyü önler
   let forceTextRetries = 0; // Metin zorlama deneme sayacı
+  let toolsDisabledMessageSent = false; // Araç bütçesi dolunca özet isteği yalnızca bir kez gönderilir
   const toolsUsed: Record<string, number> = {};
   const maxToolCalls = config.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
   // Tool call deduplication: aynı tool+args kombinasyonu önceden çağrıldıysa cache'den dön
@@ -62,8 +63,18 @@ export async function runAgentLoop(
   while (true) {
     const toolsDisabled = toolCallCount >= maxToolCalls;
     const toolChoice: 'auto' | 'none' = toolsDisabled ? 'none' : 'auto';
-    if (toolsDisabled) {
-      logger.warn('AGENT', `[${config.name}] Maksimum araç çağrısı aşıldı, özet isteniyor...`);
+    if (toolsDisabled && !toolsDisabledMessageSent) {
+      toolsDisabledMessageSent = true;
+      logger.warn('AGENT', `[${config.name}] Maksimum araç çağrısı aşıldı, nihai rapor isteniyor...`);
+      // Modelin bağlamı kaybedip selamlama döndürmesini önlemek için açık yönlendirme
+      history.push({
+        role: 'user',
+        content:
+          'TÜM ARAÇLAR TAMAMLANDI. Yukarıda çalıştırılan araçların sonuçlarını kullanarak ' +
+          'nihai Markdown raporunu ŞİMDİ yaz. ' +
+          'Yeni araç çağırma — sadece mevcut bulgulardan oluşan tam ve detaylı final rapor sun. ' +
+          'Selamlama veya "nasıl yardımcı olabilirim" YAZMA.',
+      });
     }
 
     logger.agentThinking(config.name);

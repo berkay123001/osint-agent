@@ -120,6 +120,7 @@ function printBanner() {
     chalk.cyan('/show') + g(' · ') +
     chalk.cyan('/delete') + g(' · ') +
     chalk.cyan('/reset') + g(' · ') +
+    chalk.cyan('/logs') + g(' · ') +
     chalk.cyan('/help') + g(' · ') +
     chalk.cyan('exit')
   )
@@ -130,11 +131,12 @@ function printBanner() {
 printBanner()
 
 // ── Oturum yükleme ───────────────────────────────────────────────────────────
-const SLASH_COMMANDS = ['/delete', '/help', '/history', '/reset', '/resume', '/show'];
+const SLASH_COMMANDS = ['/delete', '/help', '/history', '/logs', '/reset', '/resume', '/show'];
 const CMD_DESCRIPTIONS: Record<string, string> = {
   '/delete':  'Oturum sil',
   '/help':    'Komutları listele',
   '/history': 'Mesaj istatistikleri',
+  '/logs':    'Araç çağrılarını dosyaya aktar',
   '/reset':   'Oturumu sıfırla',
   '/resume':  'Kayıtlı oturum yükle',
   '/show':    'Geçmişi ekrana yazdır',
@@ -307,6 +309,73 @@ function printHistory(msgs: Message[]): void {
   console.log(chalk.dim('\n  ─────────────────────────────────────────────────────────\n'));
 }
 
+/** Mevcut history'deki tüm araç çağrılarını zaman damgalı bir dosyaya aktarır */
+function handleLogs(): void {
+  if (history.length === 0) {
+    console.log(chalk.yellow('\n  📭 Henüz araç çağrısı yok.\n'));
+    prompt();
+    return;
+  }
+
+  type AssistantMsg = Message & { tool_calls?: { id: string; function: { name: string; arguments: string } }[] };
+  const toolCallMsgs = history.filter(
+    (m): m is AssistantMsg => m.role === 'assistant' && Array.isArray((m as AssistantMsg).tool_calls) && ((m as AssistantMsg).tool_calls!.length > 0)
+  );
+  const toolResults = history.filter(m => m.role === 'tool') as (Message & { tool_call_id?: string; content: string })[];
+
+  if (toolCallMsgs.length === 0) {
+    console.log(chalk.yellow('\n  📭 Bu oturumda araç çağrısı bulunamadı.\n'));
+    prompt();
+    return;
+  }
+
+  // tool_call_id → result içeriği haritası
+  const resultMap = new Map<string, string>();
+  for (const r of toolResults) {
+    if (r.tool_call_id) {
+      resultMap.set(r.tool_call_id, typeof r.content === 'string' ? r.content : JSON.stringify(r.content));
+    }
+  }
+
+  const lines: string[] = [
+    `# OSINT Araç Çağrısı Günlüğü`,
+    `**Tarih:** ${new Date().toLocaleString('tr-TR')}`,
+    `**Toplam araç çağrısı:** ${toolResults.length}`,
+    '',
+  ];
+
+  let callIndex = 0;
+  for (const msg of toolCallMsgs) {
+    for (const tc of msg.tool_calls!) {
+      callIndex += 1;
+      let args: unknown;
+      try { args = JSON.parse(tc.function.arguments); } catch { args = tc.function.arguments; }
+      const result = resultMap.get(tc.id) ?? '(sonuç bulunamadı)';
+      const truncated = result.length > 2000 ? result.slice(0, 2000) + '\n…(kırpıldı)' : result;
+
+      lines.push(`## ${callIndex}. \`${tc.function.name}\``);
+      lines.push('**Parametreler:**');
+      lines.push('```json');
+      lines.push(JSON.stringify(args, null, 2));
+      lines.push('```');
+      lines.push('**Sonuç:**');
+      lines.push('```');
+      lines.push(truncated);
+      lines.push('```');
+      lines.push('');
+    }
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const outPath = path.join(SESSION_DIR, `logs-${timestamp}.md`);
+  if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
+  fs.writeFileSync(outPath, lines.join('\n'), 'utf-8');
+
+  console.log(chalk.green(`\n  ✅ ${callIndex} araç çağrısı dışa aktarıldı:`));
+  console.log(chalk.bold.white(`     ${outPath}\n`));
+  prompt();
+}
+
 /** Kayıtlı oturumları listeler ve seçilen silinir */
 function handleDelete(): void {
   const sessions = listSessions();
@@ -477,6 +546,11 @@ async function handleUserInput(rawInput: string): Promise<void> {
       printHistory(history);
     }
     prompt();
+    return;
+  }
+
+  if (input.toLowerCase() === '/logs') {
+    handleLogs();
     return;
   }
 
