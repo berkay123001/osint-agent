@@ -78,8 +78,18 @@ engines:
     engine: qwant
     shortcut: qw
 
+  - name: mojeek
+    engine: mojeek
+    shortcut: mj
+    categories: general
+
+  - name: yep
+    engine: yep
+    shortcut: yp
+    categories: general
+
 outgoing:
-  request_timeout: 5.0
-  max_request_timeout: 12.0
+  request_timeout: 8.0
+  max_request_timeout: 18.0
   useragent_suffix: ""
   proxies: {}

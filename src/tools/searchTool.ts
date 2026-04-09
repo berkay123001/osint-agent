@@ -21,7 +21,8 @@ import { emitProgress } from '../lib/progressEmitter.js'
 async function searchSearXNG(query: string, limit: number = 10): Promise<SearchToolResponse> {
   const baseUrl = process.env.SEARXNG_URL || 'http://localhost:8888'
   try {
-    const url = `${baseUrl}/search?q=${encodeURIComponent(query)}&format=json&categories=general&language=all`
+    // mojeek ve yep'i açıkça dahil et: bot koruması düşük, quoted query destekli
+    const url = `${baseUrl}/search?q=${encodeURIComponent(query)}&format=json&categories=general&language=all&engines=mojeek,yep,aol,google,bing,brave`
     const response = await fetch(url, {
       headers: { 'Accept': 'application/json' },
       signal: AbortSignal.timeout(15000),
