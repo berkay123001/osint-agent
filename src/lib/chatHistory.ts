@@ -122,7 +122,40 @@ export function sanitizeHistoryForProvider(history: Message[]): Message[] {
     return lastUser ? [system, lastUser] : [system]
   }
 
-  const result = [system, ...recent]
+  // ── Context bridge: düşen mesajlardan bağlam yeniden oluştur ────────────────
+  // Trim sonrası ilk mesaj "ne" veya "devam et" gibi kısa bir follow-up olabilir.
+  // Model bu durumda konuşmayı sıfırdan başlatıyor ("Merhaba! Nasıl yardımcı olabilirim?").
+  // Çözüm: düşen kısımdan orijinal soruyu + son raporu çıkarıp bir context bridge ekle.
+  const dropped = sanitized.slice(1, safeStart)
+  const firstUserMsg = dropped.find(
+    (m): m is Message & { content: string } => m.role === 'user' && typeof m.content === 'string' && m.content.trim().length > 0
+  )
+  const lastReport = [...dropped].reverse().find(
+    (m): m is Message & { content: string } =>
+      m.role === 'assistant' &&
+      typeof m.content === 'string' &&
+      m.content.trim().length > 200 &&
+      !(m as any).tool_calls?.length  // araç çağrısı olmayan, saf metin yanıtı
+  )
+
+  const bridgeParts: string[] = ['[BAĞLAM: Bu konuşmanın önceki kısmı bağlam penceresi dolunca kırpıldı.]']
+  if (firstUserMsg) {
+    bridgeParts.push(`Orijinal araştırma sorusu: "${firstUserMsg.content.slice(0, 500)}"`)
+  }
+  if (lastReport) {
+    bridgeParts.push(
+      `Önceki araştırmadan son bulgu özeti (ilk 1000 karakter):\n${lastReport.content.slice(0, 1000)}`
+    )
+  }
+  bridgeParts.push(
+    `Araştırma devam ediyor. Yukarıdaki bağlamı koruyarak yanıt ver; selamlama veya ` +
+    `"nasıl yardımcı olabilirim" YAZMA.`
+  )
+
+  const contextBridge: Message = { role: 'user', content: bridgeParts.join('\n\n') }
+  const contextAck: Message = { role: 'assistant', content: 'Anladım, araştırmanın bağlamını koruyorum ve kaldığımız yerden devam ediyorum.' }
+
+  const result = [system, contextBridge, contextAck, ...recent]
 
   // Hâlâ çok büyükse — orta mesajları kısalt (tool_calls içerenlere dokunma)
   const newTotal = result.reduce((sum, m) => {
