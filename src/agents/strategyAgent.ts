@@ -11,130 +11,224 @@ const client = new OpenAI({
 const STRATEGY_MODEL = 'deepseek/deepseek-v3.2-speciale';
 
 /**
- * Strategy Agent — 3 aşamalı çalışır:
- *   1. PLAN  — sub-agent çalışmadan önce taktiksel plan
- *   2. REVIEW — sub-agent bitince kalite denetimi + yeterlilik değerlendirmesi
- *   3. SYNTHESIZE — onaylı verilerden profesyonel final rapor
+ * Strategy Agent — oturum bazlı (session-aware) çalışır.
+ *
+ * Her StrategySession bir sub-agent araştırması için oluşturulur.
+ * 3 aşamanın tamamı aynı conversation history üzerinden yürür:
+ *   1. PLAN      → "Şu araştırmayı yap, işte plan"
+ *   2. REVIEW    → "İşte sonuç, plana göre değerlendir" (kendi planını hatırlar)
+ *   3. SYNTHESIZE → "Profesyonel rapor üret" (plan + review'u hatırlar)
  *
  * Tool çağırmaz, sadece derin düşünür. Supervisor'dan farkı:
  * - Supervisor: genel koordinasyon, routing, kullanıcı muhabbeti
  * - Strategy: taktiksel planlama, sub-agent denetleme, rapor sentezi
  */
 
-const PLANNING_PROMPT = `Sen bir OSINT Strateji Uzmanısın. Görevin: araştırma hedefine göre sub-agent'a detaylı bir araştırma planı yazmak.
+const SYSTEM_PROMPT = `Sen bir OSINT Strateji Uzmanısın. Üç farklı rolün var:
 
-Plan yazarken dikkat et:
-1. Hedef kişinin/ipucunun ne olduğunu analiz et — hangi bilgiler zaten biliniyor, hangileri eksik
-2. Hangi araçların hangi sırayla kullanılması gerektiğini belirle
-3. Username varyasyon stratejisi — isimden olası hangi handle'lar türetilmeli
+1. **Planlama**: Araştırma hedefine göre sub-agent'a detaylı bir plan yaz.
+2. **Denetleme**: Sub-agent bitince sonuçları kalite + yeterlilik açısından değerlendir.
+3. **Sentez**: Ham araştırma sonucunu profesyonel, temiz, güvenilir bir rapora dönüştür.
+
+Her aşamada ÖNCEKİ aşamalarda ne söylediğini hatırla — yeni başlamıyorsun, devam ediyorsun.
+
+# PLANLAMA KURALLARI
+1. Hedefi analiz et — bilinenler vs eksikler
+2. Hangi araçların hangi sırayla kullanılacağını belirle
+3. Username varyasyon stratejisi
 4. Beklenen tuzaklar — boş profiller, yanlış kişi eşleşmesi, login ekranları
-5. Doğrulama kriterleri — hangi bulgular "doğrulandı" sayılabilir
+5. Doğrulama kriterleri
 6. Önceliklendirme — en değerli bilgiye önce ulaş
+Kısa ve net, madde madde yaz.
 
-Plan kısa ve net olsun — sub-agent bunu context olarak alacak. Madde madde yaz.`;
+# DENETLEME KURALLARI
+İKİ AŞAMALI DEĞERLENDİRME:
 
-const REVIEW_PROMPT = `Sen bir OSINT Kalite Denetçisisin. Sub-agent'ın araştırma sonuçlarını inceliyorsun.
+**AŞAMA 1 — Kalite Kontrol:**
+1. Tool çıktısında olmayan bilgi raporda var mı? (hallucination)
+2. Sayılar tool çıktısıyla eşleşiyor mu?
+3. Bulunan profiller gerçekten hedef kişiye mi ait?
+4. Erişilemeyen profiller "incelendi" olarak sunulmuş mu?
+5. Kanıtsız bağlantılar var mı?
 
-İKİ AŞAMALI DEĞERLENDİRME YAP:
-
-## AŞAMA 1: Kalite Kontrol (her zaman yap)
-1. **Veri doğruluğu**: Tool çıktısında olmayan bilgi raporda var mı? (hallucination)
-2. **Sayılar**: Repo/follower/sayılar tool çıktısıyla eşleşiyor mu?
-3. **Kişi eşleşmesi**: Bulunan profiller gerçekten hedef kişiye mi ait? İsim/kanıt uyumu var mı?
-4. **Login/hata durumu**: Erişilemeyen profiller "incelendi" olarak sunulmuş mu?
-5. **Kanıtsız bağlantılar**: İki profil arasında somut kanıt olmadan "aynı kişi" denmiş mi?
-
-## AŞAMA 2: Yeterlilik Değerlendirmesi (kritik)
-Araştırma yeterli mi yoksa eksik mi? Şunları kontrol et:
-- Temel platformlar tarandı mı? (GitHub, Twitter/X, LinkedIn, Instagram, ResearchGate vb.)
+**AŞAMA 2 — Yeterlilik:**
+- Planında önerdiğim platformlar tarandı mı?
 - Username varyasyonları denendi mi?
 - Çapraz doğrulama yapıldı mı?
-- Hedef kişiye özgü bilgiler (kurum, lokasyon) doğrulandı mı?
+- Hedef kişiye özgü bilgiler doğrulandı mı?
 
-## ÇIKTI FORMATI
+**ÇIKTI FORMATI:**
+- Temiz ve yeterli → "SONUÇ TEMİZ — onaylıyorum" + 2-3 cümle özet
+- Sorunlu ama düzeltilebilir → [SORUN_AÇIKLAMASI] + DÜZELTME ÖNERİLERİ
+- Ciddi halüsinasyon → "CİDDİ_SORUN" + sorun listesi + düzeltme
 
-Eğer sonuç temiz ve yeterliyse:
-SONUÇ TEMİZ — onaylıyorum
-[2-3 cümlelik özet]
+# RAPOR SENTEZ KURALLARI
+1. HER somut iddia için kaynak kontrolü — tool çıktısında yoksa SİL
+2. Farklı kişiler → AYRI bölümler
+3. Doğrulanmamış → ⚠️, doğrulanmış → ✅
+4. Login/erişilemeyen profiller → SİL
+5. Deduplikasyon yap
+Format: Temiz Markdown, tablolar, kaynak referansları, özet bölümü`;
 
-Eğer sorunlar varsa ama düzeltilebilir:
-[SORUN_AÇIKLAMASI]
-DÜZELTME ÖNERİLERİ:
-- [spesifik düzeltme 1 — hangi araçla ne yapılacak]
-- [spesifik düzeltme 2]
-- ...
+const AGENT_DESCRIPTIONS: Record<string, string> = {
+  identity: 'Kimlik OSINT — username/email/profil araştırması. Araçları: search_person, run_sherlock, run_maigret, nitter_profile, scrape_profile, verify_profiles, web_fetch, cross_reference, run_github_osint, check_email_registrations, check_breaches, verify_claim',
+  media: 'Medya doğrulama — görsel/haber/fact-check. Araçları: reverse_image_search, extract_metadata, compare_images_phash, fact_check_to_graph, web_fetch, scrape_profile, verify_claim',
+  academic: 'Akademik araştırma — makale/yazar/intihal. Araçları: search_academic_papers, search_researcher_papers, check_plagiarism, web_fetch, scrape_profile, wayback_search, query_graph',
+};
 
-Eğer sonuç ciddi halüsinasyon içeriyorsa:
-CİDDİ_SORUN
-- [sorun 1]
-- [sorun 2]
-DÜZELTME: [sub-agent'ın ne yapması gerektiği]`;
+export class StrategySession {
+  private history: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+  private agentType: 'identity' | 'media' | 'academic';
+  private query: string;
 
-const SYNTHESIS_PROMPT = `Sen bir OSINT Rapor Sentez Uzmanısın. Sub-agent'ın ham araştırma sonucunu profesyonel, temiz ve güvenilir bir rapora dönüştürüyorsun.
+  constructor(agentType: 'identity' | 'media' | 'academic', query: string) {
+    this.agentType = agentType;
+    this.query = query;
+    this.history.push({ role: 'system', content: SYSTEM_PROMPT });
+  }
 
-KURALLAR:
-1. Sub-agent çıktısındaki HER somut iddia için kaynak kontrolü yap:
-   - Tool çıktısında açıkça geçen bilgi → koru, kaynak etiketle
-   - Kaynağı belirsiz veya tahmine dayalı → SİL
-   - Sayılar (repo, follower, atıf) → tool çıktısıyla eşleşmiyorsa SİL
-2. Birden fazla farklı kişi tespit edildiyse → AYRI AYRI bölümler halinde sun
-3. Doğrulanmamış bilgileri ⚠️ ile işaretle, doğrulanmışları ✅ ile
-4. Login ekranı/erişilemeyen profiller → rapordan SİL
-5. Tekrar eden bilgileri birleştir, deduplikasyon yap
+  /**
+   * FAZ 1: Sub-agent çalışmadan önce taktiksel plan oluştur.
+   * Plan session history'ye kaydedilir — sonraki çağrılar planı hatırlar.
+   */
+  async plan(context?: string): Promise<string> {
+    emitProgress(`🧠 Strategy Agent planlıyor (${this.agentType})...`);
 
-RAPOR FORMATI:
-- Temiz Markdown, tablolar ve listeler
-- Her bölümde kaynak referansı
-- Güvenilirlik etiketleri
-- Profesyonel ve okunabilir yapı
-- Sonuç/özet bölümü ile bitir`;
+    this.history.push({
+      role: 'user',
+      content: `[PLANLAMA FAZI]\nAgent tipi: ${this.agentType}\nAgent yetenekleri: ${AGENT_DESCRIPTIONS[this.agentType]}\n\nAraştırma görevi: ${this.query}${context ? `\n\nEk bağlam: ${context}` : ''}`,
+    });
+
+    try {
+      const response = await this.callLLM();
+      const plan = response ?? '';
+
+      if (plan.length > 50) {
+        // Kendi yanıtını history'ye ekle — bir sonraki çağrıda hatırlayacak
+        this.history.push({ role: 'assistant', content: plan });
+        logger.info('AGENT', `[Strategy-Plan] ${this.agentType} → ${plan.slice(0, 200)}...`);
+        emitProgress(`🧠 Strateji planı hazır (${plan.split('\n').length} satır)`);
+        return plan;
+      }
+      return '';
+    } catch (err) {
+      logger.warn('AGENT', `[Strategy-Plan] Hata: ${(err as Error).message}`);
+      return '';
+    }
+  }
+
+  /**
+   * FAZ 2: Sub-agent tamamlandıktan sonra sonuçları review et.
+   * Kendi planını history'den hatırlar — tekrar parametre olarak geçmeye gerek yok.
+   */
+  async review(result: string): Promise<{ approved: boolean; feedback: string }> {
+    emitProgress(`🧠 Strategy Agent review ediyor (${this.agentType})...`);
+
+    this.history.push({
+      role: 'user',
+      content: `[DENETLEME FAZI]\nSub-agent tamamlandı. İşte araştırma sonucu:\n\n${result.slice(0, 15000)}`,
+    });
+
+    try {
+      const response = await this.callLLM();
+      const review = response ?? '';
+      const approved = review.includes('SONUÇ TEMİZ') || review.toLowerCase().includes('onaylıyorum');
+
+      // Review'u da history'ye ekle — synthesis fazı hatırlayacak
+      this.history.push({ role: 'assistant', content: review });
+
+      logger.info('AGENT', `[Strategy-Review] ${this.agentType} → ${approved ? 'ONAYLANDI' : 'DÜZELTME GEREKLİ'}`);
+      emitProgress(`🧠 Review: ${approved ? 'Onaylandı' : 'Düzeltme gerekli'}`);
+
+      return { approved, feedback: review };
+    } catch (err) {
+      logger.warn('AGENT', `[Strategy-Review] Hata: ${(err as Error).message}`);
+      return { approved: true, feedback: '' };
+    }
+  }
+
+  /**
+   * FAZ 3: Ham sonucu profesyonel rapora dönüştür.
+   * History'de plan + review var — neye göre temizleyeceğini biliyor.
+   */
+  async synthesize(result: string, reviewFeedback?: string): Promise<string> {
+    emitProgress(`🧠 Strategy Agent rapor sentezliyor (${this.agentType})...`);
+
+    const contextParts: string[] = [
+      `[SENTEZ FAZI]`,
+      `Sub-agent ham sonuç:`,
+      result.slice(0, 12000),
+    ];
+    if (reviewFeedback) {
+      contextParts.push(`\nKendi denetim notların (yukarıda yazdıkların):`, reviewFeedback.slice(0, 3000));
+    }
+
+    this.history.push({
+      role: 'user',
+      content: contextParts.join('\n'),
+    });
+
+    try {
+      const response = await this.callLLM();
+      const synthesized = response ?? '';
+
+      if (synthesized.length > 100) {
+        this.history.push({ role: 'assistant', content: synthesized });
+        logger.info('AGENT', `[Strategy-Synthesize] ${this.agentType} → ${synthesized.slice(0, 150)}...`);
+        emitProgress(`🧠 Profesyonel rapor sentezlendi (${(synthesized.length / 1024).toFixed(1)}KB)`);
+        return synthesized;
+      }
+      return result;
+    } catch (err) {
+      logger.warn('AGENT', `[Strategy-Synthesize] Hata: ${(err as Error).message}`);
+      return result;
+    }
+  }
+
+  /**
+   * Ortak LLM çağrısı — her zaman session history'yi gönderir.
+   */
+  private async callLLM(): Promise<string | undefined> {
+    // History büyümesini kontrol et — en fazla ~40K token context
+    // 3 faz sonunda ~6-8 mesaj olur, problem değil
+    const response = (await client.chat.completions.create({
+      model: STRATEGY_MODEL,
+      messages: this.history,
+      max_tokens: 10000,
+    })) as ChatCompletion;
+
+    return response.choices?.[0]?.message?.content?.trim();
+  }
+
+  /**
+   * History özeti — debugging için
+   */
+  getHistorySize(): number {
+    return this.history.length;
+  }
+}
+
+// ============================================================================
+// Backward-compatible wrapper fonksiyonları
+// Supervisor'da eski çağrı formatını kullanan yerler varsa diye
+// ============================================================================
 
 /**
- * Sub-agent çalışmadan önce stratejik plan oluştur
+ * Sub-agent çalışmadan önce stratejik plan oluştur.
+ * Stateles sürüm — session hafızası yok.
  */
 export async function createStrategyPlan(
   agentType: 'identity' | 'media' | 'academic',
   query: string,
   context?: string,
 ): Promise<string> {
-  emitProgress(`🧠 Strategy Agent planlıyor (${agentType})...`);
-
-  const agentDescriptions: Record<string, string> = {
-    identity: 'Kimlik OSINT — username/email/profil araştırması. Araçları: search_person, run_sherlock, run_maigret, nitter_profile, scrape_profile, verify_profiles, web_fetch, cross_reference, run_github_osint, check_email_registrations, check_breaches, verify_claim',
-    media: 'Medya doğrulama — görsel/haber/fact-check. Araçları: reverse_image_search, extract_metadata, compare_images_phash, fact_check_to_graph, web_fetch, scrape_profile, verify_claim',
-    academic: 'Akademik araştırma — makale/yazar/intihal. Araçları: search_academic_papers, search_researcher_papers, check_plagiarism, web_fetch, scrape_profile, wayback_search, query_graph',
-  };
-
-  try {
-    const response = (await client.chat.completions.create({
-      model: STRATEGY_MODEL,
-      messages: [
-        { role: 'system', content: PLANNING_PROMPT },
-        {
-          role: 'user',
-          content: `Agent tipi: ${agentType}\nAgent yetenekleri: ${agentDescriptions[agentType]}\n\nAraştırma görevi: ${query}${context ? `\n\nEk bağlam: ${context}` : ''}`,
-        },
-      ],
-      max_tokens: 4096,
-    })) as ChatCompletion;
-
-    const plan = response.choices?.[0]?.message?.content?.trim() ?? '';
-    if (plan.length > 50) {
-      logger.info('AGENT', `[Strategy-Plan] ${agentType} → ${plan.slice(0, 200)}...`);
-      emitProgress(`🧠 Strateji planı hazır (${plan.split('\n').length} satır)`);
-      return plan;
-    }
-    return '';
-  } catch (err) {
-    logger.warn('AGENT', `[Strategy-Plan] Hata: ${(err as Error).message}`);
-    return '';
-  }
+  const session = new StrategySession(agentType, query);
+  return session.plan(context);
 }
 
 /**
  * Sub-agent tamamlandıktan sonra sonuçları review et.
- * Onaylanmazsa ve reRunFn verilmişse, sub-agent'ı düzeltme önerileriyle tekrar çalıştırır.
- * Maksimum 1 tekrar döngüsüne izin verilir (API maliyet kontrolü).
+ * Stateles sürüm — plan parametre olarak geçilir.
  */
 export async function reviewStrategyResult(
   agentType: string,
@@ -142,37 +236,20 @@ export async function reviewStrategyResult(
   result: string,
   plan?: string,
 ): Promise<{ approved: boolean; feedback: string }> {
-  emitProgress(`🧠 Strategy Agent review ediyor (${agentType})...`);
-
-  try {
-    const response = (await client.chat.completions.create({
-      model: STRATEGY_MODEL,
-      messages: [
-        { role: 'system', content: REVIEW_PROMPT },
-        {
-          role: 'user',
-          content: `Agent: ${agentType}\nGörev: ${query}${plan ? `\n\nPlan:\n${plan}` : ''}\n\nSub-agent Sonucu:\n${result.slice(0, 15000)}`,
-        },
-      ],
-      max_tokens: 4096,
-    })) as ChatCompletion;
-
-    const review = response.choices?.[0]?.message?.content?.trim() ?? '';
-    const approved = review.includes('SONUÇ TEMİZ') || review.toLowerCase().includes('onaylıyorum');
-
-    logger.info('AGENT', `[Strategy-Review] ${agentType} → ${approved ? 'ONAYLANDI' : 'DÜZELTME GEREKLİ'}`);
-    emitProgress(`🧠 Review: ${approved ? 'Onaylandı' : 'Düzeltme gerekli'}`);
-
-    return { approved, feedback: review };
-  } catch (err) {
-    logger.warn('AGENT', `[Strategy-Review] Hata: ${(err as Error).message}`);
-    return { approved: true, feedback: '' };
+  const session = new StrategySession(
+    agentType as 'identity' | 'media' | 'academic',
+    query,
+  );
+  // Plan'ı history'ye enjekte et ki review'da hatırlasın
+  if (plan) {
+    session['history'].push({ role: 'assistant', content: plan });
   }
+  return session.review(result);
 }
 
 /**
  * Sub-agent'ın ham sonucunu profesyonel rapora dönüştürür.
- * Halüsinasyonları temizler, deduplikasyon yapar, kaynak referansları ekler.
+ * Stateles sürüm.
  */
 export async function synthesizeReport(
   agentType: string,
@@ -180,32 +257,9 @@ export async function synthesizeReport(
   result: string,
   reviewFeedback?: string,
 ): Promise<string> {
-  emitProgress(`🧠 Strategy Agent rapor sentezliyor (${agentType})...`);
-
-  try {
-    const userContent = reviewFeedback
-      ? `Agent: ${agentType}\nGörev: ${query}\n\nKalite Denetimi Sonucu:\n${reviewFeedback.slice(0, 3000)}\n\nSub-agent Ham Sonuç:\n${result.slice(0, 12000)}`
-      : `Agent: ${agentType}\nGörev: ${query}\n\nSub-agent Ham Sonuç:\n${result.slice(0, 15000)}`;
-
-    const response = (await client.chat.completions.create({
-      model: STRATEGY_MODEL,
-      messages: [
-        { role: 'system', content: SYNTHESIS_PROMPT },
-        { role: 'user', content: userContent },
-      ],
-      max_tokens: 8192,
-    })) as ChatCompletion;
-
-    const synthesized = response.choices?.[0]?.message?.content?.trim() ?? '';
-    if (synthesized.length > 100) {
-      logger.info('AGENT', `[Strategy-Synthesize] ${agentType} → ${synthesized.slice(0, 150)}...`);
-      emitProgress(`🧠 Profesyonel rapor sentezlendi (${(synthesized.length / 1024).toFixed(1)}KB)`);
-      return synthesized;
-    }
-    // Sentez başarısız → ham sonucu döndür
-    return result;
-  } catch (err) {
-    logger.warn('AGENT', `[Strategy-Synthesize] Hata: ${(err as Error).message}`);
-    return result;
-  }
+  const session = new StrategySession(
+    agentType as 'identity' | 'media' | 'academic',
+    query,
+  );
+  return session.synthesize(result, reviewFeedback);
 }

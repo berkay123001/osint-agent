@@ -3,7 +3,7 @@ import { runAgentLoop } from './baseAgent.js';
 import { runIdentityAgent } from './identityAgent.js';
 import { runMediaAgent } from './mediaAgent.js';
 import { runAcademicAgent } from './academicAgent.js';
-import { createStrategyPlan, reviewStrategyResult, synthesizeReport } from './strategyAgent.js';
+import { StrategySession } from './strategyAgent.js';
 import { tools, executeTool, setReportContentBuffer } from '../lib/toolRegistry.js';
 import type OpenAI from 'openai';
 import { logger } from '../lib/logger.js';
@@ -149,13 +149,14 @@ async function saveToObsidianDirect(agentLabel: string, query: string, result: s
 type SubAgentFn = (query: string, context?: string, depth?: string) => Promise<string>;
 
 /**
- * Strategy Agent destekli sub-agent çalıştırma — Plan → Execute → Review → (Re-execute) → Synthesize
+ * Strategy Agent destekli sub-agent çalıştırma — session-aware
  *
- * 1. Strategy Agent taktiksel plan oluşturur
+ * Tek bir StrategySession üzerinden:
+ * 1. Strategy plan oluşturur (history'ye kaydedilir)
  * 2. Sub-agent planı context olarak alıp çalışır
- * 3. Strategy Agent sonuçları review eder
- * 4. Onaylanmazsa → sub-agent 1 kez daha çalışır (düzetleme önerileriyle)
- * 5. Strategy Agent profesyonel rapor sentezler
+ * 3. Strategy sonuçları review eder (planı hatırlar)
+ * 4. Onaylanmazsa → sub-agent 1 kez daha çalışır
+ * 5. Strategy profesyonel rapor sentezler (plan + review'u hatırlar)
  */
 async function executeSubAgentWithStrategy(
   agentType: 'identity' | 'media' | 'academic',
@@ -164,17 +165,20 @@ async function executeSubAgentWithStrategy(
   agentLabel: string,
   sessionTitle: string,
 ): Promise<string> {
-  // --- FAZ 1: PLAN ---
-  const plan = await createStrategyPlan(agentType, args.query, args.context);
+  // Her sub-agent delegasyonu için yeni bir Strategy oturumu
+  const strategy = new StrategySession(agentType, args.query);
+
+  // --- FAZ 1: PLAN (Strategy history'ye yazılır) ---
+  const plan = await strategy.plan(args.context);
   const planContext = plan ? `\n\n[STRATEJİ PLANI — Bu plana göre araştır]:\n${plan}` : '';
 
   // --- FAZ 2: EXECUTE ---
   let result = await agentFn(args.query, (args.context || '') + planContext, args.depth);
 
-  // --- FAZ 3: REVIEW + optional RE-EXECUTE ---
+  // --- FAZ 3: REVIEW + optional RE-EXECUTE (Strategy planı hatırlar) ---
   let reviewFeedback = '';
   if (result.length > 200) {
-    const { approved, feedback } = await reviewStrategyResult(agentLabel, args.query, result, plan);
+    const { approved, feedback } = await strategy.review(result);
     reviewFeedback = feedback;
 
     if (!approved && feedback && !feedback.includes('CİDDİ_SORUN')) {
@@ -185,20 +189,20 @@ async function executeSubAgentWithStrategy(
         `\n\n[STRATEJİ DENETİMİ — BU SORUNLARI DÜZELT]:\n${feedback.slice(0, 3000)}`;
       const reResult = await agentFn(args.query, correctionContext, args.depth);
 
-      // İkinci sonuç anlamlıysa kullan
       if (reResult.length > 200) {
         result = reResult;
-        // İkinci turun sonunda tekrar review yapma — sonsuz döngüyü önle
         logger.info('AGENT', `[Strategy] ${agentLabel} 2. tur tamamlandı (${(reResult.length / 1024).toFixed(1)}KB)`);
       }
     }
   }
 
-  // --- FAZ 4: SYNTHESIZE — profesyonel rapor ---
+  // --- FAZ 4: SYNTHESIZE (Strategy plan + review'u hatırlar) ---
   let finalReport = result;
   if (result.length > 500) {
-    finalReport = await synthesizeReport(agentLabel, args.query, result, reviewFeedback);
+    finalReport = await strategy.synthesize(result, reviewFeedback);
   }
+
+  logger.info('AGENT', `[Strategy] Session ${strategy.getHistorySize()} mesaj`);
 
   // --- Kaydet ---
   setReportContentBuffer(finalReport);
