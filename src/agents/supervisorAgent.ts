@@ -3,7 +3,7 @@ import { runAgentLoop } from './baseAgent.js';
 import { runIdentityAgent } from './identityAgent.js';
 import { runMediaAgent } from './mediaAgent.js';
 import { runAcademicAgent } from './academicAgent.js';
-import { createStrategyPlan, reviewStrategyResult } from './strategyAgent.js';
+import { createStrategyPlan, reviewStrategyResult, synthesizeReport } from './strategyAgent.js';
 import { tools, executeTool, setReportContentBuffer } from '../lib/toolRegistry.js';
 import type OpenAI from 'openai';
 import { logger } from '../lib/logger.js';
@@ -12,6 +12,7 @@ import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { obsidianWrite } from '../tools/obsidianTool.js';
+import { emitProgress } from '../lib/progressEmitter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -145,61 +146,81 @@ async function saveToObsidianDirect(agentLabel: string, query: string, result: s
   }
 }
 
-async function supervisorExecuteTool(name: string, args: Record<string, string>): Promise<string> {
-  if (name === 'ask_identity_agent') {
-    // Plan → Execute → Review
-    const plan = await createStrategyPlan('identity', args.query, args.context);
-    const planContext = plan ? `\n\n[STRATEJİ PLANI — Bu plana göre araştır]:\n${plan}` : '';
-    const r = await runIdentityAgent(args.query, (args.context || '') + planContext, args.depth);
-    // Review — sadece sonuç yeterince uzunsa
-    if (r.length > 200) {
-      const { approved, feedback } = await reviewStrategyResult('IdentityAgent', args.query, r, plan);
-      if (!approved && feedback) {
-        logger.info('AGENT', `[Strategy] IdentityAgent review düzeltme önerisi var`);
+type SubAgentFn = (query: string, context?: string, depth?: string) => Promise<string>;
+
+/**
+ * Strategy Agent destekli sub-agent çalıştırma — Plan → Execute → Review → (Re-execute) → Synthesize
+ *
+ * 1. Strategy Agent taktiksel plan oluşturur
+ * 2. Sub-agent planı context olarak alıp çalışır
+ * 3. Strategy Agent sonuçları review eder
+ * 4. Onaylanmazsa → sub-agent 1 kez daha çalışır (düzetleme önerileriyle)
+ * 5. Strategy Agent profesyonel rapor sentezler
+ */
+async function executeSubAgentWithStrategy(
+  agentType: 'identity' | 'media' | 'academic',
+  args: Record<string, string>,
+  agentFn: SubAgentFn,
+  agentLabel: string,
+  sessionTitle: string,
+): Promise<string> {
+  // --- FAZ 1: PLAN ---
+  const plan = await createStrategyPlan(agentType, args.query, args.context);
+  const planContext = plan ? `\n\n[STRATEJİ PLANI — Bu plana göre araştır]:\n${plan}` : '';
+
+  // --- FAZ 2: EXECUTE ---
+  let result = await agentFn(args.query, (args.context || '') + planContext, args.depth);
+
+  // --- FAZ 3: REVIEW + optional RE-EXECUTE ---
+  let reviewFeedback = '';
+  if (result.length > 200) {
+    const { approved, feedback } = await reviewStrategyResult(agentLabel, args.query, result, plan);
+    reviewFeedback = feedback;
+
+    if (!approved && feedback && !feedback.includes('CİDDİ_SORUN')) {
+      // Düzeltme önerileriyle 1 kez daha çalıştır
+      emitProgress(`🔄 Strategy önerileriyle ${agentLabel} tekrar çalışıyor...`);
+      const correctionContext = (args.context || '') + planContext +
+        `\n\n[ÖNCEKİ ARAŞTIRMA SONUCU — DÜZELTMELERİ UYGULA]:\n${result.slice(0, 8000)}` +
+        `\n\n[STRATEJİ DENETİMİ — BU SORUNLARI DÜZELT]:\n${feedback.slice(0, 3000)}`;
+      const reResult = await agentFn(args.query, correctionContext, args.depth);
+
+      // İkinci sonuç anlamlıysa kullan
+      if (reResult.length > 200) {
+        result = reResult;
+        // İkinci turun sonunda tekrar review yapma — sonsuz döngüyü önle
+        logger.info('AGENT', `[Strategy] ${agentLabel} 2. tur tamamlandı (${(reResult.length / 1024).toFixed(1)}KB)`);
       }
     }
-    setReportContentBuffer(r);
-    try {
-      const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
-      await mkdir(sessionDir, { recursive: true });
-      const header = `# Kimlik Araştırması Oturum Dosyası\n\n**Sorgu:** ${args.query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`;
-      await writeFile(path.join(sessionDir, 'identity-last-session.md'), header + r, 'utf-8');
-    } catch { /* sessizce geç */ }
-    saveToObsidianDirect('IdentityAgent', args.query, r)
-    return truncateSubAgentResponse(r, 'IdentityAgent');
+  }
+
+  // --- FAZ 4: SYNTHESIZE — profesyonel rapor ---
+  let finalReport = result;
+  if (result.length > 500) {
+    finalReport = await synthesizeReport(agentLabel, args.query, result, reviewFeedback);
+  }
+
+  // --- Kaydet ---
+  setReportContentBuffer(finalReport);
+  try {
+    const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
+    await mkdir(sessionDir, { recursive: true });
+    const sessionFile = `${agentType}-last-session.md`;
+    const header = `# ${sessionTitle} Oturum Dosyası\n\n**Sorgu:** ${args.query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`;
+    await writeFile(path.join(sessionDir, sessionFile), header + finalReport, 'utf-8');
+  } catch { /* sessizce geç */ }
+  saveToObsidianDirect(agentLabel, args.query, finalReport);
+
+  return truncateSubAgentResponse(finalReport, agentLabel);
+}
+
+async function supervisorExecuteTool(name: string, args: Record<string, string>): Promise<string> {
+  if (name === 'ask_identity_agent') {
+    return await executeSubAgentWithStrategy('identity', args, runIdentityAgent, 'IdentityAgent', 'Kimlik Araştırması');
   } else if (name === 'ask_media_agent') {
-    const plan = await createStrategyPlan('media', args.query, args.context);
-    const planContext = plan ? `\n\n[STRATEJİ PLANI — Bu plana göre araştır]:\n${plan}` : '';
-    const r = await runMediaAgent(args.query, (args.context || '') + planContext, args.depth);
-    if (r.length > 200) {
-      await reviewStrategyResult('MediaAgent', args.query, r, plan);
-    }
-    setReportContentBuffer(r);
-    try {
-      const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
-      await mkdir(sessionDir, { recursive: true });
-      const header = `# Medya Araştırması Oturum Dosyası\n\n**Sorgu:** ${args.query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`;
-      await writeFile(path.join(sessionDir, 'media-last-session.md'), header + r, 'utf-8');
-    } catch { /* sessizce geç */ }
-    saveToObsidianDirect('MediaAgent', args.query, r)
-    return truncateSubAgentResponse(r, 'MediaAgent');
+    return await executeSubAgentWithStrategy('media', args, runMediaAgent, 'MediaAgent', 'Medya Araştırması');
   } else if (name === 'ask_academic_agent') {
-    const plan = await createStrategyPlan('academic', args.query, args.context);
-    const planContext = plan ? `\n\n[STRATEJİ PLANI — Bu plana göre araştır]:\n${plan}` : '';
-    const r = await runAcademicAgent(args.query, (args.context || '') + planContext, args.depth);
-    if (r.length > 200) {
-      await reviewStrategyResult('AcademicAgent', args.query, r, plan);
-    }
-    setReportContentBuffer(r);
-    try {
-      const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
-      await mkdir(sessionDir, { recursive: true });
-      const sessionFile = path.join(sessionDir, 'academic-last-session.md');
-      const header = `# Akademik Araştırma Oturum Dosyası\n\n**Sorgu:** ${args.query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`;
-      await writeFile(sessionFile, header + r, 'utf-8');
-    } catch { /* sessizce geç */ }
-    saveToObsidianDirect('AcademicAgent', args.query, r)
-    return truncateSubAgentResponse(r, 'AcademicAgent');
+    return await executeSubAgentWithStrategy('academic', args, runAcademicAgent, 'AcademicAgent', 'Akademik Araştırma');
   } else if (name === 'read_session_file') {
     try {
       const sessionDir = path.resolve(__dirname, '../../.osint-sessions');

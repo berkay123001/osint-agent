@@ -11,10 +11,14 @@ const client = new OpenAI({
 const STRATEGY_MODEL = 'deepseek/deepseek-v3.2-speciale';
 
 /**
- * Strategy Agent — sub-agent çalışmadan önce plan, çalıştıktan sonra review yapar.
+ * Strategy Agent — 3 aşamalı çalışır:
+ *   1. PLAN  — sub-agent çalışmadan önce taktiksel plan
+ *   2. REVIEW — sub-agent bitince kalite denetimi + yeterlilik değerlendirmesi
+ *   3. SYNTHESIZE — onaylı verilerden profesyonel final rapor
+ *
  * Tool çağırmaz, sadece derin düşünür. Supervisor'dan farkı:
- * - Supervisor: genel koordinasyon, routing, rapor
- * - Strategy: taktiksel planlama, sub-agent'a yol çizme, sonuç denetleme
+ * - Supervisor: genel koordinasyon, routing, kullanıcı muhabbeti
+ * - Strategy: taktiksel planlama, sub-agent denetleme, rapor sentezi
  */
 
 const PLANNING_PROMPT = `Sen bir OSINT Strateji Uzmanısın. Görevin: araştırma hedefine göre sub-agent'a detaylı bir araştırma planı yazmak.
@@ -31,20 +35,59 @@ Plan kısa ve net olsun — sub-agent bunu context olarak alacak. Madde madde ya
 
 const REVIEW_PROMPT = `Sen bir OSINT Kalite Denetçisisin. Sub-agent'ın araştırma sonuçlarını inceliyorsun.
 
-Kontrol listesi:
+İKİ AŞAMALI DEĞERLENDİRME YAP:
+
+## AŞAMA 1: Kalite Kontrol (her zaman yap)
 1. **Veri doğruluğu**: Tool çıktısında olmayan bilgi raporda var mı? (hallucination)
 2. **Sayılar**: Repo/follower/sayılar tool çıktısıyla eşleşiyor mu?
 3. **Kişi eşleşmesi**: Bulunan profiller gerçekten hedef kişiye mi ait? İsim/kanıt uyumu var mı?
 4. **Login/hata durumu**: Erişilemeyen profiller "incelendi" olarak sunulmuş mu?
 5. **Kanıtsız bağlantılar**: İki profil arasında somut kanıt olmadan "aynı kişi" denmiş mi?
-6. **Eksik araştırma**: Gözden kaçırılmış bariz platformlar veya username varyasyonları var mı?
 
-Eğer sorun bulursan:
-- Hangi bilginin yanlış/şüpheli olduğunu açıkla
-- Doğrusunun ne olması gerektiğini söyle
-- Ek kontrol öner (hangi araçla ne yapılmalı)
+## AŞAMA 2: Yeterlilik Değerlendirmesi (kritik)
+Araştırma yeterli mi yoksa eksik mi? Şunları kontrol et:
+- Temel platformlar tarandı mı? (GitHub, Twitter/X, LinkedIn, Instagram, ResearchGate vb.)
+- Username varyasyonları denendi mi?
+- Çapraz doğrulama yapıldı mı?
+- Hedef kişiye özgü bilgiler (kurum, lokasyon) doğrulandı mı?
 
-Eğer sonuç temizse: "SONUÇ TEMİZ — onaylıyorum" yaz ve kısa bir özet ver.`;
+## ÇIKTI FORMATI
+
+Eğer sonuç temiz ve yeterliyse:
+SONUÇ TEMİZ — onaylıyorum
+[2-3 cümlelik özet]
+
+Eğer sorunlar varsa ama düzeltilebilir:
+[SORUN_AÇIKLAMASI]
+DÜZELTME ÖNERİLERİ:
+- [spesifik düzeltme 1 — hangi araçla ne yapılacak]
+- [spesifik düzeltme 2]
+- ...
+
+Eğer sonuç ciddi halüsinasyon içeriyorsa:
+CİDDİ_SORUN
+- [sorun 1]
+- [sorun 2]
+DÜZELTME: [sub-agent'ın ne yapması gerektiği]`;
+
+const SYNTHESIS_PROMPT = `Sen bir OSINT Rapor Sentez Uzmanısın. Sub-agent'ın ham araştırma sonucunu profesyonel, temiz ve güvenilir bir rapora dönüştürüyorsun.
+
+KURALLAR:
+1. Sub-agent çıktısındaki HER somut iddia için kaynak kontrolü yap:
+   - Tool çıktısında açıkça geçen bilgi → koru, kaynak etiketle
+   - Kaynağı belirsiz veya tahmine dayalı → SİL
+   - Sayılar (repo, follower, atıf) → tool çıktısıyla eşleşmiyorsa SİL
+2. Birden fazla farklı kişi tespit edildiyse → AYRI AYRI bölümler halinde sun
+3. Doğrulanmamış bilgileri ⚠️ ile işaretle, doğrulanmışları ✅ ile
+4. Login ekranı/erişilemeyen profiller → rapordan SİL
+5. Tekrar eden bilgileri birleştir, deduplikasyon yap
+
+RAPOR FORMATI:
+- Temiz Markdown, tablolar ve listeler
+- Her bölümde kaynak referansı
+- Güvenilirlik etiketleri
+- Profesyonel ve okunabilir yapı
+- Sonuç/özet bölümü ile bitir`;
 
 /**
  * Sub-agent çalışmadan önce stratejik plan oluştur
@@ -83,14 +126,15 @@ export async function createStrategyPlan(
     }
     return '';
   } catch (err) {
-    // Fallback: strategy plan başarısız → sub-agent plansız devam eder
     logger.warn('AGENT', `[Strategy-Plan] Hata: ${(err as Error).message}`);
     return '';
   }
 }
 
 /**
- * Sub-agent tamamlandıktan sonra sonuçları review et
+ * Sub-agent tamamlandıktan sonra sonuçları review et.
+ * Onaylanmazsa ve reRunFn verilmişse, sub-agent'ı düzeltme önerileriyle tekrar çalıştırır.
+ * Maksimum 1 tekrar döngüsüne izin verilir (API maliyet kontrolü).
  */
 export async function reviewStrategyResult(
   agentType: string,
@@ -123,5 +167,45 @@ export async function reviewStrategyResult(
   } catch (err) {
     logger.warn('AGENT', `[Strategy-Review] Hata: ${(err as Error).message}`);
     return { approved: true, feedback: '' };
+  }
+}
+
+/**
+ * Sub-agent'ın ham sonucunu profesyonel rapora dönüştürür.
+ * Halüsinasyonları temizler, deduplikasyon yapar, kaynak referansları ekler.
+ */
+export async function synthesizeReport(
+  agentType: string,
+  query: string,
+  result: string,
+  reviewFeedback?: string,
+): Promise<string> {
+  emitProgress(`🧠 Strategy Agent rapor sentezliyor (${agentType})...`);
+
+  try {
+    const userContent = reviewFeedback
+      ? `Agent: ${agentType}\nGörev: ${query}\n\nKalite Denetimi Sonucu:\n${reviewFeedback.slice(0, 3000)}\n\nSub-agent Ham Sonuç:\n${result.slice(0, 12000)}`
+      : `Agent: ${agentType}\nGörev: ${query}\n\nSub-agent Ham Sonuç:\n${result.slice(0, 15000)}`;
+
+    const response = (await client.chat.completions.create({
+      model: STRATEGY_MODEL,
+      messages: [
+        { role: 'system', content: SYNTHESIS_PROMPT },
+        { role: 'user', content: userContent },
+      ],
+      max_tokens: 8192,
+    })) as ChatCompletion;
+
+    const synthesized = response.choices?.[0]?.message?.content?.trim() ?? '';
+    if (synthesized.length > 100) {
+      logger.info('AGENT', `[Strategy-Synthesize] ${agentType} → ${synthesized.slice(0, 150)}...`);
+      emitProgress(`🧠 Profesyonel rapor sentezlendi (${(synthesized.length / 1024).toFixed(1)}KB)`);
+      return synthesized;
+    }
+    // Sentez başarısız → ham sonucu döndür
+    return result;
+  } catch (err) {
+    logger.warn('AGENT', `[Strategy-Synthesize] Hata: ${(err as Error).message}`);
+    return result;
   }
 }
