@@ -2,6 +2,14 @@ import OpenAI from 'openai';
 import type { ChatCompletion } from 'openai/resources/chat/completions';
 import { logger } from '../lib/logger.js';
 import { emitProgress } from '../lib/progressEmitter.js';
+import { appendFile, mkdir } from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const SESSION_DIR = path.resolve(__dirname, '../../.osint-sessions');
+const STRATEGY_LOG_FILE = path.join(SESSION_DIR, 'strategy-log.md');
 
 const client = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -80,11 +88,36 @@ export class StrategySession {
   private history: OpenAI.Chat.ChatCompletionMessageParam[] = [];
   private agentType: 'identity' | 'media' | 'academic';
   private query: string;
+  private logEntries: string[] = [];
 
   constructor(agentType: 'identity' | 'media' | 'academic', query: string) {
     this.agentType = agentType;
     this.query = query;
     this.history.push({ role: 'system', content: SYSTEM_PROMPT });
+    this.logEntries.push(`# Strategy Agent Oturum\n**Agent:** ${agentType}\n**Görev:** ${query}\n**Başlangıç:** ${new Date().toISOString()}\n\n---\n`);
+  }
+
+  /** TUI'ye ve strategy-log dosyasına yaz */
+  private logPhase(phase: string, content: string): void {
+    const timestamp = new Date().toLocaleTimeString('tr-TR');
+    // TUI'ye gönder — emitProgress ile (kullanıcı log panelinde görecek)
+    const lines = content.split('\n').filter(l => l.trim());
+    const preview = lines.slice(0, 5).join('\n  ');
+    const suffix = lines.length > 5 ? `\n  ... (+${lines.length - 5} satır daha)` : '';
+    emitProgress(`🧠 [Strategy-${phase}] ${timestamp}\n  ${preview}${suffix}`);
+
+    // Dosya logu — tam içerik
+    this.logEntries.push(`## ${phase} (${timestamp})\n\n${content}\n\n---\n`);
+  }
+
+  /** Session sonunda log dosyasına yaz */
+  async flushLog(): Promise<void> {
+    try {
+      await mkdir(SESSION_DIR, { recursive: true });
+      await appendFile(STRATEGY_LOG_FILE, this.logEntries.join('\n'), 'utf-8');
+    } catch {
+      // dosya yazma hatası kritik değil
+    }
   }
 
   /**
@@ -104,10 +137,8 @@ export class StrategySession {
       const plan = response ?? '';
 
       if (plan.length > 50) {
-        // Kendi yanıtını history'ye ekle — bir sonraki çağrıda hatırlayacak
         this.history.push({ role: 'assistant', content: plan });
-        logger.info('AGENT', `[Strategy-Plan] ${this.agentType} → ${plan.slice(0, 200)}...`);
-        emitProgress(`🧠 Strateji planı hazır (${plan.split('\n').length} satır)`);
+        this.logPhase('PLAN', plan);
         return plan;
       }
       return '';
@@ -134,11 +165,8 @@ export class StrategySession {
       const review = response ?? '';
       const approved = review.includes('SONUÇ TEMİZ') || review.toLowerCase().includes('onaylıyorum');
 
-      // Review'u da history'ye ekle — synthesis fazı hatırlayacak
       this.history.push({ role: 'assistant', content: review });
-
-      logger.info('AGENT', `[Strategy-Review] ${this.agentType} → ${approved ? 'ONAYLANDI' : 'DÜZELTME GEREKLİ'}`);
-      emitProgress(`🧠 Review: ${approved ? 'Onaylandı' : 'Düzeltme gerekli'}`);
+      this.logPhase(approved ? 'REVIEW ✅' : 'REVIEW ❌', review);
 
       return { approved, feedback: review };
     } catch (err) {
@@ -174,13 +202,15 @@ export class StrategySession {
 
       if (synthesized.length > 100) {
         this.history.push({ role: 'assistant', content: synthesized });
-        logger.info('AGENT', `[Strategy-Synthesize] ${this.agentType} → ${synthesized.slice(0, 150)}...`);
-        emitProgress(`🧠 Profesyonel rapor sentezlendi (${(synthesized.length / 1024).toFixed(1)}KB)`);
+        this.logPhase('SYNTHESIZE', `Girdi: ${(result.length / 1024).toFixed(1)}KB ham → Çıktı: ${(synthesized.length / 1024).toFixed(1)}KB sentezlenmiş rapor`);
+        await this.flushLog();
         return synthesized;
       }
+      await this.flushLog();
       return result;
     } catch (err) {
       logger.warn('AGENT', `[Strategy-Synthesize] Hata: ${(err as Error).message}`);
+      await this.flushLog();
       return result;
     }
   }
@@ -189,8 +219,6 @@ export class StrategySession {
    * Ortak LLM çağrısı — her zaman session history'yi gönderir.
    */
   private async callLLM(): Promise<string | undefined> {
-    // History büyümesini kontrol et — en fazla ~40K token context
-    // 3 faz sonunda ~6-8 mesaj olur, problem değil
     const response = (await client.chat.completions.create({
       model: STRATEGY_MODEL,
       messages: this.history,
