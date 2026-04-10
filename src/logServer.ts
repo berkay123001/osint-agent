@@ -13,15 +13,32 @@ const BUFFER_SIZE = 2000;
 interface LogEntry {
   ts: string;
   msg: string;
-  detail?: string;   // tam araç çıktısı (opsiyonel)
+  agentCtx?: string;  // hangi ajanın içinde üretildi (identity/media/academic/strategy/supervisor)
+  detail?: string;    // tam araç çıktısı (opsiyonel)
   hasDetail?: boolean;
 }
 
 const logBuffer: LogEntry[] = [];
 const clients = new Set<http.ServerResponse>();
 
+// Agent context tracker — hangi ajanın içindeyiz?
+let currentAgentCtx: string | null = null;
+
 // pending detail: son gönderilen ✓ satırına bağlamak için
 let pendingDetailKey: string | null = null;
+
+function detectAgentCtx(msg: string): void {
+  // Ajan başladığında context aç
+  if (msg.includes('IdentityAgent →') || msg.includes('🕵')) currentAgentCtx = 'identity';
+  else if (msg.includes('MediaAgent →') || (msg.includes('📸') && msg.includes('→'))) currentAgentCtx = 'media';
+  else if (msg.includes('AcademicAgent →') || (msg.includes('📚') && msg.includes('→'))) currentAgentCtx = 'academic';
+  else if (msg.includes('🧠') && (msg.includes('Strategy') || msg.includes('[Strategy'))) currentAgentCtx = 'strategy';
+  else if (msg.includes('Supervisor') && msg.includes('→')) currentAgentCtx = 'supervisor';
+  // Ajan bittiğinde context kapat
+  if (msg.includes('tamamlandı') || msg.includes('[DONE]') || msg.includes('sentezlendi')) {
+    currentAgentCtx = null;
+  }
+}
 
 function broadcast(entry: LogEntry): void {
   if (logBuffer.length >= BUFFER_SIZE) logBuffer.shift();
@@ -34,7 +51,9 @@ function broadcast(entry: LogEntry): void {
 
 progressEmitter.on('progress', (msg: string) => {
   const ts = new Date().toTimeString().slice(0, 8);
+  detectAgentCtx(msg);
   const entry: LogEntry = { ts, msg };
+  if (currentAgentCtx) entry.agentCtx = currentAgentCtx;
   // ✓ satırı → bir sonraki detail event'i bu satıra bağlanacak
   if (msg.trimStart().startsWith('✓ ')) {
     pendingDetailKey = ts + msg.slice(0, 60);
@@ -251,8 +270,31 @@ const HTML = `<!DOCTYPE html>
     margin-left: 6px;
     font-family: inherit;
     flex-shrink: 0;
+    transition: background 0.1s;
   }
   .expand-btn:hover { background: var(--bg3); }
+
+  .badge {
+    display: inline-block;
+    background: rgba(255,255,255,0.12);
+    color: inherit;
+    font-size: 9px;
+    padding: 0 5px;
+    border-radius: 10px;
+    margin-left: 4px;
+    min-width: 16px;
+    text-align: center;
+    vertical-align: middle;
+  }
+
+  /* Araç satırları context ajanının rengini alır ama biraz soluk */
+  .line-identity .msg { color: var(--identity); }
+  .line-media    .msg { color: var(--media); }
+  .line-academic .msg { color: var(--academic); }
+
+  /* Context tool satırları girintili */
+  .log-line.indented { padding-left: 32px; }
+  .log-line.indented .ts { opacity: 0.6; }
 
   .tool-detail {
     display: none;
@@ -322,13 +364,13 @@ const HTML = `<!DOCTYPE html>
 <div class="toolbar">
   <span class="filter-label">FİLTRE:</span>
   <button class="btn active" onclick="setFilter('all', this)">Tümü</button>
-  <button class="btn" onclick="setFilter('tool', this)">🔧 Araçlar</button>
-  <button class="btn" onclick="setFilter('strategy', this)">🧠 Strateji</button>
-  <button class="btn" onclick="setFilter('identity', this)">🕵️ Kimlik</button>
-  <button class="btn" onclick="setFilter('media', this)">📸 Medya</button>
-  <button class="btn" onclick="setFilter('academic', this)">📚 Akademik</button>
-  <button class="btn" onclick="setFilter('error', this)">❌ Hatalar</button>
-  <button class="btn" onclick="setFilter('success', this)">✅ Başarılı</button>
+  <button class="btn" onclick="setFilter('tool', this)">🔧 Araçlar<span class="badge" id="badge-tool"></span></button>
+  <button class="btn" onclick="setFilter('strategy', this)">🧠 Strateji<span class="badge" id="badge-strategy"></span></button>
+  <button class="btn" onclick="setFilter('identity', this)">🕵️ Kimlik<span class="badge" id="badge-identity"></span></button>
+  <button class="btn" onclick="setFilter('media', this)">📸 Medya<span class="badge" id="badge-media"></span></button>
+  <button class="btn" onclick="setFilter('academic', this)">📚 Akademik<span class="badge" id="badge-academic"></span></button>
+  <button class="btn" onclick="setFilter('error', this)">❌ Hatalar<span class="badge" id="badge-error"></span></button>
+  <button class="btn" onclick="setFilter('success', this)">✅ Başarılı<span class="badge" id="badge-success"></span></button>
   <div class="search-wrap">
     <input type="text" id="search" placeholder="Logda ara..." oninput="applySearch(this.value)">
   </div>
@@ -370,23 +412,33 @@ const HTML = `<!DOCTYPE html>
   const statusText = document.getElementById('status-text');
   const btnScroll = document.getElementById('btn-scroll');
 
-  function categorize(msg) {
-    if (msg.includes('🔧') || msg.includes('✓ ')) return 'tool';
-    if (msg.includes('✅') || msg.includes('[DONE]') || msg.includes('tamamlandı')) return 'success';
-    if (msg.includes('❌') || msg.includes('Error') || msg.includes('hata') || msg.includes('Hata')) return 'error';
-    if (msg.includes('🧠') || msg.includes('Strategy') || msg.includes('Strateji') || msg.includes('[Strategy')) return 'strategy';
-    if (msg.includes('⚠️') || msg.includes('warn') || msg.includes('Uyarı')) return 'warn';
-    if (msg.includes('🕵') || msg.includes('IdentityAgent') || msg.includes('Kimlik')) return 'identity';
-    if (msg.includes('📸') || msg.includes('MediaAgent') || msg.includes('Medya') || msg.includes('Media')) return 'media';
-    if (msg.includes('📚') || msg.includes('AcademicAgent') || msg.includes('Akademik')) return 'academic';
-    if (msg.includes('🔄') || msg.includes('tekrar') || msg.includes('retry') || msg.includes('Retry')) return 'retry';
-    if (msg.includes('Supervisor') || msg.includes('supervisor') || msg.includes('🌐 Koordinatör')) return 'supervisor';
+  function categorize(msg, agentCtx) {
+    // Önce mesaj içeriği kontrol et
+    if (msg.includes('❌') || msg.includes('Error:') || (msg.includes('hata') && !msg.includes('kapat'))) return 'error';
+    if (msg.includes('🧠') || msg.includes('[Strategy') || msg.includes('Strategy Agent')) return 'strategy';
+    if (msg.includes('⚠️')) return 'warn';
+    if (msg.includes('🕵') || msg.includes('IdentityAgent')) return 'identity';
+    if (msg.includes('MediaAgent')) return 'media';
+    if (msg.includes('AcademicAgent')) return 'academic';
+    if (msg.includes('Supervisor →') || msg.includes('Koordinatör')) return 'supervisor';
+    if (msg.includes('✅') || msg.includes('tamamlandı')) return 'success';
+    if (msg.includes('🔄') || msg.includes('tekrar çalışıyor')) return 'retry';
+    // Tool satırları → agentCtx varsa o kategoride göster
+    if (msg.trimStart().startsWith('🔧') || msg.trimStart().startsWith('✓ ')) {
+      if (agentCtx) return agentCtx;
+      return 'tool';
+    }
+    if (agentCtx) return agentCtx;
     return 'default';
   }
 
-  function matchesFilter(cat) {
+  function matchesFilter(cat, agentCtx) {
     if (currentFilter === 'all') return true;
-    return cat === currentFilter;
+    if (currentFilter === 'tool') return cat === 'tool' || (agentCtx == null && (cat === 'tool'));
+    if (currentFilter === 'success') return cat === 'success';
+    if (currentFilter === 'error') return cat === 'error';
+    // Ajan filtreleri: kendi satırları + o ajan içindeki tool çağrıları
+    return cat === currentFilter || agentCtx === currentFilter;
   }
 
   function matchesSearch(msg) {
@@ -415,14 +467,18 @@ const HTML = `<!DOCTYPE html>
   }
 
   function buildLine(entry, idx) {
-    const cat = categorize(entry.msg);
-    if (!matchesFilter(cat) || !matchesSearch(entry.msg)) return null;
+    const cat = categorize(entry.msg, entry.agentCtx);
+    if (!matchesFilter(cat, entry.agentCtx) || !matchesSearch(entry.msg)) return null;
 
     const wrap = document.createElement('div');
     wrap.dataset.idx = String(idx);
 
     const div = document.createElement('div');
-    div.className = 'log-line line-' + cat;
+    // Tool satırları context rengini alır ama girintili görünür
+    const lineCat = (entry.agentCtx && (entry.msg.trimStart().startsWith('🔧') || entry.msg.trimStart().startsWith('✓ ')))
+      ? entry.agentCtx
+      : cat;
+    div.className = 'log-line line-' + lineCat;
     div.dataset.cat = cat;
     div.dataset.msg = entry.msg;
 
@@ -432,7 +488,7 @@ const HTML = `<!DOCTYPE html>
       '<span class="msg">' + highlightSearch(entry.msg) + '</span>' +
       (hasDetail
         ? '<button class="expand-btn" onclick="toggleDetail(this)">▶ detay</button>'
-        : (entry.hasDetail === false ? '<button class="expand-btn" onclick="toggleDetail(this)" style="opacity:0.4" disabled>⏳</button>' : ''));
+        : (entry.hasDetail === false ? '<button class="expand-btn" style="opacity:0.4" disabled>⏳</button>' : ''));
     wrap.appendChild(div);
 
     if (hasDetail) {
@@ -460,8 +516,23 @@ const HTML = `<!DOCTYPE html>
     const el = buildLine(entry, idx);
     if (el) logArea.appendChild(el);
 
+    // Kategori sayışlarını güncelle
+    const cat = categorize(entry.msg, entry.agentCtx);
+    catCounts[cat] = (catCounts[cat] || 0) + 1;
+    updateBadge(cat);
+
     lineCount.textContent = allLines.length + ' satır';
     if (autoScroll) logArea.scrollTop = logArea.scrollHeight;
+  }
+
+  // Filtre butonlarındaki sayı rozetleri
+  const catCounts = {};
+  function updateBadge(cat) {
+    const mapToBtn = { tool: 'tool', success: 'success', error: 'error', identity: 'identity', media: 'media', academic: 'academic', strategy: 'strategy' };
+    const btnCat = mapToBtn[cat];
+    if (!btnCat) return;
+    const badge = document.getElementById('badge-' + btnCat);
+    if (badge) badge.textContent = catCounts[cat] || '';
   }
 
   function patchDetail(idx, detail) {
@@ -520,6 +591,8 @@ const HTML = `<!DOCTYPE html>
 
   function clearLogs() {
     allLines = [];
+    Object.keys(catCounts).forEach(k => delete catCounts[k]);
+    document.querySelectorAll('.badge').forEach(b => { b.textContent = ''; });
     rebuildLog();
     lineCount.textContent = '0 satır';
   }
