@@ -139,6 +139,7 @@ export class StrategySession {
       if (plan.length > 50) {
         this.history.push({ role: 'assistant', content: plan });
         this.logPhase('PLAN', plan);
+        await this.flushLog();
         return plan;
       }
       return '';
@@ -167,6 +168,7 @@ export class StrategySession {
 
       this.history.push({ role: 'assistant', content: review });
       this.logPhase(approved ? 'REVIEW ✅' : 'REVIEW ❌', review);
+      await this.flushLog();
 
       return { approved, feedback: review };
     } catch (err) {
@@ -203,6 +205,7 @@ export class StrategySession {
       if (synthesized.length > 100) {
         this.history.push({ role: 'assistant', content: synthesized });
         this.logPhase('SYNTHESIZE', `Girdi: ${(result.length / 1024).toFixed(1)}KB ham → Çıktı: ${(synthesized.length / 1024).toFixed(1)}KB sentezlenmiş rapor`);
+        await this.flushLog();
         return synthesized;
       }
       return result;
