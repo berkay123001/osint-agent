@@ -21,6 +21,7 @@
     "chat:old": "tsx src/chat.ts",
     "agent:chat": "tsx src/tools/codingAgentChat.ts",
     "graph": "tsx src/graphServer.ts",
+    "web": "tsx src/webServer.ts",
     "build": "tsc",
     "postbuild": "chmod +x dist/cli.js",
     "test": "npm run test:unit",
