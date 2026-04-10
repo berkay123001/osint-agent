@@ -146,17 +146,22 @@ async function saveToObsidianDirect(agentLabel: string, query: string, result: s
   }
 }
 
-type SubAgentFn = (query: string, context?: string, depth?: string) => Promise<string>;
+import type { SubAgentResult } from './identityAgent.js';
+
+type SubAgentFn = (query: string, context?: string, depth?: string, existingHistory?: Message[]) => Promise<SubAgentResult>;
 
 /**
- * Strategy Agent destekli sub-agent çalıştırma — session-aware
+ * AutoGen-style sub-agent + Strategy Agent oturumu
  *
- * Tek bir StrategySession üzerinden:
- * 1. Strategy plan oluşturur (history'ye kaydedilir)
- * 2. Sub-agent planı context olarak alıp çalışır
- * 3. Strategy sonuçları review eder (planı hatırlar)
- * 4. Onaylanmazsa → sub-agent 1 kez daha çalışır
- * 5. Strategy profesyonel rapor sentezler (plan + review'u hatırlar)
+ * Akış:
+ * 1. Strategy plan oluşturur
+ * 2. Sub-agent planla çalışır → history döner
+ * 3. Strategy review eder (kendi planını hatırlar)
+ * 4. Onaylanmazsa → Strategy feedback'i sub-agent history'ye inject edilir
+ *    Sub-agent AYNI history ile DEVAM EDER (baştan başlamaz!)
+ * 5. Strategy profesyonel rapor sentezler
+ *
+ * Max 1 re-execution round (API maliyeti kontrolü).
  */
 async function executeSubAgentWithStrategy(
   agentType: 'identity' | 'media' | 'academic',
@@ -172,37 +177,50 @@ async function executeSubAgentWithStrategy(
   const plan = await strategy.plan(args.context);
   const planContext = plan ? `\n\n[STRATEJİ PLANI — Bu plana göre araştır]:\n${plan}` : '';
 
-  // --- FAZ 2: EXECUTE ---
-  let result = await agentFn(args.query, (args.context || '') + planContext, args.depth);
+  // --- FAZ 2: EXECUTE (sub-agent history'sini al) ---
+  const { response: result, history: agentHistory } = await agentFn(
+    args.query, (args.context || '') + planContext, args.depth,
+  );
 
-  // --- FAZ 3: REVIEW + optional RE-EXECUTE (Strategy planı hatırlar) ---
+  // --- FAZ 3: REVIEW + optional CONTINUE (AutoGen-style) ---
+  let finalResult = result;
   let reviewFeedback = '';
   if (result.length > 200) {
     const { approved, feedback } = await strategy.review(result);
     reviewFeedback = feedback;
 
     if (!approved && feedback && !feedback.includes('CİDDİ_SORUN')) {
-      // Düzeltme önerileriyle 1 kez daha çalıştır
-      emitProgress(`🔄 Strategy önerileriyle ${agentLabel} tekrar çalışıyor...`);
-      const correctionContext = (args.context || '') + planContext +
-        `\n\n[ÖNCEKİ ARAŞTIRMA SONUCU — DÜZELTMELERİ UYGULA]:\n${result.slice(0, 8000)}` +
-        `\n\n[STRATEJİ DENETİMİ — BU SORUNLARI DÜZELT]:\n${feedback.slice(0, 3000)}`;
-      const reResult = await agentFn(args.query, correctionContext, args.depth);
+      // Sub-agent'ı BAŞTAN BAŞLATMA — aynı history'ye feedback inject et
+      emitProgress(`🔄 Strategy feedback ${agentLabel} history'ye inject ediliyor (devam)...`);
 
-      if (reResult.length > 200) {
-        result = reResult;
-        logger.info('AGENT', `[Strategy] ${agentLabel} 2. tur tamamlandı (${(reResult.length / 1024).toFixed(1)}KB)`);
+      agentHistory.push({
+        role: 'user',
+        content:
+          `[STRATEJİ DENETİMİ — Düzeltme Gerekli]\n\n` +
+          `Denetim sonucu:\n${feedback.slice(0, 4000)}\n\n` +
+          `Yukarıdaki sorunları düzelt. Eksik olan araçları çalıştır, hatalı bilgileri düzelt. ` +
+          `Daha önce çağırdığın araçların sonuçlarını hatırla — tekrar çağırma.`,
+      });
+
+      // Aynı history ile devam — sub-agent önceki tool sonuçlarını hatırlar
+      const { response: continuedResult } = await agentFn(
+        args.query, undefined, args.depth, agentHistory,
+      );
+
+      if (continuedResult.length > 200) {
+        finalResult = continuedResult;
+        logger.info('AGENT', `[Strategy] ${agentLabel} 2. tur (devam) tamamlandı (${(continuedResult.length / 1024).toFixed(1)}KB)`);
       }
     }
   }
 
   // --- FAZ 4: SYNTHESIZE (Strategy plan + review'u hatırlar) ---
-  let finalReport = result;
-  if (result.length > 500) {
-    finalReport = await strategy.synthesize(result, reviewFeedback);
+  let finalReport = finalResult;
+  if (finalResult.length > 500) {
+    finalReport = await strategy.synthesize(finalResult, reviewFeedback);
   }
 
-  // Strategy log'u her durumda dosyaya yaz (synthesize atlandıysa bile)
+  // Strategy log'u her durumda dosyaya yaz
   await strategy.flushLog();
   logger.info('AGENT', `[Strategy] Session ${strategy.getHistorySize()} mesaj`);
 

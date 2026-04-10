@@ -20,4 +20,5 @@ export interface AgentResult {
   finalResponse: string;
   toolCallCount: number;
   toolsUsed: Record<string, number>; // tool_name -> kaç kez çağrıldı
+  history?: Message[];               // sub-agent conversation history (AutoGen-style continuation için)
 }

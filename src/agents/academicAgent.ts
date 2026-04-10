@@ -1,4 +1,5 @@
 import type { Message, AgentConfig } from './types.js';
+import type { SubAgentResult } from './identityAgent.js';
 import { runAgentLoop } from './baseAgent.js';
 import { tools, executeTool } from '../lib/toolRegistry.js';
 import chalk from 'chalk';
@@ -92,7 +93,7 @@ const ACADEMIC_TOOLS = [
 
 export const academicAgentConfig: AgentConfig = {
   name: 'AcademicAgent',
-  model: 'deepseek/deepseek-v3.2',
+  model: 'qwen/qwen3.5-flash',
   maxToolCalls: 30,
   tools: tools.filter((t: any) => t.type === 'function' && ACADEMIC_TOOLS.includes(t.function.name)),
   executeTool: executeTool,
@@ -214,28 +215,25 @@ Alan 2020'den bu yana nasıl değişti?
 // depth → maxToolCalls çarpanı: quick=0.5x, normal=1x, deep=1.75x
 const DEPTH_MULTIPLIERS: Record<string, number> = { quick: 0.5, normal: 1, deep: 1.75 };
 
-export async function runAcademicAgent(query: string, context?: string, depth?: string): Promise<string> {
+export async function runAcademicAgent(query: string, context?: string, depth?: string, existingHistory?: Message[]): Promise<SubAgentResult> {
   const multiplier = DEPTH_MULTIPLIERS[depth ?? 'normal'] ?? 1;
   const maxToolCalls = Math.ceil((academicAgentConfig.maxToolCalls ?? 30) * multiplier);
   emitProgress(`📚 AcademicAgent → "${query.length > 120 ? query.slice(0, 117) + '...' : query}" [derinlik: ${depth ?? 'normal'}, bütçe: ${maxToolCalls}]`);
-  const history: Message[] = [
-    { role: 'system', content: academicAgentConfig.systemPrompt },
-    { role: 'user', content: context ? `Context:\n${context}\n\nAraştırma Görevi:\n${query}` : query }
-  ];
+
+  const history: Message[] = existingHistory
+    ? [...existingHistory]
+    : [
+        { role: 'system', content: academicAgentConfig.systemPrompt },
+        { role: 'user', content: context ? `Context:\n${context}\n\nAraştırma Görevi:\n${query}` : query },
+      ];
+
   const result = await runAgentLoop(history, { ...academicAgentConfig, maxToolCalls });
-  
-  // Ham bilgiyi history'den çıkar ve kaydet (Supervisor follow-up soruları için)
   await saveKnowledgeFromHistory(history, query);
-  
-  // Gerçek kullanım istatistikleri — halüsinasyona karşı
   const toolSummary = Object.entries(result.toolsUsed)
     .map(([tool, count]) => `${tool}×${count}`)
     .join(', ');
-  
   emitProgress(`✅ AcademicAgent tamamlandı [${result.toolCallCount} araç: ${toolSummary || 'yok'}]`);
-  
-  // Meta veriyi rapora ekle — Supervisor'ın özeleştiri sorusuna doğru yanıt verebilmesi için
   const meta = `\n\n---\n**[META] AcademicAgent araç istatistikleri:** ${toolSummary || 'araç kullanılmadı'} (toplam: ${result.toolCallCount})`;
-  return result.finalResponse + meta;
+  return { response: result.finalResponse + meta, history };
 }
 

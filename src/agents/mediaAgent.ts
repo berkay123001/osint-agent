@@ -1,4 +1,5 @@
 import type { Message, AgentConfig } from './types.js';
+import type { SubAgentResult } from './identityAgent.js';
 import { runAgentLoop } from './baseAgent.js';
 import { tools, executeTool } from '../lib/toolRegistry.js';
 import chalk from 'chalk';
@@ -77,7 +78,7 @@ const MEDIA_TOOLS = [
 
 export const mediaAgentConfig: AgentConfig = {
   name: 'MediaAgent',
-  model: 'deepseek/deepseek-v3.2',
+  model: 'qwen/qwen3.5-flash',
   maxToolCalls: 25,          // Context büyümesini yavaşlat — ham HTML/Markdown uzun gelir
   maxEmptyRetries: 3,        // Uzun tool zincirlerinden sonra Qwen thinking bitip boş dönebilir
   tools: tools.filter((t: any) => t.type === 'function' && MEDIA_TOOLS.includes(t.function.name)),
@@ -151,14 +152,18 @@ Hangi kaynaklar ne diyor — karşılaştırma tablosu`,
 // depth → maxToolCalls çarpanı: quick=0.5x, normal=1x, deep=1.75x
 const DEPTH_MULTIPLIERS: Record<string, number> = { quick: 0.5, normal: 1, deep: 1.75 };
 
-export async function runMediaAgent(query: string, context?: string, depth?: string): Promise<string> {
+export async function runMediaAgent(query: string, context?: string, depth?: string, existingHistory?: Message[]): Promise<SubAgentResult> {
   const multiplier = DEPTH_MULTIPLIERS[depth ?? 'normal'] ?? 1;
   const maxToolCalls = Math.ceil((mediaAgentConfig.maxToolCalls ?? 25) * multiplier);
   emitProgress(`📰 MediaAgent → "${query.length > 120 ? query.slice(0, 117) + '...' : query}" [derinlik: ${depth ?? 'normal'}, bütçe: ${maxToolCalls}]`);
-  const history: Message[] = [
-    { role: 'system', content: mediaAgentConfig.systemPrompt },
-    { role: 'user', content: context ? `Context:\n${context}\n\nTask:\n${query}` : query }
-  ];
+
+  const history: Message[] = existingHistory
+    ? [...existingHistory]
+    : [
+        { role: 'system', content: mediaAgentConfig.systemPrompt },
+        { role: 'user', content: context ? `Context:\n${context}\n\nTask:\n${query}` : query },
+      ];
+
   const result = await runAgentLoop(history, { ...mediaAgentConfig, maxToolCalls });
   await saveKnowledgeFromHistory(history, query);
   const toolSummary = Object.entries(result.toolsUsed)
@@ -166,5 +171,5 @@ export async function runMediaAgent(query: string, context?: string, depth?: str
     .join(', ');
   emitProgress(`✅ MediaAgent tamamlandı [${result.toolCallCount} araç: ${toolSummary || 'yok'}]`);
   const meta = `\n\n---\n**[META] MediaAgent araç istatistikleri:** ${toolSummary || 'araç kullanılmadı'} (toplam: ${result.toolCallCount})`;
-  return result.finalResponse + meta;
+  return { response: result.finalResponse + meta, history };
 }

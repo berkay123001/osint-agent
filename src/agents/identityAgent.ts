@@ -75,7 +75,7 @@ const IDENTITY_TOOLS = [
 
 export const identityAgentConfig: AgentConfig = {
   name: 'IdentityAgent',
-  model: 'deepseek/deepseek-v3.2',
+  model: 'qwen/qwen3.5-flash',
   tools: tools.filter((t: any) => t.type === 'function' && IDENTITY_TOOLS.includes(t.function.name)),
   executeTool: executeTool,
   maxToolCalls: 40,
@@ -159,14 +159,24 @@ Hangi araçlar çağrıldı, ne bulundu`
 // depth → maxToolCalls çarpanı: quick=0.5x, normal=1x, deep=1.75x
 const DEPTH_MULTIPLIERS: Record<string, number> = { quick: 0.5, normal: 1, deep: 1.75 };
 
-export async function runIdentityAgent(query: string, context?: string, depth?: string): Promise<string> {
+export interface SubAgentResult {
+  response: string;
+  history: Message[];
+}
+
+export async function runIdentityAgent(query: string, context?: string, depth?: string, existingHistory?: Message[]): Promise<SubAgentResult> {
   const multiplier = DEPTH_MULTIPLIERS[depth ?? 'normal'] ?? 1;
   const maxToolCalls = Math.ceil((identityAgentConfig.maxToolCalls ?? 30) * multiplier);
   emitProgress(`🕵️‍♂️ IdentityAgent → "${query.length > 120 ? query.slice(0, 117) + '...' : query}" [derinlik: ${depth ?? 'normal'}, bütçe: ${maxToolCalls}]`);
-  const history: Message[] = [
-    { role: 'system', content: identityAgentConfig.systemPrompt },
-    { role: 'user', content: context ? `Context:\n${context}\n\nTask:\n${query}` : query }
-  ];
+
+  // Mevcut history varsa devam et (AutoGen-style), yoksa yeni başlat
+  const history: Message[] = existingHistory
+    ? [...existingHistory]
+    : [
+        { role: 'system', content: identityAgentConfig.systemPrompt },
+        { role: 'user', content: context ? `Context:\n${context}\n\nTask:\n${query}` : query },
+      ];
+
   const result = await runAgentLoop(history, { ...identityAgentConfig, maxToolCalls });
   await saveKnowledgeFromHistory(history, query);
   const toolSummary = Object.entries(result.toolsUsed)
@@ -174,5 +184,5 @@ export async function runIdentityAgent(query: string, context?: string, depth?: 
     .join(', ');
   emitProgress(`✅ IdentityAgent tamamlandı [${result.toolCallCount} araç: ${toolSummary || 'yok'}]`);
   const meta = `\n\n---\n**[META] IdentityAgent araç istatistikleri:** ${toolSummary || 'araç kullanılmadı'} (toplam: ${result.toolCallCount})`;
-  return result.finalResponse + meta;
+  return { response: result.finalResponse + meta, history };
 }

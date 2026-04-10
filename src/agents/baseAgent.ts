@@ -118,6 +118,7 @@ export async function runAgentLoop(
             finalResponse: '⚠️ Bu sorgu içerik filtresine takıldı. Soruyu farklı bir şekilde ifade etmeyi veya konuyu değiştirmeyi dene.',
             toolsUsed,
             toolCallCount,
+            history,
           };
         }
       }
@@ -331,6 +332,7 @@ export async function runAgentLoop(
                 finalResponse: 'Model yanıt üretilemedi. Toplanan veriler session dosyasına kaydedildi — `.osint-sessions/` klasörüne bakabilirsin.',
                 toolCallCount,
                 toolsUsed,
+                history,
               }
             }
             logger.warn('AGENT', `[${config.name}] JSON hatası + araç devre dışı — metin yanıt zorlanıyor (${forceTextRetries}/1).`)
@@ -468,6 +470,7 @@ export async function runAgentLoop(
         finalResponse: finalText,
         toolCallCount,
         toolsUsed,
+        history,
       };
     }
 
