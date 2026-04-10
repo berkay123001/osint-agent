@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import type { ChatCompletion } from 'openai/resources/chat/completions';
 import { sanitizeHistoryForProvider, normalizeAssistantMessage, normalizeToolContent } from '../lib/chatHistory.js';
 import { logger } from '../lib/logger.js';
-import { emitProgress } from '../lib/progressEmitter.js';
+import { emitProgress, emitToolDetail } from '../lib/progressEmitter.js';
 import { readFile } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -502,9 +502,11 @@ export async function runAgentLoop(
           emitProgress(`  🔧 ${toolName}(${argSummary})`);
           result = await config.executeTool(toolName, args);
           callCache.set(cacheKey, result);
-          // Kısa sonuç özeti — sadece ilk satır veya 80 karakter
+          // TUI: kısa özet (ilk satır, 80 karakter)
           const resultPreview = result.split('\n')[0].slice(0, 80);
           emitProgress(`  ✓ ${toolName} → ${resultPreview}`);
+          // Web log: tam çıktı (kırpılmamış)
+          emitToolDetail(toolName, result);
         }
       } catch (error) {
         result = `Tool hatası (${toolName}): ${(error as Error).message}`;

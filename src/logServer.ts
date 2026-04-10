@@ -13,19 +13,52 @@ const BUFFER_SIZE = 2000;
 interface LogEntry {
   ts: string;
   msg: string;
+  detail?: string;   // tam araç çıktısı (opsiyonel)
+  hasDetail?: boolean;
 }
 
 const logBuffer: LogEntry[] = [];
 const clients = new Set<http.ServerResponse>();
 
-progressEmitter.on('progress', (msg: string) => {
-  const entry: LogEntry = { ts: new Date().toTimeString().slice(0, 8), msg };
+// pending detail: son gönderilen ✓ satırına bağlamak için
+let pendingDetailKey: string | null = null;
+
+function broadcast(entry: LogEntry): void {
   if (logBuffer.length >= BUFFER_SIZE) logBuffer.shift();
   logBuffer.push(entry);
   const data = `data: ${JSON.stringify(entry)}\n\n`;
   for (const client of clients) {
     client.write(data);
   }
+}
+
+progressEmitter.on('progress', (msg: string) => {
+  const ts = new Date().toTimeString().slice(0, 8);
+  const entry: LogEntry = { ts, msg };
+  // ✓ satırı → bir sonraki detail event'i bu satıra bağlanacak
+  if (msg.trimStart().startsWith('✓ ')) {
+    pendingDetailKey = ts + msg.slice(0, 60);
+    entry.hasDetail = false; // detail henüz gelmedi
+  } else {
+    pendingDetailKey = null;
+  }
+  broadcast(entry);
+});
+
+progressEmitter.on('detail', ({ toolName, output }: { toolName: string; output: string }) => {
+  if (!pendingDetailKey) return;
+  // Son log entry'sine detail ekle
+  const last = logBuffer[logBuffer.length - 1];
+  if (last && last.msg.includes(toolName)) {
+    last.detail = output;
+    last.hasDetail = true;
+    // Zaten gönderildi — patch event gönder
+    const data = `data: ${JSON.stringify({ type: 'patch', idx: logBuffer.length - 1, detail: output })}\n\n`;
+    for (const client of clients) {
+      client.write(data);
+    }
+  }
+  pendingDetailKey = null;
 });
 
 const HTML = `<!DOCTYPE html>
@@ -207,6 +240,37 @@ const HTML = `<!DOCTYPE html>
 
   .line-default .msg { color: var(--text); }
 
+  .expand-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--tool);
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: 6px;
+    font-family: inherit;
+    flex-shrink: 0;
+  }
+  .expand-btn:hover { background: var(--bg3); }
+
+  .tool-detail {
+    display: none;
+    margin: 4px 0 4px 48px;
+    padding: 8px 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 11px;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 400px;
+    overflow-y: auto;
+    line-height: 1.5;
+  }
+  .tool-detail.open { display: block; }
+
   .highlight { background: rgba(255,195,0,0.25); border-radius: 2px; }
 
   .empty-state {
@@ -350,28 +414,71 @@ const HTML = `<!DOCTYPE html>
     return result;
   }
 
-  function buildLine(entry) {
+  function buildLine(entry, idx) {
     const cat = categorize(entry.msg);
     if (!matchesFilter(cat) || !matchesSearch(entry.msg)) return null;
+
+    const wrap = document.createElement('div');
+    wrap.dataset.idx = String(idx);
+
     const div = document.createElement('div');
     div.className = 'log-line line-' + cat;
     div.dataset.cat = cat;
     div.dataset.msg = entry.msg;
+
+    const hasDetail = entry.detail && entry.detail.length > 0;
     div.innerHTML =
       '<span class="ts">' + entry.ts + '</span>' +
-      '<span class="msg">' + highlightSearch(entry.msg) + '</span>';
-    return div;
+      '<span class="msg">' + highlightSearch(entry.msg) + '</span>' +
+      (hasDetail
+        ? '<button class="expand-btn" onclick="toggleDetail(this)">▶ detay</button>'
+        : (entry.hasDetail === false ? '<button class="expand-btn" onclick="toggleDetail(this)" style="opacity:0.4" disabled>⏳</button>' : ''));
+    wrap.appendChild(div);
+
+    if (hasDetail) {
+      const detailDiv = document.createElement('div');
+      detailDiv.className = 'tool-detail';
+      detailDiv.textContent = entry.detail;
+      wrap.appendChild(detailDiv);
+    }
+    return wrap;
+  }
+
+  function toggleDetail(btn) {
+    const wrap = btn.closest('[data-idx]');
+    const dd = wrap && wrap.querySelector('.tool-detail');
+    if (!dd) return;
+    const open = dd.classList.toggle('open');
+    btn.textContent = open ? '▼ gizle' : '▶ detay';
   }
 
   function addEntry(entry) {
+    const idx = allLines.length;
     allLines.push(entry);
     if (emptyState.style.display !== 'none') emptyState.style.display = 'none';
-    
-    const el = buildLine(entry);
+
+    const el = buildLine(entry, idx);
     if (el) logArea.appendChild(el);
 
     lineCount.textContent = allLines.length + ' satır';
     if (autoScroll) logArea.scrollTop = logArea.scrollHeight;
+  }
+
+  function patchDetail(idx, detail) {
+    if (idx < 0 || idx >= allLines.length) return;
+    allLines[idx].detail = detail;
+    allLines[idx].hasDetail = true;
+    // DOM güncelle
+    const wrap = logArea.querySelector('[data-idx="' + idx + '"]');
+    if (!wrap) return;
+    const btn = wrap.querySelector('.expand-btn');
+    if (btn) { btn.textContent = '▶ detay'; btn.disabled = false; btn.style.opacity = '1'; }
+    if (!wrap.querySelector('.tool-detail')) {
+      const dd = document.createElement('div');
+      dd.className = 'tool-detail';
+      dd.textContent = detail;
+      wrap.appendChild(dd);
+    }
   }
 
   function rebuildLog() {
@@ -384,8 +491,8 @@ const HTML = `<!DOCTYPE html>
     }
     emptyState.style.display = 'none';
     const frag = document.createDocumentFragment();
-    for (const entry of allLines) {
-      const el = buildLine(entry);
+    for (let i = 0; i < allLines.length; i++) {
+      const el = buildLine(allLines[i], i);
       if (el) frag.appendChild(el);
     }
     logArea.insertBefore(frag, emptyState);
@@ -445,8 +552,12 @@ const HTML = `<!DOCTYPE html>
 
     es.onmessage = (e) => {
       try {
-        const entry = JSON.parse(e.data);
-        addEntry(entry);
+        const data = JSON.parse(e.data);
+        if (data.type === 'patch') {
+          patchDetail(data.idx, data.detail);
+        } else {
+          addEntry(data);
+        }
       } catch { /* malformed */ }
     };
   }
