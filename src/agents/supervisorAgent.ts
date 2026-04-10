@@ -202,6 +202,8 @@ async function executeSubAgentWithStrategy(
     finalReport = await strategy.synthesize(result, reviewFeedback);
   }
 
+  // Strategy log'u her durumda dosyaya yaz (synthesize atlandıysa bile)
+  await strategy.flushLog();
   logger.info('AGENT', `[Strategy] Session ${strategy.getHistorySize()} mesaj`);
 
   // --- Kaydet ---

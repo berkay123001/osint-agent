@@ -203,14 +203,11 @@ export class StrategySession {
       if (synthesized.length > 100) {
         this.history.push({ role: 'assistant', content: synthesized });
         this.logPhase('SYNTHESIZE', `Girdi: ${(result.length / 1024).toFixed(1)}KB ham → Çıktı: ${(synthesized.length / 1024).toFixed(1)}KB sentezlenmiş rapor`);
-        await this.flushLog();
         return synthesized;
       }
-      await this.flushLog();
       return result;
     } catch (err) {
       logger.warn('AGENT', `[Strategy-Synthesize] Hata: ${(err as Error).message}`);
-      await this.flushLog();
       return result;
     }
   }
