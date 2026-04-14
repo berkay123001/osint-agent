@@ -70,7 +70,8 @@ const IDENTITY_TOOLS = [
   'run_sherlock', 'run_maigret', 'run_github_osint', 'parse_gpg_key',
   'check_email_registrations', 'check_breaches', 'search_person',
   'cross_reference', 'verify_profiles', 'unexplored_pivots', 'nitter_profile',
-  'search_web', 'search_web_multi', 'scrape_profile', 'web_fetch', 'verify_claim'
+  'search_web', 'search_web_multi', 'scrape_profile', 'web_fetch', 'verify_claim',
+  'auto_visual_intel'
 ];
 
 export const identityAgentConfig: AgentConfig = {

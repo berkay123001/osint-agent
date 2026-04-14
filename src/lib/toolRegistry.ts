@@ -27,6 +27,7 @@ import { findUnexploredPivots, formatUnexploredPivots } from './pivotAnalyzer.js
 import { compareImages } from '../tools/phashCompareTool.js';
 import { writeFactCheckToGraph } from './neo4jFactCheck.js';
 import { searchReverseImage, formatReverseImageResult } from '../tools/reverseImageTool.js';
+import { autoVisualIntel } from '../tools/autoVisualIntel.js';
 import { searchPerson, formatPersonSearchResult } from '../tools/personSearchTool.js'
 import { searchAcademicPapers, formatAcademicResult, writeAcademicPapersToGraph, searchAuthorPapers, formatAuthorResult } from '../tools/academicSearchTool.js'
 import type { AcademicSearchResult } from '../tools/academicSearchTool.js'
@@ -264,6 +265,23 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
           url2: { type: "string", description: "Karşılaştırma yapılacak ikinci görselin tam URL'si" }
         },
         required: ["url1", "url2"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "auto_visual_intel",
+      description: "Profil URL'lerinden OTOMATIK görsel istihbarat üretir. Profil sayfasını çeker, avatar/profil fotoğrafını bulur, tersine görsel arama (Google Lens) yapar ve birden fazla platform varsa aralarında pHash karşılaştırması yapar. Manuel görsel yüklemeye gerek yoktur — URL verin, gerisi otomatik.",
+      parameters: {
+        type: "object",
+        properties: {
+          profile_urls: {
+            type: "string",
+            description: "Virgülle ayrılmış profil URL'leri. Örnek: 'https://kick.com/bbeckyg, https://tiktok.com/@bbeckyg3, https://instagram.com/bbeckyg01'"
+          }
+        },
+        required: ["profile_urls"]
       }
     }
   },
@@ -1093,6 +1111,11 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     else if (name === 'compare_images_phash') {
       logger.info('TOOL', `🧩 pHash Karşılaştırması: ${args.url1} vs ${args.url2}`)
       result = await compareImages(args.url1, args.url2)
+    }
+    else if (name === 'auto_visual_intel') {
+      const urls = (args.profile_urls || '').split(',').map((u: string) => u.trim()).filter(Boolean)
+      logger.info('TOOL', `🖼️ Otomatik Görsel İstihbarat: ${urls.length} profil`)
+      result = await autoVisualIntel(urls)
     }
     else if (name === 'add_custom_node') {
       logger.info('TOOL', `➕ Özel düğüm ekleniyor: ${args.label}`);

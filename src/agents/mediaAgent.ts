@@ -74,6 +74,7 @@ const MEDIA_TOOLS = [
   'search_web',        // Ek kaynak taraması için
   'search_web_multi',  // Aynı konuyu farklı açılardan paralel aramak için (max 3 sorgu)
   'verify_claim',      // "ücretsiz", "resmi açıklama" gibi iddiaları doğrulamak için
+  'auto_visual_intel', // Profil fotoğraflarından otomatik tersine görsel arama
 ];
 
 export const mediaAgentConfig: AgentConfig = {
