@@ -13,3 +13,16 @@ services:
       - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
     environment:
       - SEARXNG_BASE_URL=http://localhost:8888/
+
+  # Face recognition + age/gender/emotion analysis
+  # REST API: POST http://localhost:5000/analyze, /verify, /represent
+  deepface:
+    image: serengil/deepface:latest
+    container_name: osint-deepface
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - DEEPFACE_FACE_RECOGNITION_MODELS=ArcFace,Facenet
+    # ~500MB RAM per worker, 1 worker default
+    # First request loads model (5-15s cold start), then cached

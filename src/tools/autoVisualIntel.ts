@@ -6,8 +6,10 @@
  *
  * Zincir:
  *   1. scrapeProfile(url) → avatarUrl çıkar
- *   2. searchReverseImage(avatarUrl) → Google Lens sonuçları
- *   3. (çoklu URL verilirse) pHash karşılaştırması → cross-platform eşleşme
+ *   2. DeepFace /analyze → yaş, cinsiyet, duygu analizi (container gerekli)
+ *   3. searchReverseImage(avatarUrl) → Google Lens sonuçları
+ *   4. (çoklu URL) DeepFace /verify → yüz eşleştirme (aynı kişi mi?)
+ *   5. (çoklu URL) pHash karşılaştırması → piksel bazlı eşleşme
  */
 
 import { scrapeProfile } from './scrapeTool.js';
@@ -16,23 +18,137 @@ import { compareImages } from './phashCompareTool.js';
 import { emitProgress } from '../lib/progressEmitter.js';
 import { logger } from '../lib/logger.js';
 
+const DEEPFACE_URL = process.env.DEEPFACE_URL || 'http://localhost:5000';
+
 export interface VisualIntelResult {
   profileUrl: string;
   avatarUrl: string | null;
+  faceAnalysis: string;
   reverseSearch: string;
   crossPlatformMatches: string[];
   errors: string[];
 }
+
+// ---------------------------------------------------------------------------
+// DeepFace REST API çağrıları — container çalışmıyorsa graceful fallback
+// ---------------------------------------------------------------------------
+
+interface FaceAnalysis {
+  age: number;
+  dominant_gender: string;
+  dominant_emotion: string;
+  dominant_race: string;
+  region: { x: number; y: number; w: number; h: number };
+}
+
+interface FaceVerifyResult {
+  verified: boolean;
+  distance: number;
+  model: string;
+}
+
+/** DeepFace container'ın ayakta olup olmadığını kontrol et */
+async function isDeepFaceAvailable(): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(`${DEEPFACE_URL}/`, { signal: controller.signal });
+    clearTimeout(timeout);
+    return res.ok || res.status === 404; // 404 = sunucu ayakta ama root endpoint yok
+  } catch {
+    return false;
+  }
+}
+
+/** DeepFace /analyze — yaş, cinsiyet, duygu, ırk analizi */
+async function analyzeFace(imageUrl: string): Promise<{ analysis: string; details: FaceAnalysis | null }> {
+  try {
+    const res = await fetch(`${DEEPFACE_URL}/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        img: imageUrl,
+        actions: ['age', 'gender', 'emotion', 'race'],
+        detector_backend: 'retinaface',
+        align: true,
+        enforce_detection: false,
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => 'unknown');
+      return { analysis: `⚠️ DeepFace analiz hatası (${res.status}): ${errText.slice(0, 200)}`, details: null };
+    }
+
+    const data = await res.json() as { results: FaceAnalysis[] };
+
+    if (!data.results || data.results.length === 0) {
+      return { analysis: 'ℹ️ DeepFace: Yüz tespit edilemedi', details: null };
+    }
+
+    const face = data.results[0];
+    const lines = [
+      `👤 **Yüz Analizi (DeepFace/ArcFace):**`,
+      `   Yaş: ~${face.age}`,
+      `   Cinsiyet: ${face.dominant_gender}`,
+      `   Duygu: ${face.dominant_emotion}`,
+      `   Yüz bölgesi: ${face.region.w}x${face.region.h}px`,
+    ];
+
+    return { analysis: lines.join('\n'), details: face };
+  } catch (err) {
+    return { analysis: `⚠️ DeepFace bağlantı hatası: ${(err as Error).message}`, details: null };
+  }
+}
+
+/** DeepFace /verify — iki görsel arası yüz eşleştirme */
+async function verifyFaces(img1: string, img2: string): Promise<string> {
+  try {
+    const res = await fetch(`${DEEPFACE_URL}/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        img1,
+        img2,
+        model_name: 'ArcFace',
+        detector_backend: 'retinaface',
+        distance_metric: 'cosine',
+        enforce_detection: false,
+      }),
+    });
+
+    if (!res.ok) {
+      return `⚠️ DeepFace verify hatası (${res.status})`;
+    }
+
+    const data = await res.json() as FaceVerifyResult;
+    const confidence = Math.max(0, (1 - data.distance) * 100).toFixed(1);
+
+    if (data.verified) {
+      return `✅ DeepFace (ArcFace): **AYNI KİŞİ** — güven: %${confidence} (distance: ${data.distance.toFixed(4)})`;
+    } else {
+      return `❌ DeepFace (ArcFace): FARKLI KİŞİ — güven: %${confidence} (distance: ${data.distance.toFixed(4)})`;
+    }
+  } catch (err) {
+    return `⚠️ DeepFace verify hatası: ${(err as Error).message}`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Ana pipeline
+// ---------------------------------------------------------------------------
 
 /**
  * Tek bir profil URL'sinden görsel istihbarat üretir.
  */
 async function analyzeSingleProfile(
   profileUrl: string,
+  useDeepFace: boolean,
 ): Promise<VisualIntelResult> {
   const errors: string[] = [];
   let avatarUrl: string | null = null;
   let reverseSearch = '';
+  let faceAnalysis = '';
 
   // --- ADIM 1: Profil sayfasını çek, avatar URL çıkar ---
   emitProgress(`🖼️ Profil çekiliyor: ${profileUrl}`);
@@ -43,12 +159,10 @@ async function analyzeSingleProfile(
       errors.push(`Scrape hatası (${profileUrl}): ${scrapeResult.error}`);
     }
 
-    // avatarUrl scrapeTool tarafından otomatik çıkarılır
     if (scrapeResult.avatarUrl) {
       avatarUrl = scrapeResult.avatarUrl;
       emitProgress(`🖼️ Avatar bulundu: ${avatarUrl.slice(0, 80)}...`);
     } else {
-      // Markdown içinden img src ara — fallback
       const imgMatch = scrapeResult.markdown.match(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/);
       if (imgMatch) {
         avatarUrl = imgMatch[1];
@@ -58,14 +172,21 @@ async function analyzeSingleProfile(
 
     if (!avatarUrl) {
       errors.push(`Avatar URL bulunamadı: ${profileUrl}`);
-      return { profileUrl, avatarUrl: null, reverseSearch: '', crossPlatformMatches: [], errors };
+      return { profileUrl, avatarUrl: null, faceAnalysis: '', reverseSearch: '', crossPlatformMatches: [], errors };
     }
   } catch (err) {
     errors.push(`Scrape exception (${profileUrl}): ${(err as Error).message}`);
-    return { profileUrl, avatarUrl: null, reverseSearch: '', crossPlatformMatches: [], errors };
+    return { profileUrl, avatarUrl: null, faceAnalysis: '', reverseSearch: '', crossPlatformMatches: [], errors };
   }
 
-  // --- ADIM 2: Tersine görsel arama (Google Lens) ---
+  // --- ADIM 2: DeepFace yüz analizi (yaş, cinsiyet, duygu) ---
+  if (useDeepFace && avatarUrl) {
+    emitProgress(`👤 DeepFace yüz analizi yapılıyor...`);
+    const faceResult = await analyzeFace(avatarUrl);
+    faceAnalysis = faceResult.analysis;
+  }
+
+  // --- ADIM 3: Tersine görsel arama (Google Lens) ---
   emitProgress(`🔍 Tersine görsel arama yapılıyor...`);
   try {
     const reverseResult = await searchReverseImage(avatarUrl);
@@ -86,6 +207,7 @@ async function analyzeSingleProfile(
   return {
     profileUrl,
     avatarUrl,
+    faceAnalysis,
     reverseSearch,
     crossPlatformMatches: [],
     errors,
@@ -93,11 +215,12 @@ async function analyzeSingleProfile(
 }
 
 /**
- * Birden fazla profil URL'si arası görsel karşılaştırma yapar.
- * Her platformdan avatar çeker → pHash ile benzerlik ölçer.
+ * Birden fazla profil URL'si arası cross-platform karşılaştırma.
+ * DeepFace /verify + pHash beraber kullanılır.
  */
 async function crossPlatformCompare(
   profiles: VisualIntelResult[],
+  useDeepFace: boolean,
 ): Promise<string[]> {
   const matches: string[] = [];
   const avatars = profiles.filter(p => p.avatarUrl);
@@ -108,31 +231,32 @@ async function crossPlatformCompare(
 
   for (let i = 0; i < avatars.length; i++) {
     for (let j = i + 1; j < avatars.length; j++) {
+      const hostA = new URL(avatars[i].profileUrl).hostname.replace('www.', '');
+      const hostB = new URL(avatars[j].profileUrl).hostname.replace('www.', '');
+
+      // DeepFace yüz eşleştirme (ArcFace)
+      if (useDeepFace) {
+        try {
+          const faceResult = await verifyFaces(avatars[i].avatarUrl!, avatars[j].avatarUrl!);
+          matches.push(`🧠 ${hostA} ↔ ${hostB}: ${faceResult}`);
+        } catch (err) {
+          logger.warn('TOOL', `[autoVisualIntel] DeepFace verify hatası: ${(err as Error).message}`);
+        }
+      }
+
+      // pHash piksel karşılaştırma (fallback / ek kanıt)
       try {
         const comparison = await compareImages(avatars[i].avatarUrl!, avatars[j].avatarUrl!);
-
-        // Benzerlik oranını çıkar
         const similarityMatch = comparison.match(/Benzerlik Oranı: %([\d.]+)/);
         const similarity = similarityMatch ? parseFloat(similarityMatch[1]) : 0;
 
-        const hostA = new URL(avatars[i].profileUrl).hostname.replace('www.', '');
-        const hostB = new URL(avatars[j].profileUrl).hostname.replace('www.', '');
-
         if (similarity >= 90) {
-          matches.push(
-            `✅ ${hostA} ↔ ${hostB}: %${similarity.toFixed(1)} benzer — aynı kişi yüksek olasılıkla`,
-          );
+          matches.push(`🖼️ ${hostA} ↔ ${hostB}: pHash %${similarity.toFixed(1)} — piksel bazında aynı`);
         } else if (similarity >= 70) {
-          matches.push(
-            `⚠️ ${hostA} ↔ ${hostB}: %${similarity.toFixed(1)} benzer — muhtemelen aynı kişi (crop/filtre farkı)`,
-          );
-        } else {
-          matches.push(
-            `ℹ️ ${hostA} ↔ ${hostB}: %${similarity.toFixed(1)} benzer — farklı görseller`,
-          );
+          matches.push(`🖼️ ${hostA} ↔ ${hostB}: pHash %${similarity.toFixed(1)} — benzer (crop/filtre)`);
         }
       } catch (err) {
-        logger.warn('TOOL', `[autoVisualIntel] pHash karşılaştırma hatası: ${(err as Error).message}`);
+        logger.warn('TOOL', `[autoVisualIntel] pHash hatası: ${(err as Error).message}`);
       }
     }
   }
@@ -149,14 +273,23 @@ export async function autoVisualIntel(
   const timestamp = new Date().toLocaleTimeString('tr-TR');
   const sections: string[] = [];
 
+  // DeepFace container kontrolü
+  const useDeepFace = await isDeepFaceAvailable();
+  if (useDeepFace) {
+    emitProgress(`🧠 DeepFace container aktif — yüz analizi yapılacak`);
+  } else {
+    emitProgress(`ℹ️ DeepFace container yok — sadece reverse search + pHash`);
+  }
+
   sections.push(`## 🖼️ Otomatik Görsel İstihbarat (${timestamp})`);
-  sections.push(`**Taranan profil sayısı:** ${profileUrls.length}\n`);
+  sections.push(`**Taranan profil sayısı:** ${profileUrls.length}`);
+  sections.push(`**Yüz analizi:** ${useDeepFace ? 'Aktif (DeepFace/ArcFace)' : 'Devre dışı (container çalışmıyor)'}\n`);
 
   // Her profil için ayrı ayrı analiz
   const results: VisualIntelResult[] = [];
 
   for (const url of profileUrls) {
-    const result = await analyzeSingleProfile(url);
+    const result = await analyzeSingleProfile(url, useDeepFace);
     results.push(result);
   }
 
@@ -167,6 +300,10 @@ export async function autoVisualIntel(
 
     if (r.avatarUrl) {
       sections.push(`**Avatar URL:** \`${r.avatarUrl.slice(0, 100)}\``);
+    }
+
+    if (r.faceAnalysis) {
+      sections.push(r.faceAnalysis);
     }
 
     if (r.reverseSearch) {
@@ -181,9 +318,9 @@ export async function autoVisualIntel(
     sections.push('');
   }
 
-  // Cross-platform karşılaştırma
+  // Cross-platform karşılaştırma (DeepFace verify + pHash)
   if (results.filter(r => r.avatarUrl).length >= 2) {
-    const crossMatches = await crossPlatformCompare(results);
+    const crossMatches = await crossPlatformCompare(results, useDeepFace);
     if (crossMatches.length > 0) {
       sections.push(`### 🔗 Platformlar Arası Görsel Eşleşme`);
       crossMatches.forEach(m => sections.push(`- ${m}`));
@@ -195,6 +332,7 @@ export async function autoVisualIntel(
   const withAvatar = results.filter(r => r.avatarUrl).length;
   const withErrors = results.filter(r => r.errors.length > 0).length;
   sections.push(`**Özet:** ${withAvatar}/${results.length} profilden avatar çıkarıldı` +
+    (useDeepFace ? ', yüz analizi yapıldı' : '') +
     (withErrors > 0 ? `, ${withErrors} profil hatayla atlandı` : ''));
 
   const output = sections.join('\n');
