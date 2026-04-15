@@ -22,7 +22,14 @@ services:
     restart: unless-stopped
     ports:
       - "5000:5000"
+    volumes:
+      - deepface_weights:/root/.deepface/weights
     environment:
-      - DEEPFACE_FACE_RECOGNITION_MODELS=ArcFace,Facenet
-    # ~500MB RAM per worker, 1 worker default
-    # First request loads model (5-15s cold start), then cached
+      - DEEPFACE_FACE_RECOGNITION_MODELS=Facenet
+      - GUNICORN_CMD_ARGS=--timeout 600 --workers 1
+    # Model weights persist in named volume — downloaded once, reused forever
+    # Cold start: ~30-60s (first request loads models into RAM)
+    # Warm: ~2-5s per analyze, ~3-8s per verify
+
+volumes:
+  deepface_weights:

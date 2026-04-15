@@ -60,19 +60,13 @@ async function isDeepFaceAvailable(): Promise<boolean> {
   }
 }
 
-/** DeepFace /analyze — yaş, cinsiyet, duygu, ırk analizi */
+/** DeepFace /analyze — age only (multi-model = OOM riski, age güvenilir) */
 async function analyzeFace(imageUrl: string): Promise<{ analysis: string; details: FaceAnalysis | null }> {
   try {
     const res = await fetch(`${DEEPFACE_URL}/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        img: imageUrl,
-        actions: ['age', 'gender', 'emotion', 'race'],
-        detector_backend: 'retinaface',
-        align: true,
-        enforce_detection: false,
-      }),
+      body: JSON.stringify({ img: imageUrl, actions: ['age'], detector_backend: 'opencv', enforce_detection: false }),
     });
 
     if (!res.ok) {
@@ -86,12 +80,11 @@ async function analyzeFace(imageUrl: string): Promise<{ analysis: string; detail
       return { analysis: 'ℹ️ DeepFace: Yüz tespit edilemedi', details: null };
     }
 
-    const face = data.results[0];
+    const face = data.results[0] as any;
     const lines = [
-      `👤 **Yüz Analizi (DeepFace/ArcFace):**`,
-      `   Yaş: ~${face.age}`,
-      `   Cinsiyet: ${face.dominant_gender}`,
-      `   Duygu: ${face.dominant_emotion}`,
+      `👤 **Yüz Analizi (DeepFace):**`,
+      `   Yaş tahmini: ~${face.age}`,
+      `   Yüz güveni: %${Math.round((face.face_confidence ?? 0) * 100)}`,
       `   Yüz bölgesi: ${face.region.w}x${face.region.h}px`,
     ];
 
@@ -110,8 +103,8 @@ async function verifyFaces(img1: string, img2: string): Promise<string> {
       body: JSON.stringify({
         img1,
         img2,
-        model_name: 'ArcFace',
-        detector_backend: 'retinaface',
+        model_name: 'Facenet',
+        detector_backend: 'opencv',
         distance_metric: 'cosine',
         enforce_detection: false,
       }),
