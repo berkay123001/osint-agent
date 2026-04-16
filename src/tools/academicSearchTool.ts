@@ -242,12 +242,24 @@ export async function searchAcademicPapers(
   } as AcademicSearchResult & { _ssNote?: string };
 }
 
+// arXiv rate limiter — çağrılar arası minimum 3 saniye bekle
+let lastArxivCall = 0;
+const ARXIV_MIN_INTERVAL_MS = 3000;
+
 async function _searchArxiv(
   query: string,
   maxResults: number,
   sortBy: 'relevance' | 'submittedDate' | 'lastUpdatedDate',
 ): Promise<AcademicSearchResult> {
   try {
+    // Rate limit: son çağrıdan bu yana yeterli süre geçmediyse bekle
+    const now = Date.now();
+    const elapsed = now - lastArxivCall;
+    if (elapsed < ARXIV_MIN_INTERVAL_MS) {
+      await new Promise(resolve => setTimeout(resolve, ARXIV_MIN_INTERVAL_MS - elapsed));
+    }
+    lastArxivCall = Date.now();
+
     const encoded = encodeURIComponent(query)
     const url = `https://export.arxiv.org/api/query?search_query=all:${encoded}&sortBy=${sortBy}&sortOrder=descending&max_results=${maxResults}`
 
