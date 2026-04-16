@@ -48,7 +48,7 @@ export function App(): React.ReactElement {
       setProgressLog(prev => [...prev.slice(-200), ...batch]);
       // Scroll offset sadece kullanıcı scroll yapmadıysa sıfırla
       setLogScrollOffset(prev => prev === 0 ? 0 : prev);
-      setShowLog(true);
+      // setShowLog(true) kaldırıldı — log otomatik açılmasın, kullanıcı L tuşuyla açsın
     };
 
     const handler = (msg: string) => {
@@ -235,8 +235,14 @@ export function App(): React.ReactElement {
           </Box>
         )}
 
+        {isProcessing && progressLog.length > 0 && (
+          <Box marginTop={0}>
+            <Text dimColor>  {progressLog[progressLog.length - 1]?.slice(0, 120)}</Text>
+          </Box>
+        )}
+
         {progressLog.length > 0 && (() => {
-          const LOG_LINES = 30;
+          const LOG_LINES = 10;
           const scrollStart = Math.max(0, progressLog.length - LOG_LINES - logScrollOffset);
           const visibleLines = progressLog.slice(scrollStart, scrollStart + LOG_LINES);
           const canScrollUp = logScrollOffset < progressLog.length - LOG_LINES;

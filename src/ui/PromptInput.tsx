@@ -20,6 +20,10 @@ export function PromptInput({ onSubmit, isProcessing }: Props): React.ReactEleme
   const { stdin } = useStdin();
   const pasteActiveRef = useRef(false);
   const pasteIdRef = useRef(0);
+  const valueRef = useRef(''); // typed text öncesindeki içeriği paste için koru
+
+  // valueRef'i her değişiklikte senkronize tut
+  useEffect(() => { valueRef.current = value; }, [value]);
 
   // Enable/disable bracketed paste mode (DECSET 2004)
   useEffect(() => {
@@ -51,10 +55,16 @@ export function PromptInput({ onSubmit, isProcessing }: Props): React.ReactEleme
       const ei = buf.indexOf('\x1b[201~');
       if (ei !== -1) {
         inPaste = false;
-        const content = buf.slice(0, ei).replace(/\r\n/g, '\n').trimEnd();
+        const pastedContent = buf.slice(0, ei).replace(/\r\n/g, '\n').trimEnd();
         buf = '';
         pasteActiveRef.current = true;
         pasteIdRef.current++;
+        // Yapıştırmadan önce yazılan metni koru — valueRef üzerinden eriş
+        const existingText = valueRef.current.trimEnd();
+        const separator = existingText
+          ? (pastedContent.includes('\n') ? '\n' : ' ')
+          : '';
+        const content = existingText + separator + pastedContent;
         setPendingPastes(prev => [...prev, {
           id: pasteIdRef.current,
           content,
