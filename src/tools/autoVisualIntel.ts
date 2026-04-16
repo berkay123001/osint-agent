@@ -118,9 +118,9 @@ async function verifyFaces(img1: string, img2: string): Promise<string> {
     const confidence = Math.max(0, (1 - data.distance) * 100).toFixed(1);
 
     if (data.verified) {
-      return `✅ DeepFace (ArcFace): **AYNI KİŞİ** — güven: %${confidence} (distance: ${data.distance.toFixed(4)})`;
+      return `✅ DeepFace (Facenet): **AYNI KİŞİ** — güven: %${confidence} (distance: ${data.distance.toFixed(4)})`;
     } else {
-      return `❌ DeepFace (ArcFace): FARKLI KİŞİ — güven: %${confidence} (distance: ${data.distance.toFixed(4)})`;
+      return `❌ DeepFace (Facenet): FARKLI KİŞİ — güven: %${confidence} (distance: ${data.distance.toFixed(4)})`;
     }
   } catch (err) {
     return `⚠️ DeepFace verify hatası: ${(err as Error).message}`;
@@ -227,7 +227,7 @@ async function crossPlatformCompare(
       const hostA = new URL(avatars[i].profileUrl).hostname.replace('www.', '');
       const hostB = new URL(avatars[j].profileUrl).hostname.replace('www.', '');
 
-      // DeepFace yüz eşleştirme (ArcFace)
+      // DeepFace yüz eşleştirme (Facenet)
       if (useDeepFace) {
         try {
           const faceResult = await verifyFaces(avatars[i].avatarUrl!, avatars[j].avatarUrl!);
@@ -276,7 +276,7 @@ export async function autoVisualIntel(
 
   sections.push(`## 🖼️ Otomatik Görsel İstihbarat (${timestamp})`);
   sections.push(`**Taranan profil sayısı:** ${profileUrls.length}`);
-  sections.push(`**Yüz analizi:** ${useDeepFace ? 'Aktif (DeepFace/ArcFace)' : 'Devre dışı (container çalışmıyor)'}\n`);
+  sections.push(`**Yüz analizi:** ${useDeepFace ? 'Aktif (DeepFace/Facenet)' : 'Devre dışı (container çalışmıyor)'}\n`);
 
   // Her profil için ayrı ayrı analiz
   const results: VisualIntelResult[] = [];

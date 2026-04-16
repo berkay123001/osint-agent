@@ -79,7 +79,7 @@ const MEDIA_TOOLS = [
 
 export const mediaAgentConfig: AgentConfig = {
   name: 'MediaAgent',
-  model: 'qwen/qwen3.5-flash',
+  model: 'qwen/qwen3.5-flash-02-23',
   maxToolCalls: 25,          // Context büyümesini yavaşlat — ham HTML/Markdown uzun gelir
   maxEmptyRetries: 3,        // Uzun tool zincirlerinden sonra Qwen thinking bitip boş dönebilir
   tools: tools.filter((t: any) => t.type === 'function' && MEDIA_TOOLS.includes(t.function.name)),

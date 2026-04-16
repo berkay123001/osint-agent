@@ -76,7 +76,7 @@ const IDENTITY_TOOLS = [
 
 export const identityAgentConfig: AgentConfig = {
   name: 'IdentityAgent',
-  model: 'qwen/qwen3.5-flash',
+  model: 'qwen/qwen3.5-flash-02-23',
   tools: tools.filter((t: any) => t.type === 'function' && IDENTITY_TOOLS.includes(t.function.name)),
   executeTool: executeTool,
   maxToolCalls: 40,

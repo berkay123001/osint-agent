@@ -93,7 +93,7 @@ const ACADEMIC_TOOLS = [
 
 export const academicAgentConfig: AgentConfig = {
   name: 'AcademicAgent',
-  model: 'qwen/qwen3.5-flash',
+  model: 'qwen/qwen3.5-flash-02-23',
   maxToolCalls: 30,
   tools: tools.filter((t: any) => t.type === 'function' && ACADEMIC_TOOLS.includes(t.function.name)),
   executeTool: executeTool,
