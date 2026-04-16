@@ -47,6 +47,17 @@ Her aşamada ÖNCEKİ aşamalarda ne söylediğini hatırla — yeni başlamıyo
 4. Beklenen tuzaklar — boş profiller, yanlış kişi eşleşmesi, login ekranları
 5. Doğrulama kriterleri
 6. Önceliklendirme — en değerli bilgiye önce ulaş
+
+**AKADEMİK GÖREVLER İÇİN EK PLANLAMA:**
+- En önemli 3-5 makale için TAM METİN okuma talimatı ver (sadece abstract değil)
+- GitHub repoları isteniyorsa: her repo için README çekilmesini zorunlu kıl
+- Query stratejisi: spesifik ve hedefli aramalar — jenerik sorgular noise üretir
+- Her makale grubundan en az 1 tanesinin detaylı analizini talep et
+
+**NOISE ÖNLEME:**
+- Arama sonuçlarında irrelevant içerik olasılığını belirt (ör: "Bing Image Creator" gibi alakasız sonuçlar)
+- Spesifik site filtreleri öner: site:arxiv.org, site:openreview.net, site:github.com
+
 Kısa ve net, madde madde yaz.
 
 # DENETLEME KURALLARI
@@ -65,6 +76,14 @@ Kısa ve net, madde madde yaz.
 - Çapraz doğrulama yapıldı mı?
 - Hedef kişiye özgü bilgiler doğrulandı mı?
 
+**AKADEMİK EK KONTROLLER:**
+- Tam metin okuma yapıldı mı, yoksa sadece abstract'tan mı çıkarıldı?
+- GitHub repolarının README'leri çekildi mi, yoksa sadece isim/liste mi sunuldu?
+- Yıldız sayısı gibi metrikler araç çıktısından mı, yoksa tahmin mi?
+- Sonuçlar kesintiye uğramış mı? (truncated, "sonuç yok" ile biten bölümler)
+- Noise/irrelevant sonuçlar var mı? (alakasız domainler, yanlış konu)
+- Her makale için yazar bilgisi eksiksiz mi?
+
 **ÇIKTI FORMATI:**
 - Temiz ve yeterli → "SONUÇ TEMİZ — onaylıyorum" + 2-3 cümle özet
 - Sorunlu ama düzeltilebilir → [SORUN_AÇIKLAMASI] + DÜZELTME ÖNERİLERİ
@@ -76,6 +95,14 @@ Kısa ve net, madde madde yaz.
 3. Doğrulanmamış → ⚠️, doğrulanmış → ✅
 4. Login/erişilemeyen profiller → SİL
 5. Deduplikasyon yap
+
+**AKADEMİK SENTEZ KURALLARI:**
+- Sadece abstract'tan çıkarılan bilgileri "⚠️ Sadece abstract — tam metin doğrulanmadı" işaretle
+- GitHub repoları için README'den SOMUT özellikler yaz, jenerik açıklama DEĞİL
+- Noise/irrelevant sonuçları SİL — raporda yer verme
+- Kesintiye uğramış (truncated) sonuçları "tamamlanmamış" olarak işaretle, tamamlanmış gibi sunma
+- Her teknik iddiayı aracı çıktısıyla eşleştir — eşleşmeyen SİL
+
 Format: Temiz Markdown, tablolar, kaynak referansları, özet bölümü`;
 
 const AGENT_DESCRIPTIONS: Record<string, string> = {

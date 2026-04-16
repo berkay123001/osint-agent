@@ -169,6 +169,13 @@ Her makale için çıkar: Problem, yöntem, sayısal sonuçlar, sınırlılıkla
 **FAZ 4 — İÇERİK OKUMA** (5-7 makale, her gruptan en az 1)
   web_fetch → ar5iv.labs.arxiv.org/html/[id] | Fallback: arxiv.org/abs/[id]
 
+**GITHUB REPO DOĞRULAMA** (konu aramasında GitHub linki geçiyorsa)
+  Eğer görevde açık kaynak repolar isteniyorsa, search_web ile bulunan her repo için:
+  1. web_fetch → github.com/[owner]/[repo] (README çek)
+  2. Önemli: Yıldız sayısı, güncellik, aktif geliştirme durumunu README'den çıkar
+  3. Repo özelliklerini SOMUT bir şekilde listele — jenerik açıklama YAZMA
+  4. ⚠️ README'de geçmeyen özellikleri UYDURMA
+
 # FAZ İLERLEME KURALI
 FAZ 1 → 2 → 3 → 4 sırasıyla ilerle. GERİ DÖNME.
 FAZ 2'de FAZ 1'e dönüp search_academic_papers çağırmak YASAK.
