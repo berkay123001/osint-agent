@@ -3,11 +3,11 @@ import 'dotenv/config';
 import { emitProgress } from './lib/progressEmitter.js';
 import { startLogServer } from './logServer.js';
 
-// Ink stdout'u yönetir — hiçbir şey stderr/stdout'a doğrudan yazmamalı
-// Tüm console.* çağrıları emitProgress üzerinden TUI log panel'ine yönlendirilir
+// Ink manages stdout — nothing should write directly to stderr/stdout
+// All console.* calls are routed through emitProgress to the TUI log panel
 process.env.LOG_LEVEL = 'ERROR';
 
-// Web tabanlı log panelini başlat (http://localhost:3334)
+// Start the web-based log panel (http://localhost:3334)
 startLogServer();
 console.log = (...args: unknown[]) => emitProgress(args.map(String).join(' '));
 console.info = (...args: unknown[]) => emitProgress(args.map(String).join(' '));

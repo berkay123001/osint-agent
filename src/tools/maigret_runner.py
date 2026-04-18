@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Maigret JSON runner — TypeScript wrapper tarafından çağrılır.
-Username için 3000+ platformda hesap arama.
-Çıktı: JSON (stdout)
+Maigret JSON runner — called by the TypeScript wrapper.
+Account search across 3000+ platforms for a given username.
+Output: JSON (stdout)
 """
 import sys
 import json
@@ -16,17 +16,17 @@ async def run_maigret(username: str, top_sites: int, timeout: int):
         from maigret.checking import maigret, MaigretDatabase, MaigretCheckStatus
         import maigret as _m
     except ImportError as e:
-        print(json.dumps({"error": f"maigret yüklü değil: {e}"}))
+        print(json.dumps({"error": f"maigret not installed: {e}"}))
         sys.exit(1)
 
     db_path = Path(_m.__file__).parent / "resources" / "data.json"
     if not db_path.exists():
-        print(json.dumps({"error": f"maigret data.json bulunamadı: {db_path}"}))
+        print(json.dumps({"error": f"maigret data.json not found: {db_path}"}))
         sys.exit(1)
 
     db = MaigretDatabase().load_from_file(str(db_path))
 
-    # En popüler N siteyi al (ranked_sites_dict zaten sıralı)
+    # Take the top N most popular sites (ranked_sites_dict is already sorted)
     try:
         site_dict = db.ranked_sites_dict(top=top_sites)
     except Exception:
@@ -42,7 +42,7 @@ async def run_maigret(username: str, top_sites: int, timeout: int):
         site_dict=site_dict,
         logger=logger,
         timeout=timeout,
-        max_connections=10,    # rate-limit azaltmak için düşük tut
+        max_connections=10,    # keep low to reduce rate-limit hits
         no_progressbar=True,
         is_parsing_enabled=False,
     )
@@ -72,14 +72,14 @@ async def run_maigret(username: str, top_sites: int, timeout: int):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print(json.dumps({"error": "Kullanım: maigret_runner.py <username> [top_sites] [timeout]"}))
+        print(json.dumps({"error": "Usage: maigret_runner.py <username> [top_sites] [timeout]"}))
         sys.exit(1)
 
     username = sys.argv[1]
-    # Güvenlik: username sadece alfanumerik + - _ . izin ver
+    # Security: allow only alphanumeric + - _ . in username
     import re
     if not re.match(r'^[A-Za-z0-9_.\-]{1,50}$', username):
-        print(json.dumps({"error": f"Geçersiz username formatı: {username}"}))
+        print(json.dumps({"error": f"Invalid username format: {username}"}))
         sys.exit(1)
 
     top_sites = int(sys.argv[2]) if len(sys.argv) > 2 else 500

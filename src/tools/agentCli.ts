@@ -1,14 +1,14 @@
 /**
- * agentCli.ts — Copilot'un ajanla konuşmasını sağlayan CLI aracı
+ * agentCli.ts — CLI tool enabling Copilot to chat with the OSINT agent
  * ──────────────────────────────────────────────────────────────────
- * Kullanım:
- *   npx tsx src/tools/agentCli.ts "mesaj buraya"       ← tek mesaj gönder
- *   npx tsx src/tools/agentCli.ts --reset              ← oturumu sıfırla
- *   npx tsx src/tools/agentCli.ts --history            ← geçmişi göster
- *   npx tsx src/tools/agentCli.ts --last               ← son yanıtı göster
+ * Usage:
+ *   npx tsx src/tools/agentCli.ts "your message"          ← send a single message
+ *   npx tsx src/tools/agentCli.ts --reset                 ← reset session
+ *   npx tsx src/tools/agentCli.ts --history               ← show history
+ *   npx tsx src/tools/agentCli.ts --last                  ← show last response
  *
- * Oturum .osint-sessions/cli-session.json dosyasında saklanır.
- * Copilot bu aracı run_in_terminal ile çağırarak çok turlu konuşma sürdürür.
+ * Session is persisted in .osint-sessions/cli-session.json
+ * Copilot calls this tool via run_in_terminal to maintain multi-turn conversations.
  */
 import 'dotenv/config';
 import * as fs from 'fs';
@@ -20,7 +20,7 @@ import type { Message } from '../agents/types.js';
 const SESSION_DIR  = path.join(process.cwd(), '.osint-sessions');
 const SESSION_FILE = path.join(SESSION_DIR, 'cli-session.json');
 
-// ── Oturum yönetimi ──────────────────────────────────────────────────────────
+// ── Session management ──────────────────────────────────────────────────────────
 interface CliSession {
   createdAt: string;
   lastActive: string;
@@ -46,20 +46,20 @@ function deleteSession(): void {
   try { if (fs.existsSync(SESSION_FILE)) fs.rmSync(SESSION_FILE); } catch { /* no-op */ }
 }
 
-// ── Çıktı formatlayıcı (renksiz — terminale ham metin) ───────────────────────
+// ── Output formatter (no colour — raw text for terminal) ───────────────────────
 function plain(text: string): string {
-  // ANSI escape kodlarını temizle — Copilot'un okuması için
+  // Strip ANSI escape codes — for Copilot readability
   return text.replace(/\x1b\[[0-9;]*m/g, '').trimEnd();
 }
 
-// ── Ana mantık ───────────────────────────────────────────────────────────────
+// ── Main logic ───────────────────────────────────────────────────────────────
 async function main() {
   const args = process.argv.slice(2);
 
   // --reset
   if (args[0] === '--reset') {
     deleteSession();
-    console.log('[CLI] Oturum sıfırlandı.');
+    console.log('[CLI] Session reset.');
     process.exit(0);
   }
 
@@ -70,24 +70,24 @@ async function main() {
     const userMsgs  = session.history.filter(m => m.role === 'user');
     const agentMsgs = session.history.filter(m => m.role === 'assistant');
     console.log(`[SESSION]`);
-    console.log(`  Tur sayısı  : ${session.turns}`);
-    console.log(`  Soru sayısı : ${userMsgs.length}`);
-    console.log(`  Yanıt sayısı: ${agentMsgs.length}`);
-    console.log(`  Başlangıç   : ${new Date(session.createdAt).toLocaleString('tr-TR')}`);
+    console.log(`  Turns       : ${session.turns}`);
+    console.log(`  Questions   : ${userMsgs.length}`);
+    console.log(`  Responses   : ${agentMsgs.length}`);
+    console.log(`  Started     : ${new Date(session.createdAt).toLocaleString('en-US')}`);
     console.log(`  Son aktiflik: ${new Date(session.lastActive).toLocaleString('tr-TR')}`);
     if (userMsgs.length > 0) {
       const lastQ = userMsgs[userMsgs.length - 1];
-      const preview = typeof lastQ.content === 'string' ? lastQ.content.slice(0, 100) : '[karmaşık]';
+      const preview = typeof lastQ.content === 'string' ? lastQ.content.slice(0, 100) : '[complex]';
       console.log(`  Son soru    : "${preview}"`);
     }
     process.exit(0);
   }
 
-  // --last (son yanıtı göster)
+  // --last (show last response)
   if (args[0] === '--last') {
     const lastAssistant = [...session.history].reverse().find(m => m.role === 'assistant');
     if (!lastAssistant) {
-      console.log('[CLI] Henüz yanıt yok.');
+      console.log('[CLI] No response yet.');
     } else {
       const content = typeof lastAssistant.content === 'string'
         ? lastAssistant.content
@@ -99,25 +99,25 @@ async function main() {
     process.exit(0);
   }
 
-  // Normal mesaj gönderimi
+  // Normal message send
   const message = args.join(' ').trim();
   if (!message) {
-    console.error('[CLI] Hata: Mesaj boş. Kullanım: npx tsx src/tools/agentCli.ts "sorunuz"');
+    console.error('[CLI] Error: Message is empty. Usage: npx tsx src/tools/agentCli.ts "your question"');
     process.exit(1);
   }
 
-  // Session güncelle & ajanı çalıştır
+  // Update session & run agent
   session.history.push({ role: 'user', content: message });
   session.turns += 1;
   session.lastActive = new Date().toISOString();
 
   let agentResponse = '';
 
-  // runSupervisor çıktıyı console'a yazar; ama biz yanıtı da yakalamak istiyoruz.
-  // Bunun için history'yi doğrudan izliyoruz.
+  // runSupervisor writes output to console; but we also want to capture the response.
+  // We do this by directly watching the history array.
   await runSupervisor(session.history);
 
-  // runSupervisor history'ye assistant mesajı push eder
+  // runSupervisor pushes the assistant message to history
   const lastMsg = session.history[session.history.length - 1];
   if (lastMsg && lastMsg.role === 'assistant') {
     agentResponse = typeof lastMsg.content === 'string'
@@ -128,7 +128,7 @@ async function main() {
   // Kaydet
   saveSession(session);
 
-  // Copilot'un parse edebileceği format
+  // Format that Copilot can parse
   console.log('\n[AGENT_RESPONSE]');
   console.log(plain(agentResponse));
   console.log('[/AGENT_RESPONSE]');

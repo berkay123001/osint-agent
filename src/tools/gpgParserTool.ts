@@ -1,7 +1,7 @@
 /**
- * GPG Key Parser Tool — GPG public key'den email, isim ve metadata çıkarır.
+ * GPG Key Parser Tool — extracts email, name, and metadata from a GPG public key.
  * GitHub'daki .gpg endpoint'inden key indirir ve gpg --list-packets ile parse eder.
- * OSINT'te commit email gizlenmiş kullanıcıların gerçek email'ini bulmak için kullanılır.
+ * Used in OSINT to find the real email of users with hidden commit emails.
  */
 
 import { execFile } from 'child_process'
@@ -26,7 +26,7 @@ export interface GpgKeyInfo {
 }
 
 /**
- * GPG key dosyasından email ve isim çıkarır.
+ * Extracts email and name from a GPG key file.
  */
 export async function parseGpgKeyFile(filePath: string): Promise<GpgKeyInfo> {
   const result: GpgKeyInfo = {
@@ -40,7 +40,7 @@ export async function parseGpgKeyFile(filePath: string): Promise<GpgKeyInfo> {
   }
 
   try {
-    // Method 1: gpg --list-packets (en detaylı)
+    // Method 1: gpg --list-packets (most detailed)
     const { stdout: packetsOutput } = await execFileAsync('gpg', [
       '--list-packets',
       '--no-default-keyring',
@@ -49,18 +49,18 @@ export async function parseGpgKeyFile(filePath: string): Promise<GpgKeyInfo> {
 
     result.rawOutput = packetsOutput
 
-    // User ID satırlarından email çıkar
+    // Extract email from User ID lines
     const uidRegex = /user ID(?: packet:)?[ \t]+"([^"]+)"/g
     let match
     while ((match = uidRegex.exec(packetsOutput)) !== null) {
       const uid = match[1]
-      // Email çıkar (köşeli parantez içinde veya doğrudan)
+      // Extract email (inside angle brackets or directly)
       const emailMatch = uid.match(/<([^>]+@[^>]+)>/) || uid.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/)
       if (emailMatch) {
         const email = emailMatch[1]
         if (!result.emails.includes(email)) result.emails.push(email)
       }
-      // İsim çıkar (email'den önceki kısım)
+      // Extract name (portion before the email)
       const nameMatch = uid.match(/^([^<]+?)[\s]*</)
       if (nameMatch) {
         const name = nameMatch[1].trim()
@@ -72,7 +72,7 @@ export async function parseGpgKeyFile(filePath: string): Promise<GpgKeyInfo> {
       }
     }
 
-    // Key ID çıkar
+    // Extract Key ID
     const keyIdMatch = packetsOutput.match(/keyid\s+([A-F0-9]+)/i)
     if (keyIdMatch) result.keyId = keyIdMatch[1]
 
@@ -83,7 +83,7 @@ export async function parseGpgKeyFile(filePath: string): Promise<GpgKeyInfo> {
     // Method 2: gpg --import --dry-run (fallback, user-friendly output)
     if (result.emails.length === 0) {
       try {
-        // Geçici keyring kullan
+        // Use temporary keyring
         const tmpDir = path.join(os.tmpdir(), `gpg-parse-${Date.now()}`)
         await fs.mkdir(tmpDir, { recursive: true })
 
@@ -116,10 +116,10 @@ export async function parseGpgKeyFile(filePath: string): Promise<GpgKeyInfo> {
   } catch (e) {
     const fileContent = await fs.readFile(filePath, 'utf-8').catch(() => '')
     if (isGithubNoGpgPlaceholder(fileContent)) {
-      result.error = 'GitHub kullanıcısı için GPG key bulunamadı'
+      result.error = 'No GPG key found for this GitHub user'
       return result
     }
-    result.error = `GPG parse hatası: ${(e as Error).message}`
+    result.error = `GPG parse error: ${(e as Error).message}`
   }
 
   return result
@@ -127,7 +127,7 @@ export async function parseGpgKeyFile(filePath: string): Promise<GpgKeyInfo> {
 
 /**
  * GitHub username'den GPG key indirip parse eder.
- * https://github.com/{username}.gpg endpoint'ini kullanır.
+ * Uses the https://github.com/{username}.gpg endpoint.
  */
 export async function parseGithubGpgKey(username: string): Promise<GpgKeyInfo> {
   const url = `https://github.com/${encodeURIComponent(username)}.gpg`
@@ -146,7 +146,7 @@ export async function parseGithubGpgKey(username: string): Promise<GpgKeyInfo> {
     }
   }
 
-  // GPG key dosyasının boş olmadığını kontrol et
+  // Verify that the GPG key file is non-empty
   const content = await fs.readFile(fetchResult.savedTo, 'utf-8')
   if (isGithubNoGpgPlaceholder(content) || !hasUsableGithubGpgKey(content)) {
     return {
@@ -157,7 +157,7 @@ export async function parseGithubGpgKey(username: string): Promise<GpgKeyInfo> {
       created: null,
       algorithm: null,
       rawOutput: content.slice(0, 200),
-      error: `${username} için GPG key bulunamadı`,
+      error: `No GPG key found for ${username}`,
     }
   }
 
@@ -166,7 +166,7 @@ export async function parseGithubGpgKey(username: string): Promise<GpgKeyInfo> {
 }
 
 /**
- * GPG parse sonucunu okunabilir metin formatına çevirir.
+ * Converts a GPG parse result to a human-readable text format.
  */
 export function formatGpgResult(result: GpgKeyInfo): string {
   if (result.error) return `GPG Hata: ${result.error}`
@@ -191,7 +191,7 @@ export function formatGpgResult(result: GpgKeyInfo): string {
   if (result.algorithm) lines.push(`📏 Algorithm: ${result.algorithm}`)
 
   if (result.emails.length === 0 && result.names.length === 0) {
-    lines.push('\n⚠️  GPG key\'de email veya isim bulunamadı.')
+    lines.push('\n⚠️  No email or name found in the GPG key.')
   }
 
   return lines.join('\n')

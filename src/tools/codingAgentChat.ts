@@ -1,16 +1,16 @@
 /**
- * codingAgentChat.ts — Kodlama agent'larının (Claude Code, Copilot, vs.)
- * OSINT agent ile insana benzer şekilde sohbet etmesini sağlayan tool.
+ * codingAgentChat.ts — Tool that allows coding agents (Claude Code, Copilot, etc.)
+ * to chat with the OSINT agent in a machine-friendly way.
  *
- * Fark: agentCli.ts'ten farklı olarak:
- *   - stdout → yapılandırılmış JSON (makine-okunur)
- *   - stderr → log mesajları (LOG_LEVEL ile kontrol)
- *   - İsimlendirilmiş oturumlar (paralel araştırma desteği)
- *   - Daha iyi hata yönetimi
+ * Differences from agentCli.ts:
+ *   - stdout → structured JSON (machine-readable)
+ *   - stderr → log messages (controlled via LOG_LEVEL)
+ *   - Named sessions (supports parallel research)
+ *   - Better error handling
  *
- * Kullanım:
- *   npx tsx src/tools/codingAgentChat.ts "torvalds GitHub hesabını araştır"
- *   npx tsx src/tools/codingAgentChat.ts -s research1 "email adreslerini kontrol et"
+ * Usage:
+ *   npx tsx src/tools/codingAgentChat.ts "research the torvalds GitHub account"
+ *   npx tsx src/tools/codingAgentChat.ts -s research1 "check email addresses"
  *   npx tsx src/tools/codingAgentChat.ts --reset
  *   npx tsx src/tools/codingAgentChat.ts --reset -s research1
  *   npx tsx src/tools/codingAgentChat.ts --history
@@ -50,7 +50,7 @@ interface ChatResponse {
 const SESSION_DIR = path.join(process.cwd(), '.osint-sessions', 'coding-agent');
 const DEFAULT_SESSION = 'default';
 
-// ── Oturum yönetimi ─────────────────────────────────────────────────────────
+// ── Session management ─────────────────────────────────────────────────────────
 
 function ensureDir(): void {
   if (!fs.existsSync(SESSION_DIR)) {
@@ -69,7 +69,7 @@ function loadSession(id: string): ChatSession {
       return JSON.parse(fs.readFileSync(file, 'utf-8')) as ChatSession;
     }
   } catch {
-    logger.warn('SYSTEM', `Oturum dosyası bozuk: ${id}, yeni oturum başlatılıyor`);
+    logger.warn('SYSTEM', `Session file corrupt: ${id}, starting new session`);
   }
   return {
     id,
@@ -114,7 +114,7 @@ function listSessions(): Array<{ id: string; turns: number; lastActive: string }
   }
 }
 
-// ── Yardımcılar ─────────────────────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────────────
 
 function stripAnsi(text: string): string {
   return text.replace(/\x1b\[[0-9;]*m/g, '').trimEnd();
@@ -124,7 +124,7 @@ function outputJson(response: ChatResponse): void {
   process.stdout.write(JSON.stringify(response, null, 2) + '\n');
 }
 
-// ── Argüman parse ───────────────────────────────────────────────────────────
+// ── Argument parsing ───────────────────────────────────────────────────────────
 
 interface ParsedArgs {
   action: 'chat' | 'reset' | 'history' | 'sessions';
@@ -155,13 +155,13 @@ function parseArgs(args: string[]): ParsedArgs {
   return { action, message: positional.join(' ').trim(), sessionId };
 }
 
-// ── Session info yardımcısı ─────────────────────────────────────────────────
+// ── Session info helper ─────────────────────────────────────────────────
 
 function sessionInfo(s: ChatSession): { id: string; createdAt: string; turns: number } {
   return { id: s.id, createdAt: s.createdAt, turns: s.turns };
 }
 
-// ── Ana mantık ──────────────────────────────────────────────────────────────
+// ── Main logic ──────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
   const { action, message, sessionId } = parseArgs(process.argv.slice(2));
@@ -172,10 +172,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  // ── Sıfırlama ────────────────────────────────────────────────────────
+  // ── Reset ────────────────────────────────────────────────────────
   if (action === 'reset') {
     deleteSession(sessionId);
-    logger.info('SYSTEM', `Oturum sıfırlandı: ${sessionId}`);
+    logger.info('SYSTEM', `Session reset: ${sessionId}`);
     outputJson({
       ok: true,
       action: 'reset',
@@ -184,7 +184,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // ── Geçmiş ───────────────────────────────────────────────────────────
+  // ── History ───────────────────────────────────────────────────────────
   if (action === 'history') {
     const session = loadSession(sessionId);
     outputJson({
@@ -202,7 +202,7 @@ async function main(): Promise<void> {
     outputJson({
       ok: false,
       action: 'chat',
-      error: 'Mesaj boş. Kullanım: npx tsx src/tools/codingAgentChat.ts "mesajınız"',
+      error: 'Message is empty. Usage: npx tsx src/tools/codingAgentChat.ts "your message"',
     });
     process.exitCode = 1;
     return;
@@ -220,7 +220,7 @@ async function main(): Promise<void> {
     outputJson({
       ok: false,
       action: 'chat',
-      error: `Agent hatası: ${(error as Error).message}`,
+      error: `Agent error: ${(error as Error).message}`,
       session: sessionInfo(session),
     });
     process.exitCode = 1;
@@ -228,7 +228,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Yanıtı history'den çıkar
+  // Extract response from history
   const lastMsg = session.history[session.history.length - 1];
   const response =
     lastMsg && lastMsg.role === 'assistant'

@@ -28,7 +28,7 @@ async function main() {
   
   console.log('=== E2E Test Suite ===\n')
   
-  // Test 1: LLM çalışıyor mu?
+  // Test 1: Is LLM working?
   console.log('1️⃣  LLM Testi...')
   const llmResult = await llmGenerate('What is 2+2? Reply with just the number.')
   console.log(`   ✅ LLM: ${llmResult.text.trim()}\n`)
@@ -40,15 +40,15 @@ async function main() {
   )
   console.log(`   ✅ JSON: ${JSON.stringify(jsonResult)}\n`)
 
-  // Test 3: osgint çalışıyor mu?
+  // Test 3: Is osgint working?
   console.log(`3️⃣  Osgint Testi (${testUser})...`)
   const osgintOut = await testOsgint(testUser)
   const emails = [...new Set(osgintOut.match(/[\w.+-]+@[\w.-]+\.\w+/g) || [])]
   if (osgintOut) {
-    console.log(`   ✅ Osgint çıktı (ilk 200 char): ${osgintOut.slice(0, 200)}`)
-    console.log(`   📧 Bulunan emailler: ${emails.length > 0 ? emails.join(', ') : 'yok'}`)
+    console.log(`   ✅ Osgint output (first 200 chars): ${osgintOut.slice(0, 200)}`)
+    console.log(`   📧 Found emails: ${emails.length > 0 ? emails.join(', ') : 'none'}`)
   } else {
-    console.log('   ⚠️  Osgint çıktı vermedi (GitHub rate limit olabilir)')
+    console.log('   ⚠️  Osgint returned no output (possible GitHub rate limit)')
   }
 
   // Test 4: PII extraction with LLM
@@ -78,7 +78,7 @@ ${sampleData}`)
     console.log(`      Locations: ${pii.locations?.join(', ') || 'none'}`)
   }
 
-  console.log('\n=== Tüm testler tamamlandı ===')
+  console.log('\n=== All tests completed ===')
 }
 
 main().catch(console.error)

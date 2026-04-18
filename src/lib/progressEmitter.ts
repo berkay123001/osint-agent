@@ -1,13 +1,14 @@
 import { EventEmitter } from 'node:events';
+import type { LLMTelemetryEvent } from './llmTelemetry.js';
 
 /**
- * Global ilerleme olayı yayıcısı.
- * Tüm araç/ajan log mesajları bu emitter üzerinden iletilir.
- * chatInk.tsx bu emitter'ı dinleyerek mesajları UI'da gösterir.
- * stderr'e hiçbir şey yazılmaz — Ink stdout yönetimi bozulmaz.
+ * Global progress event emitter.
+ * All tool/agent log messages are routed through this emitter.
+ * chatInk.tsx listens to this emitter and displays messages in the UI.
+ * Nothing is written to stderr — Ink stdout management is preserved.
  *
- * 'progress' — kısa özet (TUI + web)
- * 'detail'   — tam araç çıktısı (sadece web log paneli dinler)
+ * 'progress' — short summary (TUI + web)
+ * 'detail'   — full tool output (only the web log panel listens)
  */
 const emitter = new EventEmitter();
 emitter.setMaxListeners(50);
@@ -19,9 +20,17 @@ export function emitProgress(message: string): void {
 }
 
 /**
- * Tam araç çıktısını web log paneline gönderir — TUI görmez.
- * toolName: araç adı, output: ham çıktı (kırpılmamış)
+ * Sends the full tool output to the web log panel — the TUI does not see it.
+ * toolName: tool name, output: raw output (untruncated)
  */
 export function emitToolDetail(toolName: string, output: string): void {
   emitter.emit('detail', { toolName, output });
+}
+
+export function emitTelemetry(event: LLMTelemetryEvent): void {
+  emitter.emit('telemetry', event);
+}
+
+export function emitSessionReset(): void {
+  emitter.emit('session-reset');
 }

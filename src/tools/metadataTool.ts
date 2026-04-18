@@ -1,7 +1,7 @@
 /**
  * Metadata Extraction Tool — exiftool CLI wrapper.
- * Dosya veya URL'den EXIF/XMP/IPTC metadata çıkarır.
- * OSINT'te fotoğraf analizi, dosya kökeni tespiti, username çıkarma için kullanılır.
+ * Extracts EXIF/XMP/IPTC metadata from a file or URL.
+ * Used in OSINT for photo analysis, file origin detection, and username extraction.
  */
 
 import { execFile } from 'child_process'
@@ -18,7 +18,7 @@ export interface MetadataResult {
   error?: string
 }
 
-// OSINT açısından önemli metadata alanları
+// Metadata fields relevant for OSINT
 const INTERESTING_KEYS = [
   'Author', 'Creator', 'Artist', 'Copyright',
   'XPAuthor', 'OwnerName', 'CameraOwnerName',
@@ -36,7 +36,7 @@ const INTERESTING_KEYS = [
 ]
 
 /**
- * Dosya yolundan metadata çıkarır (exiftool).
+ * Extracts metadata from a file path (exiftool).
  */
 export async function extractMetadataFromFile(filePath: string): Promise<MetadataResult> {
   const result: MetadataResult = {
@@ -61,30 +61,30 @@ export async function extractMetadataFromFile(filePath: string): Promise<Metadat
     if (parsed && parsed[0]) {
       const meta = parsed[0] as Record<string, unknown>
 
-      // Tüm alanları string olarak kaydet
+      // Store all fields as strings
       for (const [key, value] of Object.entries(meta)) {
         if (value !== null && value !== undefined && value !== '') {
           result.fields[key] = String(value)
         }
       }
 
-      // İlginç alanları filtrele
+      // Filter for interesting fields
       for (const [key, value] of Object.entries(result.fields)) {
-        const cleanKey = key.replace(/^[^:]+:/, '') // Group prefix'i kaldır
+        const cleanKey = key.replace(/^[^:]+:/, '') // Remove group prefix
         if (INTERESTING_KEYS.some((ik) => cleanKey.toLowerCase().includes(ik.toLowerCase()))) {
           result.interestingFields[key] = value
         }
       }
     }
   } catch (e) {
-    result.error = `Metadata çıkarma hatası: ${(e as Error).message}`
+    result.error = `Metadata extraction error: ${(e as Error).message}`
   }
 
   return result
 }
 
 /**
- * URL'den dosya indirip metadata çıkarır.
+ * Downloads a file from a URL and extracts its metadata.
  */
 export async function extractMetadataFromUrl(url: string): Promise<MetadataResult> {
   const fetchResult = await webFetch(url)
@@ -103,7 +103,7 @@ export async function extractMetadataFromUrl(url: string): Promise<MetadataResul
 }
 
 /**
- * Metadata sonucunu okunabilir metin formatına çevirir.
+ * Converts a metadata result to a human-readable text format.
  */
 export function formatMetadata(result: MetadataResult): string {
   if (result.error) return `Hata: ${result.error}`
@@ -112,13 +112,13 @@ export function formatMetadata(result: MetadataResult): string {
 
   const interesting = Object.entries(result.interestingFields)
   if (interesting.length > 0) {
-    lines.push('\n🔍 OSINT açısından önemli alanlar:')
+    lines.push('\n🔍 Fields relevant for OSINT:')
     for (const [key, value] of interesting) {
       lines.push(`  ${key}: ${value}`)
     }
   }
 
-  lines.push(`\n📋 Tüm metadata (${Object.keys(result.fields).length} alan):`)
+  lines.push(`\n📋 All metadata (${Object.keys(result.fields).length} field(s)):`)
   for (const [key, value] of Object.entries(result.fields)) {
     // Skip binary/long fields
     if (String(value).length > 200) continue

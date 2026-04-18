@@ -5,10 +5,10 @@ import { compareImages } from './phashCompareTool.js';
 export const phashCompareTool = ai.defineTool(
   {
     name: 'phashCompareTool',
-    description: 'İki görselin perceptual hash (pHash) değerlerini karşılaştırarak kriptografik olarak benzerliklerini (Levenshtein Threshold) ölçer. Bir haberdeki görselin başka bir bağlamdaki fotoğrafla aynı olup olmadığını bulmak ve dezenformasyonu kanıtlamak için kullanılır.',
+    description: 'Compares two images using perceptual hashing (pHash) to measure pixel-level similarity (Levenshtein threshold). Useful for determining whether an image in a news story is the same as one seen in another context, and for providing evidence of disinformation.',
     inputSchema: z.object({
-      url1: z.string().describe('Birinci görselin tam URLsi (örnek: iddia edilen yalan haber fotoğrafı)'),
-      url2: z.string().describe('Karşılaştırma yapılacak ikinci görselin tam URLsi (örnek: gerçek/eski kaynak fotoğrafı)'),
+      url1: z.string().describe('Full URL of the first image (e.g. the alleged fake-news photo)'),
+      url2: z.string().describe('Full URL of the second image to compare (e.g. the genuine/original source photo)'),
     }),
     outputSchema: z.string(),
   },

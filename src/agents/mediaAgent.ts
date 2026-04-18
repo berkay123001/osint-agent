@@ -27,7 +27,7 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
     const assistantMsg = msg as { role: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] };
     if (assistantMsg.role !== 'assistant' || !assistantMsg.tool_calls) continue;
     for (const tc of assistantMsg.tool_calls) {
-      const result = toolResultMap.get(tc.id) ?? '(sonuç yok)';
+      const result = toolResultMap.get(tc.id) ?? '(no result)';
       calls.push({ name: tc.function.name, args: tc.function.arguments, result });
     }
   }
@@ -38,50 +38,50 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
     groups[c.name].push(c);
   }
   const MAX_RESULT_CHARS = 3000;
-  let md = `# 📰 Medya Araştırması Ham Bilgi Tabanı\n\n`;
-  md += `**Sorgu:** ${query}\n**Tarih:** ${new Date().toISOString()}\n**Toplam araç çağrısı:** ${calls.length}\n\n---\n\n`;
+  let md = `# 📰 Media Investigation Raw Knowledge Base\n\n`;
+  md += `**Query:** ${query}\n**Date:** ${new Date().toISOString()}\n**Total tool calls:** ${calls.length}\n\n---\n\n`;
   const emoji: Record<string, string> = {
     extract_metadata: '🏷️', reverse_image_search: '🖼️', compare_images_phash: '🔢',
     fact_check_to_graph: '✔️', wayback_search: '🕰️', web_fetch: '📄',
     scrape_profile: '👁️', search_web: '🌐',
   };
   for (const [toolName, toolCalls] of Object.entries(groups)) {
-    md += `## ${emoji[toolName] ?? '🔧'} ${toolName} (${toolCalls.length} çağrı)\n\n`;
+    md += `## ${emoji[toolName] ?? '🔧'} ${toolName} (${toolCalls.length} calls)\n\n`;
     for (let i = 0; i < toolCalls.length; i++) {
       let args: Record<string, string> = {};
       try { args = JSON.parse(toolCalls[i].args); } catch { /* ignore */ }
       const argStr = Object.entries(args).map(([k, v]) => `${k}="${v}"`).join(', ');
       const result = toolCalls[i].result;
       const truncated = result.length > MAX_RESULT_CHARS
-        ? result.slice(0, MAX_RESULT_CHARS) + `\n... [${result.length - MAX_RESULT_CHARS} karakter kesildi]`
+        ? result.slice(0, MAX_RESULT_CHARS) + `\n... [${result.length - MAX_RESULT_CHARS} characters truncated]`
         : result;
-      md += `### Çağrı ${i + 1}: \`${argStr}\`\n\`\`\`\n${truncated}\n\`\`\`\n\n`;
+      md += `### Call ${i + 1}: \`${argStr}\`\n\`\`\`\n${truncated}\n\`\`\`\n\n`;
     }
   }
   try {
     const dir = path.resolve(__dirname, '../../.osint-sessions');
     await mkdir(dir, { recursive: true });
     await writeFile(path.join(dir, 'media-knowledge.md'), md, 'utf-8');
-    emitProgress(`🧠 Medya bilgi tabanı kaydedildi (${calls.length} araç sonucu)`);
-  } catch { /* sessizce geç */ }
+    emitProgress(`🧠 Media knowledge base saved (${calls.length} tool results)`);
+  } catch { /* skip silently */ }
 }
 
 const MEDIA_TOOLS = [
   'extract_metadata', 'reverse_image_search', 'compare_images_phash', 
   'fact_check_to_graph', 'wayback_search',
-  'web_fetch',         // URL'leri bağımsız doğrulama için
-  'scrape_profile',    // Haber sayfalarını tam olarak okumak için
-  'search_web',        // Ek kaynak taraması için
-  'search_web_multi',  // Aynı konuyu farklı açılardan paralel aramak için (max 3 sorgu)
-  'verify_claim',      // "ücretsiz", "resmi açıklama" gibi iddiaları doğrulamak için
-  'auto_visual_intel', // Profil fotoğraflarından otomatik tersine görsel arama
+  'web_fetch',         // Independent URL verification
+  'scrape_profile',    // Read news pages in full
+  'search_web',        // Additional source search
+  'search_web_multi',  // Parallel search on the same topic from different angles (max 3 queries)
+  'verify_claim',      // Verify claims like "free", "official statement"
+  'auto_visual_intel', // Automatic reverse image search from profile photos
 ];
 
 export const mediaAgentConfig: AgentConfig = {
   name: 'MediaAgent',
   model: 'qwen/qwen3.5-flash-02-23',
-  maxToolCalls: 25,          // Context büyümesini yavaşlat — ham HTML/Markdown uzun gelir
-  maxEmptyRetries: 3,        // Uzun tool zincirlerinden sonra Qwen thinking bitip boş dönebilir
+  maxToolCalls: 25,          // Slow down context growth — raw HTML/Markdown outputs can be very long
+  maxEmptyRetries: 3,        // Qwen thinking can end and return empty after long tool chains
   tools: tools.filter((t: any) => t.type === 'function' && MEDIA_TOOLS.includes(t.function.name)),
   executeTool: executeTool,
   systemPrompt: `# IDENTITY
@@ -150,13 +150,13 @@ Claim verified/debunked/unclear + justification
 Which sources say what — comparison table`,
 };
 
-// depth → maxToolCalls çarpanı: quick=0.5x, normal=1x, deep=1.75x
+// depth → maxToolCalls multiplier: quick=0.5x, normal=1x, deep=1.75x
 const DEPTH_MULTIPLIERS: Record<string, number> = { quick: 0.5, normal: 1, deep: 1.75 };
 
 export async function runMediaAgent(query: string, context?: string, depth?: string, existingHistory?: Message[]): Promise<SubAgentResult> {
   const multiplier = DEPTH_MULTIPLIERS[depth ?? 'normal'] ?? 1;
   const maxToolCalls = Math.ceil((mediaAgentConfig.maxToolCalls ?? 25) * multiplier);
-  emitProgress(`📰 MediaAgent → "${query.length > 120 ? query.slice(0, 117) + '...' : query}" [derinlik: ${depth ?? 'normal'}, bütçe: ${maxToolCalls}]`);
+  emitProgress(`📰 MediaAgent → "${query.length > 120 ? query.slice(0, 117) + '...' : query}" [depth: ${depth ?? 'normal'}, budget: ${maxToolCalls}]`);
 
   const history: Message[] = existingHistory
     ? [...existingHistory]
@@ -170,7 +170,7 @@ export async function runMediaAgent(query: string, context?: string, depth?: str
   const toolSummary = Object.entries(result.toolsUsed)
     .map(([tool, count]) => `${tool}×${count}`)
     .join(', ');
-  emitProgress(`✅ MediaAgent tamamlandı [${result.toolCallCount} araç: ${toolSummary || 'yok'}]`);
-  const meta = `\n\n---\n**[META] MediaAgent araç istatistikleri:** ${toolSummary || 'araç kullanılmadı'} (toplam: ${result.toolCallCount})`;
+  emitProgress(`✅ MediaAgent completed [${result.toolCallCount} tools: ${toolSummary || 'none'}]`);
+  const meta = `\n\n---\n**[META] MediaAgent tool stats:** ${toolSummary || 'no tools used'} (total: ${result.toolCallCount})`;
   return { response: result.finalResponse + meta, history };
 }

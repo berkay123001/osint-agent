@@ -40,7 +40,7 @@ export async function llmGenerateJSON<T>(prompt: string): Promise<T | null> {
   try {
     return JSON.parse(text) as T
   } catch {
-    // JSON_object format desteği yoksa raw parse
+    // If JSON_object format is not supported, try raw parse
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (jsonMatch) {
       return JSON.parse(jsonMatch[0]) as T

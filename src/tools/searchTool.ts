@@ -14,14 +14,14 @@ export interface SearchToolResponse {
 import { emitProgress } from '../lib/progressEmitter.js'
 
 /**
- * SearXNG (self-hosted metasearch engine) üzerinden web araması yapar.
- * 100+ arama motorunu aggregate eder, API key gerektirmez.
- * Docker ile localhost:8888'de çalışır — çalışmıyorsa sessizce Brave'e düşer.
+ * Performs a web search via SearXNG (self-hosted metasearch engine).
+ * Aggregates 100+ search engines, no API key required.
+ * Runs via Docker at localhost:8888 — silently falls through to Brave if unavailable.
  */
 async function searchSearXNG(query: string, limit: number = 10): Promise<SearchToolResponse> {
   const baseUrl = process.env.SEARXNG_URL || 'http://localhost:8888'
   try {
-    // mojeek ve yep'i açıkça dahil et: bot koruması düşük, quoted query destekli
+    // explicitly include mojeek and yep: lower bot protection, supports quoted queries
     const url = `${baseUrl}/search?q=${encodeURIComponent(query)}&format=json&categories=general&language=all&engines=mojeek,yep,aol,google,bing,brave`
     const response = await fetch(url, {
       headers: { 'Accept': 'application/json' },
@@ -33,8 +33,8 @@ async function searchSearXNG(query: string, limit: number = 10): Promise<SearchT
     const data = await response.json()
     const rawResults: any[] = data?.results ?? []
     if (!Array.isArray(rawResults) || rawResults.length === 0) {
-      // Tırnak içeren sorgular SearXNG'de çalışan motorlarda (AOL) 0 sonuç verebilir.
-      // Tırnakları kaldırarak tekrar dene.
+      // Quoted queries can return 0 results on some SearXNG engines (e.g. AOL).
+      // Retry without quotes.
       const hasQuotes = query.includes('"')
       if (hasQuotes) {
         const unquoted = query.replace(/"/g, '')
@@ -48,7 +48,7 @@ async function searchSearXNG(query: string, limit: number = 10): Promise<SearchT
           const retryResults: any[] = retryData?.results ?? []
           if (Array.isArray(retryResults) && retryResults.length > 0) {
             const results: SearchResult[] = retryResults.slice(0, limit).map((r: any) => ({
-              title: r.title || 'Başlıksız',
+              title: r.title || 'Untitled',
               snippet: (r.content || '').slice(0, 400).replace(/\n+/g, ' ').trim(),
               url: r.url || '',
             }))
@@ -56,22 +56,22 @@ async function searchSearXNG(query: string, limit: number = 10): Promise<SearchT
           }
         }
       }
-      return { query, results: [], error: 'SearXNG sonuç döndürmedi.' }
+      return { query, results: [], error: 'SearXNG returned no results.' }
     }
     const results: SearchResult[] = rawResults.slice(0, limit).map((r: any) => ({
-      title: r.title || 'Başlıksız',
+      title: r.title || 'Untitled',
       snippet: (r.content || '').slice(0, 400).replace(/\n+/g, ' ').trim(),
       url: r.url || '',
     }))
     return { query, results, provider: 'SearXNG' }
   } catch (error) {
-    return { query, results: [], error: `SearXNG erişilemiyor: ${(error as Error).message}` }
+    return { query, results: [], error: `SearXNG unreachable: ${(error as Error).message}` }
   }
 }
 
 /**
- * Brave Search saat basında 1 req/sn sınırı var (Free plan).
- * Eş zamanlı çağrılarda 429 almamak için global throttle.
+ * Brave Search has a 1 req/s rate limit (Free plan).
+ * Global throttle to avoid 429s on concurrent calls.
  */
 let _lastBraveCallAt = 0
 const BRAVE_MIN_INTERVAL_MS = 1100 // 1.1s — free plan: 1 req/sec
@@ -84,12 +84,12 @@ async function throttleBrave(): Promise<void> {
 }
 
 /**
- * Brave Search API üzerinden web araması yapar.
+ * Performs a web search via the Brave Search API.
  */
 async function searchBrave(query: string, limit: number = 10): Promise<SearchToolResponse> {
   const apiKey = process.env.BRAVE_SEARCH_API_KEY
   if (!apiKey) {
-    return { query, results: [], error: 'BRAVE_SEARCH_API_KEY tanımlı değil.' }
+    return { query, results: [], error: 'BRAVE_SEARCH_API_KEY is not defined.' }
   }
 
   await throttleBrave()
@@ -106,36 +106,36 @@ async function searchBrave(query: string, limit: number = 10): Promise<SearchToo
 
     if (!response.ok) {
       const errText = await response.text()
-      return { query, results: [], error: `Brave API hatası (HTTP ${response.status}): ${errText}` }
+      return { query, results: [], error: `Brave API error (HTTP ${response.status}): ${errText}` }
     }
 
     const data = await response.json()
     const webResults = data?.web?.results ?? []
 
     if (!Array.isArray(webResults) || webResults.length === 0) {
-      return { query, results: [], error: 'Brave API sonuç döndürmedi.' }
+      return { query, results: [], error: 'Brave API returned no results.' }
     }
 
     const results: SearchResult[] = webResults.map((r: any) => ({
-      title: r.title || 'Başlıksız',
+      title: r.title || 'Untitled',
       snippet: (r.description || '').slice(0, 400).replace(/\n+/g, ' ').trim(),
       url: r.url || ''
     }))
 
     return { query, results, provider: 'Brave Search' }
   } catch (error) {
-    return { query, results: [], error: `Brave arama hatası: ${(error as Error).message}` }
+    return { query, results: [], error: `Brave search error: ${(error as Error).message}` }
   }
 }
 
 /**
- * Tavily API üzerinden web araması yapar.
- * Yapay zeka ajanları için optimize edilmiş gelişmiş arama sonuçları döndürür.
+ * Performs a web search via the Tavily API.
+ * Returns advanced search results optimised for AI agents.
  */
 async function searchTavily(query: string, limit: number = 10): Promise<SearchToolResponse> {
   const apiKey = process.env.TAVILY_API_KEY
   if (!apiKey) {
-    return { query, results: [], error: 'TAVILY_API_KEY .env dosyasında tanımlı değil.' }
+    return { query, results: [], error: 'TAVILY_API_KEY is not defined in .env.' }
   }
   
   try {
@@ -157,50 +157,50 @@ async function searchTavily(query: string, limit: number = 10): Promise<SearchTo
 
     if (!response.ok) {
       const errText = await response.text();
-      return { query, results: [], error: `Tavily API hatası (HTTP ${response.status}): ${errText}` };
+      return { query, results: [], error: `Tavily API error (HTTP ${response.status}): ${errText}` };
     }
 
     const data = await response.json();
     
     if (!data.results || !Array.isArray(data.results)) {
-      return { query, results: [], error: 'Tavily API beklenmeyen bir format döndürdü.' };
+      return { query, results: [], error: 'Tavily API returned an unexpected format.' };
     }
 
     const results: SearchResult[] = data.results.map((r: any) => ({
-      title: r.title || 'Başlıksız',
+      title: r.title || 'Untitled',
       snippet: (r.content || '').slice(0, 400).replace(/\n+/g, ' ').trim(),
       url: r.url || ''
     }));
 
     return { query, results, provider: 'Tavily' };
   } catch (error) {
-    return { query, results: [], error: `Tavily arama hatası: ${(error as Error).message}` };
+    return { query, results: [], error: `Tavily search error: ${(error as Error).message}` };
   }
 }
 
 /**
- * Google Custom Search API üzerinden web araması yapar.
- * GOOGLE_SEARCH_API_KEY + GOOGLE_SEARCH_CX (.env) gereklidir.
- * Ücretsiz limit: 100 sorgu/gün. Ücretli: $5/1000 sorgu.
+ * Performs a web search via the Google Custom Search API.
+ * Requires GOOGLE_SEARCH_API_KEY + GOOGLE_SEARCH_CX in .env.
+ * Free quota: 100 queries/day. Paid: $5/1000 queries.
  */
 async function searchGoogle(query: string, limit: number = 10): Promise<SearchToolResponse> {
   const apiKey = process.env.GOOGLE_SEARCH_API_KEY
   const cx = process.env.GOOGLE_SEARCH_CX
   if (!apiKey || !cx) {
-    return { query, results: [], error: 'GOOGLE_SEARCH_API_KEY veya GOOGLE_SEARCH_CX tanımlı değil.' }
+    return { query, results: [], error: 'GOOGLE_SEARCH_API_KEY or GOOGLE_SEARCH_CX is not defined.' }
   }
 
   try {
-    // Google CSE max 10 sonuç döndürür — limit>10 ise iki istek at
+    // Google CSE returns max 10 results — issue two requests if limit > 10
     const fetchPage = async (start: number, num: number): Promise<any[]> => {
       const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&q=${encodeURIComponent(query)}&num=${Math.min(num, 10)}&start=${start}`
       const res = await fetch(url, { signal: AbortSignal.timeout(10000) })
       if (!res.ok) {
         if (res.status === 429) {
-          throw new Error(`Google CSE HTTP 429: Günlük kota doldu`)
+          throw new Error(`Google CSE HTTP 429: Daily quota exceeded`)
         }
         const err = await res.text()
-        // Uzun JSON hata gövdesini kısalt — sadece status kodu yeterli
+        // Truncate long JSON error body — status code is enough
         throw new Error(`Google CSE HTTP ${res.status}: ${err.slice(0, 120)}`)
       }
       const data = await res.json()
@@ -214,26 +214,26 @@ async function searchGoogle(query: string, limit: number = 10): Promise<SearchTo
     }
 
     if (items.length === 0) {
-      return { query, results: [], error: 'Google CSE sonuç döndürmedi.' }
+      return { query, results: [], error: 'Google CSE returned no results.' }
     }
 
     const results: SearchResult[] = items.map((r: any) => ({
-      title: r.title || 'Başlıksız',
+      title: r.title || 'Untitled',
       snippet: (r.snippet || '').replace(/\n+/g, ' ').trim().slice(0, 400),
       url: r.link || '',
     }))
 
     return { query, results, provider: 'Google Search' }
   } catch (error) {
-    return { query, results: [], error: `Google CSE hatası: ${(error as Error).message}` }
+    return { query, results: [], error: `Google CSE error: ${(error as Error).message}` }
   }
 }
 
 /**
- * Brave'in zayıf olduğu sorgu tipleri — doğrudan Google/Tavily'ye git.
- * - site:x.com / site:twitter.com — Brave sosyal medyayı indekslemiyor
- * - site:instagram.com, site:linkedin.com — aynı durum
- * - site:reddit.com — kısmi destek
+ * Query types where Brave is weak — go directly to Google/Tavily.
+ * - site:x.com / site:twitter.com — Brave does not index social media
+ * - site:instagram.com, site:linkedin.com — same situation
+ * - site:reddit.com — partial support
  */
 const BRAVE_WEAK_PATTERNS = [
   /\bsite:(x\.com|twitter\.com|instagram\.com|linkedin\.com|reddit\.com|facebook\.com)\b/i,
@@ -244,44 +244,44 @@ function braveIsWeak(query: string): boolean {
 }
 
 /**
- * Çok katmanlı arama zinciri:
+ * Multi-tier search chain:
  *   SearXNG (self-hosted) → Brave → Google CSE → Tavily
  *
- * - SearXNG: self-hosted metasearch, 100+ motor, sıfır limit, API key gereksiz
- * - Brave: hız ve genel web için ikincil
- * - Google CSE: büyük index, güvenilir kapsama alanı
- * - Tavily: son çare (kredi koruması)
+ * - SearXNG: self-hosted metasearch, 100+ engines, zero quota, no API key
+ * - Brave: secondary for speed and general web
+ * - Google CSE: large index, reliable coverage
+ * - Tavily: last resort (API credit conservation)
  */
 export async function searchWeb(query: string, limit: number = 10): Promise<SearchToolResponse> {
-  // 0) SearXNG (self-hosted, API key gerektirmez) — çalışmıyorsa anında düşer
+  // 0) SearXNG (self-hosted, no API key required) — falls through instantly if unavailable
   {
     const searxngResult = await searchSearXNG(query, limit)
     if (!searxngResult.error && searxngResult.results.length > 0) {
       return searxngResult
     }
-    emitProgress(`[SearchTool] SearXNG: ${searxngResult.error ?? 'sonuç yok'} → Brave'e geçiliyor...`)
+    emitProgress(`[SearchTool] SearXNG: ${searxngResult.error ?? 'no results'} → falling back to Brave...`)
   }
 
-  // 1) Brave Search (secondary) — Brave'in zayıf olduğu sosyal medya sorgularında atla
+  // 1) Brave Search (secondary) — skip for social media queries where Brave is weak
   if (process.env.BRAVE_SEARCH_API_KEY && !braveIsWeak(query)) {
     const braveResult = await searchBrave(query, limit)
     if (!braveResult.error && braveResult.results.length > 0) {
       return braveResult
     }
-    const reason = braveResult.error?.includes('429') ? '429 rate limit' : 'index eksik / sonuç yok'
-    emitProgress(`[SearchTool] Brave: ${reason} → Google CSE'ye geçiliyor...`)
+    const reason = braveResult.error?.includes('429') ? '429 rate limit' : 'no index / no results'
+    emitProgress(`[SearchTool] Brave: ${reason} → falling back to Google CSE...`)
   }
 
-  // 2) Google Custom Search (tertiary) — büyük index, güvenilir kapsama alanı
+  // 2) Google Custom Search (tertiary) — large index, reliable coverage
   if (process.env.GOOGLE_SEARCH_API_KEY && process.env.GOOGLE_SEARCH_CX) {
     const googleResult = await searchGoogle(query, limit)
     if (!googleResult.error && googleResult.results.length > 0) {
       return googleResult
     }
-    emitProgress(`[SearchTool] Google CSE: ${googleResult.error ?? 'sonuç yok'} → Tavily'ye geçiliyor...`)
+    emitProgress(`[SearchTool] Google CSE: ${googleResult.error ?? 'no results'} → falling back to Tavily...`)
   }
 
-  // 3) Tavily (son çare — kredi koruması)
+  // 3) Tavily (last resort — API credit conservation)
   if (process.env.TAVILY_API_KEY) {
     return await searchTavily(query, limit)
   }
@@ -289,32 +289,32 @@ export async function searchWeb(query: string, limit: number = 10): Promise<Sear
   return {
     query,
     results: [],
-    error: 'Arama API anahtarı bulunamadı. SEARXNG_URL, BRAVE_SEARCH_API_KEY, GOOGLE_SEARCH_API_KEY+GOOGLE_SEARCH_CX veya TAVILY_API_KEY .env\'e ekleyin.',
+    error: 'No search API key found. Add SEARXNG_URL, BRAVE_SEARCH_API_KEY, GOOGLE_SEARCH_API_KEY+GOOGLE_SEARCH_CX or TAVILY_API_KEY to .env.',
   }
 }
 
 export function formatSearchResult(response: SearchToolResponse): string {
   if (response.error) {
-    return `❌ Arama hatası: ${response.error}`;
+    return `❌ Search error: ${response.error}`;
   }
 
   if (response.results.length === 0) {
-    return `🔍 "${response.query}" için sonuç bulunamadı.`;
+    return `🔍 No results found for "${response.query}".`;
   }
 
-  const provider = response.provider ?? 'Web Arama'
+  const provider = response.provider ?? 'Web Search'
   const lines = [
-    `🔍 Web Arama Sonuçları (${provider}): "${response.query}"`,
-    `Bulunan: ${response.results.length} sonuç.`,
+    `🔍 Web Search Results (${provider}): "${response.query}"`,
+    `Found: ${response.results.length} result(s).`,
     ``,
-    `⚠️ SİSTEM NOTU: Bu sonuçları doğrudan %100 doğru kabul etmeyin. Hedefin bilinen diğer bilgileriyle (email, username vb.) kesişen (cross-validate) sonuçlara odaklanın.`,
+    `⚠️ SYSTEM NOTE: Do not treat these results as 100% accurate. Focus on results that cross-validate with other known details about the target (email, username, etc.).`,
     ``
   ];
 
   response.results.forEach((r, i) => {
     lines.push(`${i + 1}. **${r.title}**`);
     lines.push(`   URL: ${r.url}`);
-    lines.push(`   Özet: ${r.snippet}`);
+    lines.push(`   Summary: ${r.snippet}`);
     lines.push('');
   });
 
@@ -322,8 +322,8 @@ export function formatSearchResult(response: SearchToolResponse): string {
 }
 
 /**
- * Birden fazla sorguyu paralel çalıştırır, URL bazlı tekilleştirme yapar.
- * Maksimum 3 sorgu ile sınırlandırılmıştır — API bütçesini korur.
+ * Runs multiple queries in parallel and deduplicates by URL.
+ * Capped at a maximum of 3 queries — protects API budget.
  */
 export async function searchWebMulti(
   queries: string[],
@@ -333,13 +333,13 @@ export async function searchWebMulti(
   const capped = queries.slice(0, 3).map(q => q.trim()).filter(Boolean)
 
   if (capped.length === 0) {
-    return { query: '(boş)', results: [], error: 'Sorgu listesi boş', totalUnique: 0 }
+    return { query: '(empty)', results: [], error: 'Query list is empty', totalUnique: 0 }
   }
 
   // Paralel arama
   const responses = await Promise.all(capped.map(q => searchWeb(q, limit)))
 
-  // URL bazlı tekilleştirme — ilk geçen korunur
+  // Deduplicate by URL — first occurrence wins
   const seen = new Set<string>()
   const unique: SearchResult[] = []
 
@@ -352,10 +352,10 @@ export async function searchWebMulti(
     }
   }
 
-  // En fazla 30 sonuç döndür
+  // Return at most 30 results
   const final = unique.slice(0, 30)
 
-  // Hataları birleştir
+  // Merge errors
   const errors = responses.filter(r => r.error).map(r => r.error!)
   const combinedQuery = capped.join(' | ')
 

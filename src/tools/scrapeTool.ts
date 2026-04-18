@@ -8,17 +8,17 @@ import { emitProgress } from '../lib/progressEmitter.js'
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// Scrapling conda ortamındaki Python executable
-const SCRAPLING_PYTHON = '/home/berkayhsrt/anaconda3/envs/scrapling/bin/python'
-// dist/tools/ → src/tools/ (tsc .py kopyalamaz, kaynak dizinden çalıştır)
+// Scrapling Python executable — set SCRAPLING_PYTHON or PYTHON_PATH in .env
+const SCRAPLING_PYTHON = process.env.SCRAPLING_PYTHON || process.env.PYTHON_PATH || 'python3'
+// dist/tools/ → src/tools/ (tsc doesn't copy .py files, run from source directory)
 const SCRAPLING_RUNNER = __dirname.includes('/dist/')
   ? path.join(__dirname, '..', '..', 'src', 'tools', 'scrapling_runner.py')
   : path.join(__dirname, 'scrapling_runner.py')
 
 /**
- * Profil scraping tool.
- * Zincir: Scrapling (stealth, anti-bot) → Puppeteer (JS rendering) → Firecrawl cloud (son çare).
- * Scrapling birincil scraber olarak kullanılır — Cloudflare bypass, anti-bot koruması aşabilir.
+ * Profile scraping tool.
+ * Chain: Scrapling (stealth, anti-bot) → Puppeteer (JS rendering) → Firecrawl cloud (last resort).
+ * Scrapling is the primary scraper — can bypass Cloudflare and anti-bot protections.
  */
 
 export interface ScrapeResult {

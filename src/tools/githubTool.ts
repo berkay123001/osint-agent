@@ -1,7 +1,7 @@
 /**
- * GitHub OSINT Tool — GitHub resmi API'si üzerinden çalışır.
+ * GitHub OSINT Tool — uses the official GitHub API.
  * Web scraping yok, IP ban riski yok.
- * Commit e-postalarını .patch endpoint'inden (GitHub'ın sunduğu) çeker.
+ * Fetches commit emails from the .patch endpoint (provided by GitHub).
  */
 
 import { hasUsableGithubGpgKey } from './githubGpgUtils.js'
@@ -46,8 +46,8 @@ export interface GitHubOsintResult {
 
 const GITHUB_API = 'https://api.github.com'
 const REQUEST_TIMEOUT = 8000
-const FOLLOWING_FOLLOWER_THRESHOLD = 500 // Bu sayının altındakiler gerçek kişi sayılır
-const DEEP_SLEEP_MS = 300 // API çağrıları arası gecikme
+const FOLLOWING_FOLLOWER_THRESHOLD = 500 // Counts below this are treated as real people
+const DEEP_SLEEP_MS = 300 // Delay between API calls
 
 function getAuthHeaders(): Record<string, string> {
   const token = process.env.GITHUB_TOKEN
@@ -93,7 +93,7 @@ export interface FollowingProfile {
   blog: string | null
   location: string | null
   followers: number
-  skipped: boolean // follower sayısı eşiği aştı için atlandı
+  skipped: boolean // skipped because follower count exceeded threshold
 }
 
 async function getFollowing(username: string): Promise<FollowingProfile[]> {
@@ -137,7 +137,7 @@ async function getRepos(username: string): Promise<string[]> {
 
 async function getEmailFromRepo(username: string, repo: string): Promise<string | null> {
   try {
-    // GitHub'ın resmi .patch endpoint'i — herkes erişebilir, scraping değil
+    // GitHub's official .patch endpoint — publicly accessible, not scraping
     const commitsRes = await fetchWithTimeout(
       `${GITHUB_API}/repos/${username}/${repo}/commits?author=${username}&per_page=1`
     )
@@ -215,7 +215,7 @@ export async function githubOsint(username: string, deep = false): Promise<GitHu
   // Profile'daki email varsa ekle
   if (profile.email) result.emails.push(profile.email)
 
-  // 2. Repolardan email çıkar (max 5 repo, paralel)
+  // 2. Extract emails from repos (max 5 repos, parallel)
   const repos = await getRepos(username)
   const reposToCheck = repos.slice(0, 5)
   const emailPromises = reposToCheck.map((repo) => getEmailFromRepo(username, repo))
@@ -224,7 +224,7 @@ export async function githubOsint(username: string, deep = false): Promise<GitHu
     if (email && !result.emails.includes(email)) result.emails.push(email)
   }
 
-  // 3. GPG/SSH anahtarları
+  // 3. GPG/SSH keys
   const keys = await getKeys(username)
   result.gpgKeyUrl = keys.gpg
   result.sshKeyUrl = keys.ssh
@@ -232,15 +232,15 @@ export async function githubOsint(username: string, deep = false): Promise<GitHu
   // 3.5. Social Accounts (YouTube, LinkedIn vb.)
   result.socialAccounts = await getSocialAccounts(username)
 
-  // 4. DEEP MOD: following listesi — yalnızca kullanıcı istediğinde
+  // 4. DEEP MODE: following list — only when requested
   if (deep && profile.following > 0 && profile.following <= 200) {
     result.following = await getFollowing(username)
   } else if (deep && profile.following > 200) {
-    // Çok fazla following var, liste çıkarma pratik değil
-    result.rawSummary += `\n[Deep mod: ${profile.following} following var, limit aşıldı (>200), atlandı]`
+    // Too many followings — listing is not practical
+    result.rawSummary += `\n[Deep mode: ${profile.following} followings, limit exceeded (>200), skipped]`
   }
 
-  // 5. Ham özet metin (LLM için)
+  // 5. Raw summary text (for LLM)
   const lines: string[] = [
     `=== GitHub OSINT: ${username} ===`,
     `Name: ${profile.name || 'N/A'}`,
@@ -269,8 +269,8 @@ export async function githubOsint(username: string, deep = false): Promise<GitHu
     const realPeople = result.following.filter(f => !f.skipped)
     const skipped = result.following.filter(f => f.skipped)
     lines.push(`\n--- Following Analizi (Deep Mod) ---`)
-    lines.push(`✅ Araştırılacak (< ${FOLLOWING_FOLLOWER_THRESHOLD} follower): ${realPeople.length} kişi`)
-    lines.push(`⏭️  Atlanan (>= ${FOLLOWING_FOLLOWER_THRESHOLD} follower): ${skipped.length} kişi`)
+    lines.push(`✅ To research (< ${FOLLOWING_FOLLOWER_THRESHOLD} followers): ${realPeople.length} person(s)`)
+    lines.push(`⏭️  Skipped (>= ${FOLLOWING_FOLLOWER_THRESHOLD} followers): ${skipped.length} person(s)`)
     for (const f of realPeople) {
       lines.push(`  - ${f.username}${f.name ? ` (${f.name})` : ''}${f.bio ? ` | Bio: ${f.bio}` : ''}${f.location ? ` | Konum: ${f.location}` : ''}${f.blog ? ` | Blog: ${f.blog}` : ''} [${f.followers} follower]`)
     }

@@ -303,9 +303,9 @@ Reports automatically sync to Obsidian vault:
 
 ```
 Agent_Knowladges/OSINT/OSINT-Agent/
-├── 02 - Literatür Araştırması/  ← Sub-agent results (auto)
-├── 04 - Araştırma Raporları/    ← generate_report (auto)
-├── 06 - Günlük/                 ← obsidian_daily
+├── 02 - Literature Research/    ← Sub-agent results (auto)
+├── 04 - Research Reports/       ← generate_report (auto)
+├── 06 - Daily/                  ← obsidian_daily
 ├── 07 - Notlar/                 ← Free-form notes
 └── 08 - Profiller/              ← Person profiles ([[username]] wikilink)
 ```

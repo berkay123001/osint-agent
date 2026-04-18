@@ -18,10 +18,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 /**
- * Sub-agent yanıtlarını kısaltır.
- * - 4000 karakter altı: dokunma
- * - 4000+ karakter: ilk 3500 karakter + "kesildi" notu + dosya yolu
- * Supervisor detayları read_session_file ile okuyabilir.
+ * Truncates sub-agent responses.
+ * - Under 4000 chars: leave as-is
+ * - 4000+ chars: first 3500 chars + truncation note + file path
+ * Supervisor can read details via read_session_file.
  */
 const MAX_SUB_AGENT_RESPONSE = 30000;
 const KEEP_FIRST = 29000;
@@ -30,16 +30,16 @@ function truncateSubAgentResponse(response: string, agentLabel: string): string 
   if (response.length <= MAX_SUB_AGENT_RESPONSE) return response
   const truncated = response.slice(0, KEEP_FIRST)
   const lines = truncated.split('\n')
-  // Son tamamlanmamış satırı at
+  // Drop the last incomplete line
   if (truncated.length === KEEP_FIRST) lines.pop()
   return lines.join('\n') +
-    `\n\n---\n✂️ **[${agentLabel} yanıtı ${((response.length / 1024).toFixed(1))}KB — kısaltıldı]**\n` +
-    `📄 Tam rapor için \`read_session_file\` aracını kullan.\n` +
-    `⚠️ [AGENT_DONE] Bu ajan görevi tamamladı. Aynı görevi TEKRAR devretme.`
+    `\n\n---\n✂️ **[${agentLabel} response ${((response.length / 1024).toFixed(1))}KB — truncated]**\n` +
+    `📄 For the full report use the \`read_session_file\` tool.\n` +
+    `⚠️ [AGENT_DONE] This agent has completed its task. Do NOT delegate the same task AGAIN.`
 }
 
 /**
- * Sub-agent yanıtlarını kısaltır (önceki tanımlamayla birleştirildi).
+ * Truncates sub-agent responses (merged with prior definition).
  */
 const SUPERVISOR_TOOLS = [
   'query_graph', 'list_graph_nodes', 'graph_stats', 'clear_graph', 
@@ -58,13 +58,13 @@ const supervisorMetaTools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'ask_identity_agent',
-      description: 'Kişi, username, email veya profil araştırması gerektiğinde Identity uzmanına başvurur.',
+      description: 'Delegates to the Identity specialist when research on a person, username, email, or profile is needed.',
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: 'Identity uzmanına verilecek tam görev/komut (Örn: "torvalds github hesabını incele")' },
-          context: { type: 'string', description: 'Ek bağlam (Öncesinde bilinenler vs.)' },
-          depth: { type: 'string', enum: ['quick', 'normal', 'deep'], description: 'Araştırma derinliği. quick=tek varlık/hızlı doğrulama (0.5x araç bütçesi), normal=standart (1x), deep=çok varlıklı/karmaşık araştırma (1.75x). Birden fazla kişi/username/email varsa deep kullan.' }
+          query: { type: 'string', description: 'Full task/command for the Identity specialist (e.g. "investigate the torvalds GitHub account")' },
+          context: { type: 'string', description: 'Additional context (previously known information, etc.)' },
+          depth: { type: 'string', enum: ['quick', 'normal', 'deep'], description: 'Research depth. quick=single entity/fast verification (0.5x tool budget), normal=standard (1x), deep=multi-entity/complex investigation (1.75x). Use deep for multiple people/usernames/emails.' }
         },
         required: ['query']
       }
@@ -74,13 +74,13 @@ const supervisorMetaTools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'ask_media_agent',
-      description: 'Görsel doğrulama, exif analizi, tersine görsel arama, yalan haber/iddia doğrulama gerektiğinde Media uzmanına başvurur. Haber/iddia doğrulamada MediaAgent Supervisor\'ın özetine değil HAM VERİYE dayanır — context\'e mutlaka ham URL listesi ve alıntı geç.',
+      description: 'Delegates to the Media specialist when image verification, EXIF analysis, reverse image search, or fake news/claim verification is needed. For news/claim verification, MediaAgent relies on RAW DATA, not the Supervisor\'s summary — always pass raw URL list and quotes in context.',
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: 'Media uzmanına verilecek görev/komut (Örn: "Şu görselin kaynağını bul" veya "İran gaz kesintisi iddiasını doğrula — aşağıdaki URL\'leri kendi araçlarınla tara")' },
-          context: { type: 'string', description: 'HAM VERİ paketi — Supervisor\'ın topladığı URL\'ler, ham alıntılar ve çelişkili noktalar. Örnek format: "URL1: https://... | Alıntı: \'Bakan: akış devam ediyor\'\nURL2: https://... | Alıntı: \'Bloomberg: ihracat durduruldu\'\nÇELİŞKİ: Türk resmi kaynaklar vs uluslararası medya"\nMediaAgent bu URL\'leri kendi web_fetch/scrape araçlarıyla bağımsız olarak doğrular. ÖZET DEĞİL — HAM URL VER.' },
-          depth: { type: 'string', enum: ['quick', 'normal', 'deep'], description: 'Araştırma derinliği. quick=tek iddia/görsel (0.5x), normal=standart (1x), deep=çok kaynak/karmaşık fact-check (1.75x). Birden fazla bağımsız iddia veya 3+ URL incelemelerde deep kullan.' }
+          query: { type: 'string', description: 'Task/command for the Media specialist (e.g. "find the source of this image" or "verify the Iran gas cut claim — scan the URLs below with your own tools")' },
+          context: { type: 'string', description: 'RAW DATA package — URLs collected by the Supervisor, raw quotes, and conflicting points. Example format: "URL1: https://... | Quote: \'Minister: flow continuing\'\nURL2: https://... | Quote: \'Bloomberg: exports halted\'\nCONFLICT: Turkish official sources vs international media"\nMediaAgent verifies these URLs independently using its own web_fetch/scrape tools. SUMMARIES NOT ACCEPTED — PROVIDE RAW URLs.' },
+          depth: { type: 'string', enum: ['quick', 'normal', 'deep'], description: 'Research depth. quick=single claim/image (0.5x), normal=standard (1x), deep=multi-source/complex fact-check (1.75x). Use deep for multiple independent claims or 3+ URL investigations.' }
         },
         required: ['query']
       }
@@ -90,13 +90,13 @@ const supervisorMetaTools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'ask_academic_agent',
-      description: 'Akademik konu araştırması, makale/yayın taraması, araştırmacı profili, citation analizi gerektiğinde Akademik Araştırma uzmanına başvurur. Örn: "LLM\'lerde RL eğitimi üzerine en güncel makaleler", "Attention is All You Need sonrası ne çalışılıyor?"',
+      description: 'Delegates to the Academic Research specialist when academic topic research, paper/publication search, researcher profiling, or citation analysis is needed. E.g. "latest papers on RL training in LLMs", "what is being researched after Attention is All You Need?"',
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: 'Akademik araştırma görevi (Örn: "reinforcement learning from human feedback 2025 makaleleri")' },
-          context: { type: 'string', description: 'Ek bağlam (araştırmacı ismi, kurum vb.)' },
-          depth: { type: 'string', enum: ['quick', 'normal', 'deep'], description: 'Araştırma derinliği. quick=tek makale/hızlı özet (0.5x), normal=standart literatür taraması (1x), deep=kapsamlı citation ağı/çoklu araştırmacı analizi (1.75x).' }
+          query: { type: 'string', description: 'Academic research task (e.g. "reinforcement learning from human feedback 2025 papers")' },
+          context: { type: 'string', description: 'Additional context (researcher name, institution, etc.)' },
+          depth: { type: 'string', enum: ['quick', 'normal', 'deep'], description: 'Research depth. quick=single paper/quick summary (0.5x), normal=standard literature search (1x), deep=comprehensive citation network/multi-researcher analysis (1.75x).' }
         },
         required: ['query']
       }
@@ -106,18 +106,18 @@ const supervisorMetaTools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'read_session_file',
-      description: 'Sub-agent oturum dosyalarını disk\'ten okur. Belirli bir agent filtreleyebilir veya ham bilgi tabanını okuyabilirsin. Alt ajan raporunda detay eksikse veya kullanıcı follow-up soruyorsa kullan — agent\'ı tekrar çağırma.',
+      description: 'Reads sub-agent session files from disk. Can filter by a specific agent or read the raw knowledge base. Use when a sub-agent report is missing details or the user asks a follow-up — do not call the agent again.',
       parameters: {
         type: 'object',
         properties: {
           agent: {
             type: 'string',
             enum: ['academic', 'identity', 'media', 'all'],
-            description: 'Hangi agent\'ın oturum dosyası okunacak? Varsayılan: all (tüm agentlar)'
+            description: 'Which agent\'s session file to read? Default: all (all agents)'
           },
           include_knowledge: {
             type: 'boolean',
-            description: 'Ham araç çağrısı sonuçlarını (knowledge base) da dahil et? Varsayılan: false (sadece rapor)'
+            description: 'Also include raw tool call results (knowledge base)? Default: false (report only)'
           }
         },
         required: []
@@ -127,22 +127,22 @@ const supervisorMetaTools: OpenAI.Chat.ChatCompletionTool[] = [
 ];
 
 /**
- * Sub-agent sonucunu programatik olarak Obsidian'a kaydeder.
- * Supervisor'ın LLM tool call yapmasına gerek kalmaz — JSON crash riskini ortadan kaldırır.
+ * Programmatically saves sub-agent result to Obsidian.
+ * Eliminates the need for the Supervisor to make an LLM tool call — reduces JSON crash risk.
  */
 async function saveToObsidianDirect(agentLabel: string, query: string, result: string): Promise<void> {
   try {
     const safeName = query
       .replace(/[Ğğ]/g, 'G').replace(/[Üü]/g, 'U').replace(/[Şş]/g, 'S')
       .replace(/[İı]/g, 'I').replace(/[Öö]/g, 'O').replace(/[Çç]/g, 'C')
-      .replace(/[^a-zA-Z0-9 ]/g, ' ').trim().slice(0, 60).trim() || 'arastirma'
+      .replace(/[^a-zA-Z0-9 ]/g, ' ').trim().slice(0, 60).trim() || 'research'
     const date = new Date().toISOString().slice(0, 10)
-    const obsidianPath = `02 - Literatür Araştırması/${date}-${safeName}.md`
-    const header = `# ${agentLabel} Literatür Araştırması\n\n**Sorgu:** ${query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`
+    const obsidianPath = `02 - Literature Research/${date}-${safeName}.md`
+    const header = `# ${agentLabel} Literature Research\n\n**Query:** ${query}\n**Date:** ${new Date().toISOString()}\n\n---\n\n`
     await obsidianWrite(obsidianPath, header + result, true)
-    logger.info('OBSIDIAN', `📝 Sub-agent sonucu direkt Obsidian'a yazıldı → ${obsidianPath}`)
+    logger.info('OBSIDIAN', `📝 Sub-agent result saved directly to Obsidian → ${obsidianPath}`)
   } catch (e) {
-    logger.warn('OBSIDIAN', `Sub-agent Obsidian yazma atlanadı: ${(e as Error).message}`)
+    logger.warn('OBSIDIAN', `Sub-agent Obsidian write skipped: ${(e as Error).message}`)
   }
 }
 
@@ -151,17 +151,17 @@ import type { SubAgentResult } from './identityAgent.js';
 type SubAgentFn = (query: string, context?: string, depth?: string, existingHistory?: Message[]) => Promise<SubAgentResult>;
 
 /**
- * AutoGen-style sub-agent + Strategy Agent oturumu
+ * AutoGen-style sub-agent + Strategy Agent session
  *
- * Akış:
- * 1. Strategy plan oluşturur
- * 2. Sub-agent planla çalışır → history döner
- * 3. Strategy review eder (kendi planını hatırlar)
- * 4. Onaylanmazsa → Strategy feedback'i sub-agent history'ye inject edilir
- *    Sub-agent AYNI history ile DEVAM EDER (baştan başlamaz!)
- * 5. Strategy profesyonel rapor sentezler
+ * Flow:
+ * 1. Strategy creates a plan
+ * 2. Sub-agent works with the plan → returns history
+ * 3. Strategy reviews (remembers its own plan)
+ * 4. If not approved → Strategy feedback is injected into sub-agent history
+ *    Sub-agent CONTINUES WITH THE SAME history (does not restart!)
+ * 5. Strategy synthesizes a professional report
  *
- * Max 1 re-execution round (API maliyeti kontrolü).
+ * Max 1 re-execution round (API cost control).
  */
 async function executeSubAgentWithStrategy(
   agentType: 'identity' | 'media' | 'academic',
@@ -170,51 +170,51 @@ async function executeSubAgentWithStrategy(
   agentLabel: string,
   sessionTitle: string,
 ): Promise<string> {
-  // Her sub-agent delegasyonu için yeni bir Strategy oturumu
+  // Create a new Strategy session for each sub-agent delegation
   const strategy = new StrategySession(agentType, args.query);
 
-  // --- FAZ 1: PLAN (Strategy history'ye yazılır) ---
+  // --- PHASE 1: PLAN (written to Strategy history) ---
   const plan = await strategy.plan(args.context);
-  const planContext = plan ? `\n\n[STRATEJİ PLANI — Bu plana göre araştır]:\n${plan}` : '';
+  const planContext = plan ? `\n\n[STRATEGY PLAN — Research according to this plan]:\n${plan}` : '';
 
-  // --- FAZ 2: EXECUTE (sub-agent history'sini al) ---
+  // --- PHASE 2: EXECUTE (get sub-agent history) ---
   const { response: result, history: agentHistory } = await agentFn(
     args.query, (args.context || '') + planContext, args.depth,
   );
 
-  // --- FAZ 3: REVIEW + optional CONTINUE (AutoGen-style) ---
+  // --- PHASE 3: REVIEW + optional CONTINUE (AutoGen-style) ---
   let finalResult = result;
   let reviewFeedback = '';
   if (result.length > 200) {
     const { approved, feedback } = await strategy.review(result);
     reviewFeedback = feedback;
 
-    if (!approved && feedback && !feedback.includes('CİDDİ_SORUN')) {
-      // Sub-agent'ı BAŞTAN BAŞLATMA — aynı history'ye feedback inject et
-      emitProgress(`🔄 Strategy feedback ${agentLabel} history'ye inject ediliyor (devam)...`);
+    if (!approved && feedback && !feedback.includes('SERIOUS_ISSUE')) {
+      // Do NOT restart the sub-agent — inject feedback into the same history
+      emitProgress(`🔄 Strategy feedback being injected into ${agentLabel} history (continuing)...`);
 
       agentHistory.push({
         role: 'user',
         content:
-          `[STRATEJİ DENETİMİ — Düzeltme Gerekli]\n\n` +
-          `Denetim sonucu:\n${feedback.slice(0, 4000)}\n\n` +
-          `Yukarıdaki sorunları düzelt. Eksik olan araçları çalıştır, hatalı bilgileri düzelt. ` +
-          `Daha önce çağırdığın araçların sonuçlarını hatırla — tekrar çağırma.`,
+          `[STRATEGY REVIEW — Correction Required]\n\n` +
+          `Review result:\n${feedback.slice(0, 4000)}\n\n` +
+          `Fix the issues above. Run missing tools, correct incorrect information. ` +
+          `Remember the results of tools you already called — do not call them again.`,
       });
 
-      // Aynı history ile devam — sub-agent önceki tool sonuçlarını hatırlar
+      // Continue with the same history — sub-agent remembers previous tool results
       const { response: continuedResult } = await agentFn(
         args.query, undefined, args.depth, agentHistory,
       );
 
       if (continuedResult.length > 200) {
         finalResult = continuedResult;
-        logger.info('AGENT', `[Strategy] ${agentLabel} 2. tur (devam) tamamlandı (${(continuedResult.length / 1024).toFixed(1)}KB)`);
+        logger.info('AGENT', `[Strategy] ${agentLabel} 2nd round (continue) completed (${(continuedResult.length / 1024).toFixed(1)}KB)`);
       }
     }
   }
 
-  // --- FAZ 4: SYNTHESIZE (Strategy plan + review'u hatırlar) ---
+  // --- PHASE 4: SYNTHESIZE (Strategy remembers plan + review) ---
   let finalReport = finalResult;
   if (finalResult.length > 500) {
     finalReport = await strategy.synthesize(finalResult, reviewFeedback);
@@ -230,9 +230,9 @@ async function executeSubAgentWithStrategy(
     const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
     await mkdir(sessionDir, { recursive: true });
     const sessionFile = `${agentType}-last-session.md`;
-    const header = `# ${sessionTitle} Oturum Dosyası\n\n**Sorgu:** ${args.query}\n**Tarih:** ${new Date().toISOString()}\n\n---\n\n`;
+    const header = `# ${sessionTitle} Session File\n\n**Query:** ${args.query}\n**Date:** ${new Date().toISOString()}\n\n---\n\n`;
     await writeFile(path.join(sessionDir, sessionFile), header + finalReport, 'utf-8');
-  } catch { /* sessizce geç */ }
+  } catch { /* skip silently */ }
   saveToObsidianDirect(agentLabel, args.query, finalReport);
 
   return truncateSubAgentResponse(finalReport, agentLabel);
@@ -240,11 +240,11 @@ async function executeSubAgentWithStrategy(
 
 async function supervisorExecuteTool(name: string, args: Record<string, string>): Promise<string> {
   if (name === 'ask_identity_agent') {
-    return await executeSubAgentWithStrategy('identity', args, runIdentityAgent, 'IdentityAgent', 'Kimlik Araştırması');
+    return await executeSubAgentWithStrategy('identity', args, runIdentityAgent, 'IdentityAgent', 'Identity Investigation');
   } else if (name === 'ask_media_agent') {
-    return await executeSubAgentWithStrategy('media', args, runMediaAgent, 'MediaAgent', 'Medya Araştırması');
+    return await executeSubAgentWithStrategy('media', args, runMediaAgent, 'MediaAgent', 'Media Investigation');
   } else if (name === 'ask_academic_agent') {
-    return await executeSubAgentWithStrategy('academic', args, runAcademicAgent, 'AcademicAgent', 'Akademik Araştırma');
+    return await executeSubAgentWithStrategy('academic', args, runAcademicAgent, 'AcademicAgent', 'Academic Research');
   } else if (name === 'read_session_file') {
     try {
       const sessionDir = path.resolve(__dirname, '../../.osint-sessions');
@@ -276,15 +276,15 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
         }
       }
       if (parts.length === 0) {
-        const hint = agentFilter === 'all' ? '' : ` (${agentFilter} agent için)`;
-        return `⚠️ Henüz kaydedilmiş araştırma oturumu yok${hint}. Önce bir sub-agent çağırın.`;
+        const hint = agentFilter === 'all' ? '' : ` (for ${agentFilter} agent)`;
+        return `⚠️ No saved research session found${hint}. Call a sub-agent first.`;
       }
       return parts.join('\n\n---\n\n');
     } catch {
-      return '⚠️ Henüz kaydedilmiş araştırma oturumu yok.';
+      return '⚠️ No saved research session found.';
     }
   } else {
-    // Normal araçlar (graf, search_web vs.) için ortak registry kullan
+    // Normal tools (graph, search_web, etc.) — use the shared registry
     return await executeTool(name, args);
   }
 }
@@ -292,8 +292,8 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
 export const supervisorAgentConfig: AgentConfig = {
   name: 'Supervisor',
   model: 'minimax/minimax-m2.7',
-  maxTokens: 32768, // Büyük sub-agent raporları + thinking tokens için geniş bütçe
-  maxToolCalls: 60, // Kapsamlı OSINT araştırmalarında arama + Neo4j yazma + rapor toplamı
+  maxTokens: 32768, // Large sub-agent reports + thinking tokens need a generous budget
+  maxToolCalls: 90, // Complex multi-agent tasks: 3+ sub-agent delegations × retries + report + graph ops
   tools: supervisorMetaTools,
   executeTool: supervisorExecuteTool,
   systemPrompt: `# IDENTITY
@@ -398,11 +398,11 @@ save_ioc type: Academic frameworks (BloodHound etc.) → use Tool or Framework (
 # OBSIDIAN INTEGRATION
 
 <obsidian>
-Vault: /home/berkayhsrt/Agent_Knowladges/OSINT/OSINT-Agent/
-- 04 - Araştırma Raporları/ → generate_report auto sync
-- 06 - Günlük/ → obsidian_daily
-- 07 - Notlar/ → user preferences
-- 08 - Profiller/ → [[username]] wikilink profile notes
+Vault: $OBSIDIAN_VAULT (or ~/Agent_Knowladges/OSINT/OSINT-Agent/ by default)
+- 04 - Research Reports/ → generate_report auto sync
+- 06 - Daily/ → obsidian_daily
+- 07 - Notes/ → user preferences
+- 08 - Profiles/ → [[username]] wikilink profile notes
 
 When: User states preference → obsidian_daily | Critical finding → obsidian_daily | "Save/remember" → obsidian_write | Person researched → 08 - Profiller/[username].md
 "Do you have Obsidian integration?" → "Yes! generate_report auto-syncs reports to Obsidian vault."
@@ -443,9 +443,9 @@ export async function runSupervisor(history: Message[]): Promise<void> {
   try {
     const result = await runAgentLoop(history, supervisorAgentConfig);
     const formatted = formatAgentOutput(result.finalResponse);
-    logger.info('AGENT', `\n🤖 Şef (Supervisor):\n${formatted}\n`);
+    logger.info('AGENT', `\n🤖 Supervisor:\n${formatted}\n`);
     return;
   } catch (error) {
-    logger.error('AGENT', `Supervisor Hatası: ${error instanceof Error ? error.message : String(error)}`);
+    logger.error('AGENT', `Supervisor Error: ${error instanceof Error ? error.message : String(error)}`);
   }
 }

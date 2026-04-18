@@ -7,7 +7,7 @@ const execFileAsync = promisify(execFile)
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-const PYTHON = process.env.PYTHON_PATH || '/home/berkayhsrt/anaconda3/bin/python'
+const PYTHON = process.env.PYTHON_PATH || 'python3'
 const RUNNER_SCRIPT = path.resolve(__dirname, 'maigret_runner.py')
 
 export interface MaigretSite {
@@ -25,22 +25,22 @@ export interface MaigretResult {
 }
 
 /**
- * Username için Maigret ile 3000+ platformda hesap araması yapar.
- * Sherlock'un tamamlayıcısı — farklı kontrol metodları kullanır,
- * Pinterest/Discord/Facebook/Instagram gibi platformları kapsar.
+ * Searches 3000+ platforms for an account with the given username using Maigret.
+ * Complements Sherlock — uses different check methods,
+ * covering platforms like Pinterest, Discord, Facebook, and Instagram.
  *
- * @param username  Aranacak kullanıcı adı
- * @param topSites  Kaç siteyi tara (varsayılan: 500, max: ~3000)
- * @param timeout   Her istek için timeout (saniye, varsayılan: 20)
+ * @param username  Username to search for
+ * @param topSites  How many sites to scan (default: 500, max: ~3000)
+ * @param timeout   Timeout per request in seconds (default: 20)
  */
 export async function runMaigret(
   username: string,
   topSites = 500,
   timeout = 20,
 ): Promise<MaigretResult> {
-  // Güvenlik: username formatı doğrulama
+  // Security: validate username format
   if (!/^[A-Za-z0-9_.\-]{1,50}$/.test(username)) {
-    return { username, found: [], foundCount: 0, checkedCount: 0, error: `Geçersiz username formatı: ${username}` }
+    return { username, found: [], foundCount: 0, checkedCount: 0, error: `Invalid username format: ${username}` }
   }
 
   try {
@@ -51,20 +51,20 @@ export async function runMaigret(
     )
 
     if (!stdout.trim()) {
-      return { username, found: [], foundCount: 0, checkedCount: 0, error: stderr?.trim() || 'Maigret boş çıktı döndürdü' }
+      return { username, found: [], foundCount: 0, checkedCount: 0, error: stderr?.trim() || 'Maigret returned empty output' }
     }
 
     return JSON.parse(stdout.trim()) as MaigretResult
   } catch (e) {
     const msg = (e as Error).message
-    return { username, found: [], foundCount: 0, checkedCount: 0, error: `Maigret hatası: ${msg}` }
+    return { username, found: [], foundCount: 0, checkedCount: 0, error: `Maigret error: ${msg}` }
   }
 }
 
-/** Maigret sonuçlarını okunabilir formatta döndür */
+/** Return Maigret results in a human-readable format */
 export function formatMaigretResult(result: MaigretResult): string {
   if (result.error) {
-    return `Maigret hatası: ${result.error}`
+    return `Maigret error: ${result.error}`
   }
 
   const lines = [
@@ -74,7 +74,7 @@ export function formatMaigretResult(result: MaigretResult): string {
   ]
 
   if (result.foundCount === 0) {
-    lines.push('Bu username hiçbir platformda bulunamadı.')
+    lines.push('This username was not found on any platform.')
     return lines.join('\n')
   }
 

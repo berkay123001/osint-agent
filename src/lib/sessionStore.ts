@@ -62,7 +62,7 @@ export function saveSession(history: Message[], createdAt?: string): void {
       history,
     };
     fs.writeFileSync(currentSessionFile(), JSON.stringify(data, null, 2), 'utf-8');
-  } catch { /* sessizce geç */ }
+  } catch { /* silently skip */ }
 }
 
 export function archiveSession(history: Message[], createdAt?: string): void {
@@ -79,7 +79,7 @@ export function archiveSession(history: Message[], createdAt?: string): void {
       history,
     };
     fs.writeFileSync(archiveFile, JSON.stringify(data, null, 2), 'utf-8');
-  } catch { /* sessizce geç */ }
+  } catch { /* silently skip */ }
 }
 
 export function deleteActiveSession(): void {

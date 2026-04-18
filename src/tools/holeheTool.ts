@@ -7,7 +7,7 @@ const execFileAsync = promisify(execFile)
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-const PYTHON = process.env.PYTHON_PATH || '/home/berkayhsrt/anaconda3/bin/python'
+const PYTHON = process.env.PYTHON_PATH || 'python3'
 const RUNNER_SCRIPT = path.resolve(__dirname, 'holehe_runner.py')
 
 export interface HoleheService {
@@ -28,13 +28,13 @@ export interface HoleheResult {
 }
 
 /**
- * Email adresinin hangi platformlarda kayıtlı olduğunu kontrol eder (Holehe).
- * Pivot noktası olarak kullanılır: Email → Platform bağlantısı kurar.
+ * Checks which platforms an email address is registered on (Holehe).
+ * Used as a pivot point: Email → Platform connection.
  */
 export async function checkEmailRegistrations(email: string): Promise<HoleheResult> {
-  // Güvenlik: geçersiz email subprocess'e geçmesin
+  // Security: prevent invalid email from reaching the subprocess
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return { email, services: [], totalChecked: 0, error: `Geçersiz e-posta formatı: ${email}` }
+    return { email, services: [], totalChecked: 0, error: `Invalid email format: ${email}` }
   }
 
   try {
@@ -45,35 +45,35 @@ export async function checkEmailRegistrations(email: string): Promise<HoleheResu
     )
 
     if (!stdout.trim()) {
-      return { email, services: [], totalChecked: 0, error: stderr?.trim() || 'Holehe boş çıktı döndürdü' }
+      return { email, services: [], totalChecked: 0, error: stderr?.trim() || 'Holehe returned empty output' }
     }
 
     const parsed = JSON.parse(stdout.trim()) as HoleheResult
     return parsed
   } catch (e) {
     const msg = (e as Error).message
-    return { email, services: [], totalChecked: 0, error: `Holehe hatası: ${msg}` }
+    return { email, services: [], totalChecked: 0, error: `Holehe error: ${msg}` }
   }
 }
 
-/** Holehe sonuçlarını okunabilir formatta döndür */
+/** Return Holehe results in a human-readable format */
 export function formatHoleheResult(result: HoleheResult): string {
   if (result.error) {
-    return `Email kayıt kontrolü hatası: ${result.error}`
+    return `Email registration check error: ${result.error}`
   }
 
   const rlInfo = result.rateLimitedCount
-    ? ` | Rate limit: ${result.rateLimitedCount} (atlandı)`
+    ? ` | Rate limit: ${result.rateLimitedCount} (skipped)`
     : ''
 
   const lines = [
-    `📧 Email Kayıt Kontrolü: ${result.email}`,
-    `Taranan platform: ${result.totalChecked} | Kayıtlı bulunan: ${result.services.length}${rlInfo}`,
+    `📧 Email Registration Check: ${result.email}`,
+    `Platforms scanned: ${result.totalChecked} | Registered on: ${result.services.length}${rlInfo}`,
     '',
   ]
 
   if (result.services.length === 0) {
-    lines.push('Bu email herhangi bir platformda kayıtlı bulunamadı.')
+    lines.push('This email was not found registered on any platform.')
     return lines.join('\n')
   }
 

@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
  * OSINT Agent — Web Intelligence Platform
- * SaaS-style web arayüzü: Chat + Canlı Log + Graf + Agent Durumu
- * Kullanım: npm run web → http://localhost:3000
+ * SaaS-style web interface: Chat + Live Log + Graph + Agent Status
+ * Usage: npm run web → http://localhost:3000
  */
 import 'dotenv/config';
 import { emitProgress, progressEmitter } from './lib/progressEmitter.js';
+import { formatLLMTelemetryLine, type LLMTelemetryEvent } from './lib/llmTelemetry.js';
 
-// Tüm console çıktılarını progressEmitter'a yönlendir (TUI'daki gibi)
+// Route all console output to progressEmitter (same as TUI)
 process.env.LOG_LEVEL = 'ERROR';
 console.log = (...args: unknown[]) => emitProgress(args.map(String).join(' '));
 console.info = (...args: unknown[]) => emitProgress(args.map(String).join(' '));
@@ -29,9 +30,81 @@ const WEB_DIR = path.join(__dirname, 'web');
 const PORT = Number(process.env.WEB_PORT) || 3000;
 const TOKEN = process.env.WEB_TOKEN || '';
 
+function createWebSessionId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 // ── Session ───────────────────────────────────────────
 let history: Message[] = [];
 let isProcessing = false;
+let webSessionId = createWebSessionId();
+
+type ReplayableEvent =
+  | { type: 'progress'; msg: string; ts: string }
+  | { type: 'detail'; toolName: string; output: string }
+  | { type: 'telemetry'; msg: string; ts: string };
+
+const eventBuffer: ReplayableEvent[] = [];
+const EVENT_BUFFER_LIMIT = 500;
+
+function bufferEvent(event: ReplayableEvent): void {
+  eventBuffer.push(event);
+  if (eventBuffer.length > EVENT_BUFFER_LIMIT) eventBuffer.shift();
+}
+
+type TelemetrySummary = {
+  calls: number;
+  errors: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  costUsd: number;
+  pricedCalls: number;
+  lastModel: string | null;
+  lastLatencyMs: number | null;
+  lastContextPct: number | null;
+  lastInputTokens: number | null;
+  lastInputEstimated: boolean;
+  lastContextLimit: number | null;
+};
+
+function createEmptyTelemetrySummary(): TelemetrySummary {
+  return {
+    calls: 0,
+    errors: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    costUsd: 0,
+    pricedCalls: 0,
+    lastModel: null,
+    lastLatencyMs: null,
+    lastContextPct: null,
+    lastInputTokens: null,
+    lastInputEstimated: false,
+    lastContextLimit: null,
+  };
+}
+
+let telemetrySummary: TelemetrySummary = createEmptyTelemetrySummary();
+
+function applyTelemetry(event: LLMTelemetryEvent): void {
+  telemetrySummary = {
+    calls: telemetrySummary.calls + 1,
+    errors: telemetrySummary.errors + (event.status === 'error' ? 1 : 0),
+    promptTokens: telemetrySummary.promptTokens + (event.promptTokens ?? 0),
+    completionTokens: telemetrySummary.completionTokens + (event.completionTokens ?? 0),
+    totalTokens: telemetrySummary.totalTokens + (event.totalTokens ?? 0),
+    costUsd: telemetrySummary.costUsd + (event.totalCostUsd ?? 0),
+    pricedCalls: telemetrySummary.pricedCalls + (event.totalCostUsd != null ? 1 : 0),
+    lastModel: event.actualModel || event.requestedModel,
+    lastLatencyMs: event.latencyMs,
+    lastContextPct: event.contextPct ?? null,
+    lastInputTokens: event.promptTokens ?? event.approxPromptTokens,
+    lastInputEstimated: event.promptTokens === undefined,
+    lastContextLimit: event.contextLimit ?? null,
+  };
+}
 
 // ── SSE Clients ───────────────────────────────────────
 const sseClients = new Set<http.ServerResponse>();
@@ -45,11 +118,33 @@ function broadcast(data: object): void {
 
 // Progress → SSE
 progressEmitter.on('progress', (msg: string) => {
-  broadcast({ type: 'progress', msg, ts: new Date().toTimeString().slice(0, 8) });
+  const event = { type: 'progress' as const, msg, ts: new Date().toTimeString().slice(0, 8) };
+  bufferEvent(event);
+  broadcast(event);
 });
 
 progressEmitter.on('detail', ({ toolName, output }: { toolName: string; output: string }) => {
-  broadcast({ type: 'detail', toolName, output: output.slice(0, 50000) });
+  const event = { type: 'detail' as const, toolName, output: output.slice(0, 50000) };
+  bufferEvent(event);
+  broadcast(event);
+});
+
+progressEmitter.on('telemetry', (event: LLMTelemetryEvent) => {
+  applyTelemetry(event);
+  const telemetryLine = formatLLMTelemetryLine(event);
+  const replayEvent = {
+    type: 'telemetry' as const,
+    msg: telemetryLine,
+    ts: new Date().toTimeString().slice(0, 8),
+  };
+  bufferEvent(replayEvent);
+  broadcast({
+    type: 'telemetry',
+    msg: telemetryLine,
+    ts: replayEvent.ts,
+    telemetry: event,
+    summary: telemetrySummary,
+  });
 });
 
 // ── Rate Limiter (basit) ──────────────────────────────
@@ -105,7 +200,7 @@ async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse):
   const cleanPath = path.normalize(safePath).replace(/^(\.\.[/\\])+/, '');
   const filePath = path.join(WEB_DIR, cleanPath);
 
-  // Path traversal koruması
+  // Path traversal protection
   if (!filePath.startsWith(WEB_DIR)) {
     res.writeHead(403);
     res.end('Forbidden');
@@ -156,9 +251,9 @@ const server = http.createServer(async (req, res) => {
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
     });
-    // Mevcut durumu gönder
-    res.write(`data: ${JSON.stringify({ type: 'init', processing: isProcessing, messageCount: history.filter(m => m.role !== 'system').length })}\n\n`);
     sseClients.add(res);
+    // Send current state
+    res.write(`data: ${JSON.stringify({ type: 'init', sessionId: webSessionId, processing: isProcessing, messageCount: history.filter(m => m.role === 'user' || (m.role === 'assistant' && typeof m.content === 'string' && m.content.trim().length > 0 && !(m as any).tool_calls?.length)).length, telemetry: telemetrySummary, replayEvents: eventBuffer })}\n\n`);
     req.on('close', () => sseClients.delete(res));
     return;
   }
@@ -167,7 +262,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && pathname === '/api/chat') {
     if (isProcessing) {
       res.writeHead(409, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Araştırma devam ediyor, lütfen bekleyin.' }));
+      res.end(JSON.stringify({ error: 'Research in progress, please wait.' }));
       return;
     }
 
@@ -176,11 +271,11 @@ const server = http.createServer(async (req, res) => {
       const message = typeof body.message === 'string' ? body.message.trim() : '';
       if (!message || message.length > 10_000) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Geçersiz mesaj' }));
+        res.end(JSON.stringify({ error: 'Invalid message' }));
         return;
       }
 
-      // Yanıtı hemen döndür, işlem arka planda devam etsin
+      // Return response immediately, processing continues in background
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
 
@@ -194,10 +289,10 @@ const server = http.createServer(async (req, res) => {
       try {
         await runSupervisor(history);
 
-        // Supervisor'ın eklediği yeni mesajları bul
+        // Find new messages added by the Supervisor
         const newMessages = history.slice(prevLen);
         const assistantMsg = newMessages
-          .filter(m => m.role === 'assistant' && typeof m.content === 'string')
+          .filter(m => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim().length > 0 && !(m as any).tool_calls?.length)
           .pop();
 
         broadcast({
@@ -212,7 +307,7 @@ const server = http.createServer(async (req, res) => {
       broadcast({ type: 'status', processing: false });
     } catch {
       res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Geçersiz istek' }));
+      res.end(JSON.stringify({ error: 'Invalid request' }));
     }
     return;
   }
@@ -233,7 +328,7 @@ const server = http.createServer(async (req, res) => {
   // ── History ────────────────────────────────────
   if (pathname === '/api/history') {
     const visible = history
-      .filter(m => m.role === 'user' || (m.role === 'assistant' && typeof m.content === 'string'))
+      .filter(m => m.role === 'user' || (m.role === 'assistant' && typeof m.content === 'string' && m.content.trim().length > 0 && !(m as any).tool_calls?.length))
       .map(m => ({ role: m.role, content: m.content }));
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(visible));
@@ -242,8 +337,16 @@ const server = http.createServer(async (req, res) => {
 
   // ── Reset ──────────────────────────────────────
   if (req.method === 'POST' && pathname === '/api/reset') {
+    if (isProcessing) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Research in progress, please wait.' }));
+      return;
+    }
     history = [];
-    broadcast({ type: 'reset' });
+    webSessionId = createWebSessionId();
+    telemetrySummary = createEmptyTelemetrySummary();
+    eventBuffer.length = 0;
+    broadcast({ type: 'reset', sessionId: webSessionId });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
     return;
@@ -257,14 +360,14 @@ server.listen(PORT, () => {
   const url = `http://localhost:${PORT}`;
   const authUrl = TOKEN ? `${url}?token=${TOKEN}` : url;
 
-  // stderr'e yaz — progressEmitter henüz aktif olmayabilir
+  // Write to stderr — progressEmitter may not be active yet
   process.stderr.write(`\n🕵️  OSINT Agent Web UI: ${authUrl}\n`);
   process.stderr.write(`📊 API: ${url}/api/events (SSE)\n`);
   process.stderr.write(`🕸️  Graf: ${url}/api/graph\n\n`);
 });
 
 process.on('SIGINT', async () => {
-  process.stderr.write('\nKapatılıyor...\n');
+  process.stderr.write('\nShutting down...\n');
   await closeNeo4j();
   server.close();
   process.exit(0);

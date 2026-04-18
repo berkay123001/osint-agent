@@ -14,7 +14,7 @@
       overflow: hidden;
     }
 
-    /* ─── Üst Bar ─────────────────────────────── */
+    /* ─── Top Bar ─────────────────────────────── */
     #topbar {
       position: fixed; top: 0; left: 0; right: 0;
       height: 48px;
@@ -283,12 +283,12 @@
   <div id="topbar">
     <div class="logo">🕵️ OSINT Graph</div>
     <div class="stats" id="stats">
-      Yükleniyor...
+      Loading...
     </div>
     <input type="text" id="search-box" placeholder="Node ara... (Ctrl+K)" />
-    <button class="btn" id="btn-refresh" title="Verileri yenile">⟳ Yenile</button>
-    <button class="btn" id="btn-reset" title="Görünümü sıfırla">⊡ Sıfırla</button>
-    <button class="btn btn-toggle active" id="btn-hide-isolated" title="Hiç bağlantısı olmayan node'ları gizle/göster">⊗ Bağlantısız Gizle</button>
+    <button class="btn" id="btn-refresh" title="Refresh data">⟳ Refresh</button>
+    <button class="btn" id="btn-reset" title="Reset view">⊜ Reset</button>
+    <button class="btn btn-toggle active" id="btn-hide-isolated" title="Hide/show nodes with no connections">⊗ Hide Isolated</button>
   </div>
 
   <div id="graph-container">
@@ -296,7 +296,7 @@
   </div>
 
   <div id="legend">
-    <h4>Node Tipleri</h4>
+    <h4>Node Types</h4>
     <div id="legend-items"></div>
   </div>
 
@@ -312,12 +312,12 @@
 
   <div id="loading">
     <div class="spinner"></div>
-    <p>Neo4j'den graf verisi çekiliyor...</p>
+    <p>Fetching graph data from Neo4j...</p>
   </div>
 
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <script>
-    // ─── Renk Paleti ─────────────────────────────
+    // ─── Color Palette ──────────────────────────
     const COLORS = {
       Username:     '#00d4ff',
       Email:        '#ff4d6a',
@@ -330,7 +330,7 @@
       Phone:        '#ffd700',
       Breach:       '#ff2222',
       CryptoWallet: '#f5a623',
-      // Fact-check node türleri
+      // Fact-check node types
       Claim:        '#ff6b00',
       Fact:         '#00ff88',
       Source:       '#ffe066',
@@ -351,7 +351,7 @@
       Phone: 12,
       Breach: 14,
       CryptoWallet: 12,
-      // Fact-check node türleri
+      // Fact-check node types
       Claim:  16,
       Fact:   14,
       Source: 12,
@@ -372,7 +372,7 @@
       Phone:        '📱',
       Breach:       '💥',
       CryptoWallet: '💰',
-      // Fact-check node türleri
+      // Fact-check node types
       Claim:  '📋',
       Fact:   '✅',
       Source: '📰',
@@ -391,7 +391,7 @@
     let simulation, svg, g, linkGroup, nodeGroup, labelGroup
     let activeFilters = new Set()
     let selectedNode = null
-    let hideIsolated = true  // Varsayılan: bağlantısız node'ları gizle
+    let hideIsolated = true  // Default: hide nodes with no connections
 
     // ─── Init ────────────────────────────────────
     async function init() {
@@ -408,7 +408,7 @@
         hideIsolated = !hideIsolated
         const btn = document.getElementById('btn-hide-isolated')
         btn.classList.toggle('active', hideIsolated)
-        btn.textContent = hideIsolated ? '⊗ Bağlantısız Gizle' : '⊕ Bağlantısız Göster'
+        btn.textContent = hideIsolated ? '⊗ Hide Isolated' : '⊕ Show Isolated'
         render()
       })
     }
@@ -421,7 +421,7 @@
         updateStats()
       } catch (e) {
         document.getElementById('loading').querySelector('p').textContent =
-          'Neo4j bağlantısı kurulamadı: ' + e.message
+          'Could not connect to Neo4j: ' + e.message
       }
     }
 
@@ -436,7 +436,7 @@
       graphData.nodes.forEach(n => { labels[n.label] = (labels[n.label] || 0) + 1 })
       const parts = Object.entries(labels).map(([l, c]) => `${l}: <span>${c}</span>`)
       document.getElementById('stats').innerHTML =
-        `Toplam: <span>${graphData.nodes.length}</span> node, <span>${graphData.edges.length}</span> edge &nbsp;|&nbsp; ` +
+        `Total: <span>${graphData.nodes.length}</span> nodes, <span>${graphData.edges.length}</span> edges &nbsp;|&nbsp; ` +
         parts.join(' &nbsp;|&nbsp; ')
     }
 
@@ -465,7 +465,7 @@
       merge.append('feMergeNode').attr('in', 'coloredBlur')
       merge.append('feMergeNode').attr('in', 'SourceGraphic')
 
-      // ok İşaretleri (arrow markers)
+      // Arrow markers
       defs.append('marker')
         .attr('id', 'arrowhead')
         .attr('viewBox', '-0 -5 10 10')
@@ -488,7 +488,7 @@
         })
       svg.call(zoom)
 
-      // Çift tıklama ile zoom'u sıfırla
+      // Double-click to reset zoom
       svg.on('dblclick.zoom', null)
 
       linkGroup = g.append('g').attr('class', 'links')
@@ -511,7 +511,7 @@
         nodeIds.has(e.source?.id ?? e.source) && nodeIds.has(e.target?.id ?? e.target)
       )
 
-      // İzole node filtresi: edge'i olmayan node'ları çıkar
+      // Isolated node filter: remove nodes with no edges
       const connectedIds = new Set()
       filteredEdges.forEach(e => {
         connectedIds.add(typeof e.source === 'object' ? e.source.id : e.source)
@@ -701,7 +701,7 @@
 
       const color = getColor(d)
 
-      // Bağlantılar
+      // Connections
       const connections = []
       graphData.edges.forEach(e => {
         const sid = e.source?.id ?? e.source
@@ -729,7 +729,7 @@
       html += `</ul>`
 
       if (connections.length > 0) {
-        html += `<div class="connections-title">Bağlantılar (${connections.length})</div>`
+        html += `<div class="connections-title">Connections (${connections.length})</div>`
         for (const c of connections) {
           const confClass = c.confidence ? `conf-${c.confidence}` : ''
           const confBadge = c.confidence
@@ -750,7 +750,7 @@
       content.innerHTML = html
       panel.classList.add('open')
 
-      // Bağlantı tıklama
+      // Connection click
       content.querySelectorAll('.conn-target').forEach(el => {
         el.addEventListener('click', () => {
           const targetId = el.dataset.target
@@ -874,7 +874,7 @@
       render()
     }
 
-    // SVG background tıklama → panel kapat
+    // SVG background click → close panel
     document.getElementById('graph-svg').addEventListener('click', (e) => {
       if (e.target.tagName === 'svg' || e.target.tagName === 'rect') {
         closePanel()

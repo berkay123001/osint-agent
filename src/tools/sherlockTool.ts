@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { spawn, SpawnOptions } from 'child_process'
+import { spawn, SpawnOptions, execSync } from 'child_process'
+import { existsSync } from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { ai } from '../lib/ai.js'
@@ -7,8 +8,31 @@ import { ai } from '../lib/ai.js'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-const PYTHON = process.env.PYTHON_PATH || '/home/berkayhsrt/anaconda3/bin/python'
-const SHERLOCK_BIN = process.env.SHERLOCK_BIN || '/home/berkayhsrt/anaconda3/bin/sherlock'
+const PYTHON = process.env.PYTHON_PATH || 'python3'
+
+/** Resolve sherlock binary path — check explicit env, anaconda, then system PATH */
+function resolveSherlockBin(): string {
+  if (process.env.SHERLOCK_BIN && process.env.SHERLOCK_BIN !== 'sherlock') {
+    return process.env.SHERLOCK_BIN
+  }
+  const homeDir = process.env.HOME || process.env.USERPROFILE || ''
+  const candidates = [
+    path.join(homeDir, 'anaconda3', 'bin', 'sherlock'),
+    path.join(homeDir, 'miniconda3', 'bin', 'sherlock'),
+    path.join(homeDir, '.local', 'bin', 'sherlock'),
+  ]
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate
+  }
+  // Last resort: try which/where command
+  try {
+    const which = execSync('which sherlock 2>/dev/null || where sherlock 2>/dev/null', { encoding: 'utf-8' }).trim()
+    if (which) return which
+  } catch { /* not found */ }
+  return 'sherlock' // fallback to system PATH
+}
+
+const SHERLOCK_BIN = resolveSherlockBin()
 
 export const sherlockTool = ai.defineTool(
   {
@@ -36,7 +60,7 @@ export const sherlockTool = ai.defineTool(
   }
 )
 
-// Spawn fonksiyon tipi - test için mock'lanabilir
+// Spawn function type — mockable for tests
 type SpawnFunction = (
   command: string,
   args: string[],
@@ -48,7 +72,7 @@ export function runSherlockCLI(
   spawnFn: SpawnFunction = spawn
 ): Promise<Array<{ platform: string; url: string }>> {
   return new Promise((resolve, reject) => {
-    // Önce sherlock binary'yi direkt dene, fallback olarak python -m kullan
+    // Prefer resolved binary path, fallback to python -m
     const useDirectBin = process.env.SHERLOCK_BIN !== '0'
     const command = useDirectBin ? SHERLOCK_BIN : PYTHON
     const args = useDirectBin

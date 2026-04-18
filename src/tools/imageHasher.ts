@@ -3,7 +3,7 @@ import Jimp from 'jimp';
 export async function fetchAndHashImage(url: string): Promise<string | null> {
   try {
     const image = await Jimp.read(url);
-    // 2 tabanıyla 64 karakterli binary (perceptual) hash döndürür
+    // Returns a 64-character binary (perceptual) hash in base 2
     return image.hash(2);
   } catch {
     return null;
@@ -11,8 +11,8 @@ export async function fetchAndHashImage(url: string): Promise<string | null> {
 }
 
 /**
- * İki perceptual hash (64-bit string) arasındaki Hamming mesafesini hesaplar.
- * @returns 0 ile 64 arası bir sayı. 0 tam eşleşme, < 10 büyük olasılıkla aynı resim.
+ * Computes the Hamming distance between two perceptual hashes (64-bit strings).
+ * @returns A number from 0 to 64. 0 = exact match, < 10 = very likely the same image.
  */
 export function calculateHammingDistance(hash1: string, hash2: string): number {
   if (hash1.length !== 64 || hash2.length !== 64) return 64;

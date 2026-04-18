@@ -8,10 +8,10 @@ export interface AgentConfig {
   tools: OpenAI.Chat.ChatCompletionTool[];
   executeTool: ToolExecutor;
   model?: string;
-  maxToolCalls?: number;       // default 30; derin araştırma yapan ajanlar için artırılabilir
-  maxTokens?: number;          // default 32768; Supervisor gibi büyük context'li ajanlar için artır
-  maxEmptyRetries?: number;    // default 1; MediaAgent gibi uzun tool zincirlerinde artır
-  toolLimits?: Record<string, number>;  // per-tool hard limit'ler, varsayılanlarla birleşir
+  maxToolCalls?: number;       // default 30; increase for agents doing deep research
+  maxTokens?: number;          // default 32768; increase for agents with large context like Supervisor
+  maxEmptyRetries?: number;    // default 1; increase for long tool chains like MediaAgent
+  toolLimits?: Record<string, number>;  // per-tool hard limits, merged with defaults
 }
 
 export type Message = OpenAI.Chat.ChatCompletionMessageParam;
@@ -19,6 +19,6 @@ export type Message = OpenAI.Chat.ChatCompletionMessageParam;
 export interface AgentResult {
   finalResponse: string;
   toolCallCount: number;
-  toolsUsed: Record<string, number>; // tool_name -> kaç kez çağrıldı
-  history?: Message[];               // sub-agent conversation history (AutoGen-style continuation için)
+  toolsUsed: Record<string, number>; // tool_name -> how many times called
+  history?: Message[];               // sub-agent conversation history (for AutoGen-style continuation)
 }

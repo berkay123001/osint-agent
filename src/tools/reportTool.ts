@@ -1,17 +1,17 @@
 import { copyFile, mkdir, writeFile } from 'fs/promises'
 import path from 'path'
+import os from 'os'
 import { fileURLToPath } from 'url'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-// Obsidian vault'a otomatik kopyalama
-const OBSIDIAN_REPORTS_DIR = path.resolve(
-  process.env.HOME ?? '/home/berkayhsrt',
-  'Agent_Knowladges/OSINT/OSINT-Agent/04 - Araştırma Raporları',
-)
+// Automatic sync to Obsidian vault
+const VAULT_BASE = process.env.OBSIDIAN_VAULT ||
+  path.resolve(process.env.HOME ?? os.homedir(), 'Agent_Knowladges/OSINT/OSINT-Agent')
+const OBSIDIAN_REPORTS_DIR = path.join(VAULT_BASE, '04 - Research Reports')
 
-/** Dosya adını temizle: Türkçe → ASCII, özel karakterler → boşluk, kısalt */
+/** Sanitize file name: Turkish → ASCII, special characters → space, truncate */
 function sanitizeFileName(subject: string, maxLength = 60): string {
   return subject
     .replace(/[Ğğ]/g, 'G').replace(/[Üü]/g, 'U').replace(/[Şş]/g, 'S')
@@ -43,7 +43,7 @@ async function syncToObsidian(filePath: string): Promise<void> {
     const dest = path.join(destDir, path.basename(filePath))
     await copyFile(filePath, dest)
   } catch {
-    // Obsidian vault yoksa sessizce atla
+    // Silently skip if Obsidian vault is not present
   }
 }
 

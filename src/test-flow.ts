@@ -10,7 +10,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const PYTHON = process.env.PYTHON_PATH || '/home/berkayhsrt/anaconda3/bin/python'
 
-// Mini investigate flow - Sherlock olmadan (hızlı test)
+// Mini investigate flow - without Sherlock (quick test)
 async function miniInvestigate(username: string) {
   console.log(`\n🕵️ Mini Investigation: "${username}"\n`)
 
@@ -37,7 +37,7 @@ async function miniInvestigate(username: string) {
     for (const email of emails) {
       graph.push({ from: username, to: email, relation: 'USES_EMAIL' })
     }
-    console.log(`   ✅ Osgint tamamlandı`)
+    console.log(`   ✅ Osgint completed`)
   }
 
   // Step 2: LLM PII extraction
@@ -62,12 +62,12 @@ async function miniInvestigate(username: string) {
           graph.push({ from: username, to: u, relation: 'LINKED_USERNAME' })
         }
       }
-      console.log(`   ✅ LLM PII çıkarıldı`)
+      console.log(`   ✅ LLM PII extracted`)
     }
   }
 
   // Results
-  console.log(`\n📊 İlişki Grafiği (${graph.length} bağlantı):`)
+  console.log(`\n📊 Relationship Graph (${graph.length} connections):`)
   for (const edge of graph) {
     console.log(`   ${edge.from} --[${edge.relation}]--> ${edge.to}`)
   }

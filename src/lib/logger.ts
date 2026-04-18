@@ -1,12 +1,12 @@
 /**
- * Yapılandırılmış Logger — OSINT Agent
+ * Structured Logger — OSINT Agent
  *
- * LOG_LEVEL env var ile seviye kontrolü: DEBUG | INFO | WARN | ERROR (varsayılan: INFO)
- * LOG_FORMAT=JSON ile structured output modu
+ * Log level control via LOG_LEVEL env var: DEBUG | INFO | WARN | ERROR (default: INFO)
+ * LOG_FORMAT=JSON enables structured output mode
  *
- * Kullanım:
+ * Usage:
  *   import { logger } from '../lib/logger.js'
- *   logger.info('TOOL', 'Sherlock taraması başladı', { username: 'torvalds' })
+ *   logger.info('TOOL', 'Sherlock scan started', { username: 'torvalds' })
  *   logger.toolStart('sherlock', { username: 'torvalds' })
  */
 
@@ -26,7 +26,7 @@ interface LogEntry {
   duration?: number
 }
 
-// ─── Seviye Öncelikleri ──────────────────────────────────────────────────────
+// ─── Level Priorities ──────────────────────────────────────────────────────
 const LEVEL_PRIORITY: Record<LogLevel, number> = {
   DEBUG: 0,
   INFO: 1,
@@ -34,7 +34,7 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
   ERROR: 3,
 }
 
-// ─── Konfigürasyon ───────────────────────────────────────────────────────────
+// ─── Configuration ──────────────────────────────────────────────────────────
 // Lazy evaluation — ESM import hoisting'den etkilenmez
 const jsonMode = process.env.LOG_FORMAT?.toUpperCase() === 'JSON'
 
@@ -62,9 +62,9 @@ const COMPONENT_COLORS: Record<Component, (s: string) => string> = {
   CHAT: chalk.white,
 }
 
-// ─── Zaman Damgası ───────────────────────────────────────────────────────────
+// ─── Timestamp ───────────────────────────────────────────────────────────────
 function timestamp(): string {
-  return new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
 }
 
 function isoTimestamp(): string {
@@ -98,8 +98,8 @@ function formatJson(entry: LogEntry): string {
 function emit(entry: LogEntry): void {
   if (LEVEL_PRIORITY[entry.level] < getMinPriority()) return
 
-  // Tüm log çıktısını emitProgress üzerinden TUI log panel'ine yönlendir
-  // process.stderr.write kullanmak Ink layout'unu bozar
+  // Route all log output through emitProgress to the TUI log panel
+  // using process.stderr.write would break Ink's layout
   const label = entry.level === 'WARN' ? '⚠️' : entry.level === 'ERROR' ? '❌' : 'ℹ️'
   emitProgress(`${label} [${entry.component}] ${entry.message}`)
 }
@@ -122,18 +122,18 @@ export const logger = {
     emit({ ts: timestamp(), level: 'ERROR', component, message, details })
   },
 
-  /** Tool çalışmaya başladığında */
+  /** When a tool starts */
   toolStart(name: string, args?: Record<string, unknown>): void {
     emit({
       ts: timestamp(),
       level: 'INFO',
       component: 'TOOL',
-      message: `▶ ${name} başladı`,
+      message: `▶ ${name} started`,
       details: args,
     })
   },
 
-  /** Tool tamamlandığında */
+  /** When a tool completes */
   toolResult(name: string, result: string, durationMs?: number): void {
     const success = !result.startsWith('❌') && !result.startsWith('Unknown tool')
     emit({
@@ -145,23 +145,23 @@ export const logger = {
     })
   },
 
-  /** Agent düşünme/düşünce aşaması */
+  /** Agent thinking/reasoning phase */
   agentThinking(agentName: string): void {
     emit({
       ts: timestamp(),
       level: 'INFO',
       component: 'AGENT',
-      message: `⚙️  [${agentName}] Düşünüyor...`,
+      message: `⚙️  [${agentName}] Thinking...`,
     })
   },
 
-  /** Agent karar/routing log'u */
+  /** Agent decision/routing log */
   agentDecision(agentName: string, decision: string): void {
     emit({
       ts: timestamp(),
       level: 'DEBUG',
       component: 'AGENT',
-      message: `[${agentName}] Karar: ${decision}`,
+      message: `[${agentName}] Decision: ${decision}`,
     })
   },
 }

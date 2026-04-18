@@ -29,16 +29,16 @@ test('crossReferenceScore counts matching identifiers', () => {
     handles: ['sadelimon'],
     websites: ['https://example.com/blog'],
   }
-  // Email eşleşmesi
+  // Email match
   const r1 = crossReferenceScore(known, { email: 'test@example.com' })
   assert.equal(r1.score, 1)
   assert.ok(r1.matches[0].includes('email'))
 
-  // Hiç eşleşme yok
+  // No match at all
   const r2 = crossReferenceScore(known, { email: 'random@gmail.com', handle: 'someone' })
   assert.equal(r2.score, 0)
 
-  // Çoklu eşleşme
+  // Multiple matches
   const r3 = crossReferenceScore(known, { email: 'test@example.com', handle: 'sadelimon' })
   assert.equal(r3.score, 2)
 })

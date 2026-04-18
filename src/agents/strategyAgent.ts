@@ -1,10 +1,12 @@
 import OpenAI from 'openai';
 import type { ChatCompletion } from 'openai/resources/chat/completions';
 import { logger } from '../lib/logger.js';
-import { emitProgress } from '../lib/progressEmitter.js';
+import { emitProgress, emitTelemetry } from '../lib/progressEmitter.js';
+import { buildLLMTelemetryEvent, persistLLMTelemetryEvent } from '../lib/llmTelemetry.js';
 import { appendFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import type { Message } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,17 +21,17 @@ const client = new OpenAI({
 const STRATEGY_MODEL = 'deepseek/deepseek-v3.2-speciale';
 
 /**
- * Strategy Agent — oturum bazlı (session-aware) çalışır.
+ * Strategy Agent — session-aware operation.
  *
- * Her StrategySession bir sub-agent araştırması için oluşturulur.
- * 3 aşamanın tamamı aynı conversation history üzerinden yürür:
- *   1. PLAN      → "Şu araştırmayı yap, işte plan"
- *   2. REVIEW    → "İşte sonuç, plana göre değerlendir" (kendi planını hatırlar)
- *   3. SYNTHESIZE → "Profesyonel rapor üret" (plan + review'u hatırlar)
+ * Each StrategySession is created for one sub-agent investigation.
+ * All 3 phases run over the same conversation history:
+ *   1. PLAN      → "Do this research, here is the plan"
+ *   2. REVIEW    → "Here is the result, evaluate against plan" (remembers its own plan)
+ *   3. SYNTHESIZE → "Generate professional report" (remembers plan + review)
  *
- * Tool çağırmaz, sadece derin düşünür. Supervisor'dan farkı:
- * - Supervisor: genel koordinasyon, routing, kullanıcı muhabbeti
- * - Strategy: taktiksel planlama, sub-agent denetleme, rapor sentezi
+ * Does not call tools, only thinks deeply. Difference from Supervisor:
+ * - Supervisor: general coordination, routing, user interaction
+ * - Strategy: tactical planning, sub-agent oversight, report synthesis
  */
 
 const SYSTEM_PROMPT = `You are an OSINT Strategy Specialist. You have three roles:
@@ -116,51 +118,52 @@ export class StrategySession {
   private agentType: 'identity' | 'media' | 'academic';
   private query: string;
   private logEntries: string[] = [];
+  private completionAttempt = 0;
 
   constructor(agentType: 'identity' | 'media' | 'academic', query: string) {
     this.agentType = agentType;
     this.query = query;
     this.history.push({ role: 'system', content: SYSTEM_PROMPT });
-    this.logEntries.push(`# Strategy Agent Oturum\n**Agent:** ${agentType}\n**Görev:** ${query}\n**Başlangıç:** ${new Date().toISOString()}\n\n---\n`);
+    this.logEntries.push(`# Strategy Agent Session\n**Agent:** ${agentType}\n**Task:** ${query}\n**Start:** ${new Date().toISOString()}\n\n---\n`);
   }
 
-  /** TUI'ye ve strategy-log dosyasına yaz */
+  /** Write to TUI and strategy-log file */
   private logPhase(phase: string, content: string): void {
-    const timestamp = new Date().toLocaleTimeString('tr-TR');
-    // TUI'ye gönder — emitProgress ile (kullanıcı log panelinde görecek)
+    const timestamp = new Date().toLocaleTimeString('en-US');
+    // Send to TUI — via emitProgress (user sees it in the log panel)
     const lines = content.split('\n').filter(l => l.trim());
     const preview = lines.slice(0, 5).join('\n  ');
-    const suffix = lines.length > 5 ? `\n  ... (+${lines.length - 5} satır daha)` : '';
+    const suffix = lines.length > 5 ? `\n  ... (+${lines.length - 5} more lines)` : '';
     emitProgress(`🧠 [Strategy-${phase}] ${timestamp}\n  ${preview}${suffix}`);
 
-    // Dosya logu — tam içerik
+    // File log — full content
     this.logEntries.push(`## ${phase} (${timestamp})\n\n${content}\n\n---\n`);
   }
 
-  /** Session sonunda log dosyasına yaz */
+  /** Write log to file at end of session */
   async flushLog(): Promise<void> {
     try {
       await mkdir(SESSION_DIR, { recursive: true });
       await appendFile(STRATEGY_LOG_FILE, this.logEntries.join('\n'), 'utf-8');
     } catch {
-      // dosya yazma hatası kritik değil
+      // file write error is not critical
     }
   }
 
   /**
-   * FAZ 1: Sub-agent çalışmadan önce taktiksel plan oluştur.
-   * Plan session history'ye kaydedilir — sonraki çağrılar planı hatırlar.
+   * PHASE 1: Create a tactical plan before the sub-agent runs.
+   * Plan is saved to session history — subsequent calls remember it.
    */
   async plan(context?: string): Promise<string> {
-    emitProgress(`🧠 Strategy Agent planlıyor (${this.agentType})...`);
+    emitProgress(`🧠 Strategy Agent planning (${this.agentType})...`);
 
     this.history.push({
       role: 'user',
-      content: `[PLANLAMA FAZI]\nAgent tipi: ${this.agentType}\nAgent yetenekleri: ${AGENT_DESCRIPTIONS[this.agentType]}\n\nAraştırma görevi: ${this.query}${context ? `\n\nEk bağlam: ${context}` : ''}`,
+      content: `[PLANNING PHASE]\nAgent type: ${this.agentType}\nAgent capabilities: ${AGENT_DESCRIPTIONS[this.agentType]}\n\nResearch task: ${this.query}${context ? `\n\nAdditional context: ${context}` : ''}`,
     });
 
     try {
-      const response = await this.callLLM();
+      const response = await this.callLLM('plan');
       const plan = response ?? '';
 
       if (plan.length > 50) {
@@ -171,27 +174,27 @@ export class StrategySession {
       }
       return '';
     } catch (err) {
-      logger.warn('AGENT', `[Strategy-Plan] Hata: ${(err as Error).message}`);
+      logger.warn('AGENT', `[Strategy-Plan] Error: ${(err as Error).message}`);
       return '';
     }
   }
 
   /**
-   * FAZ 2: Sub-agent tamamlandıktan sonra sonuçları review et.
-   * Kendi planını history'den hatırlar — tekrar parametre olarak geçmeye gerek yok.
+   * PHASE 2: Review results after sub-agent completes.
+   * Remembers its own plan from history — no need to pass it as a parameter again.
    */
   async review(result: string): Promise<{ approved: boolean; feedback: string }> {
-    emitProgress(`🧠 Strategy Agent review ediyor (${this.agentType})...`);
+    emitProgress(`🧠 Strategy Agent reviewing (${this.agentType})...`);
 
     this.history.push({
       role: 'user',
-      content: `[DENETLEME FAZI]\nSub-agent tamamlandı. İşte araştırma sonucu:\n\n${result.slice(0, 15000)}`,
+      content: `[REVIEW PHASE]\nSub-agent completed. Here are the research results:\n\n${result.slice(0, 15000)}`,
     });
 
     try {
-      const response = await this.callLLM();
+      const response = await this.callLLM('review');
       const review = response ?? '';
-      const approved = review.includes('SONUÇ TEMİZ') || review.toLowerCase().includes('onaylıyorum');
+      const approved = review.includes('RESULT CLEAN') || review.toLowerCase().includes('approved');
 
       this.history.push({ role: 'assistant', content: review });
       this.logPhase(approved ? 'REVIEW ✅' : 'REVIEW ❌', review);
@@ -199,25 +202,25 @@ export class StrategySession {
 
       return { approved, feedback: review };
     } catch (err) {
-      logger.warn('AGENT', `[Strategy-Review] Hata: ${(err as Error).message}`);
+      logger.warn('AGENT', `[Strategy-Review] Error: ${(err as Error).message}`);
       return { approved: true, feedback: '' };
     }
   }
 
   /**
-   * FAZ 3: Ham sonucu profesyonel rapora dönüştür.
-   * History'de plan + review var — neye göre temizleyeceğini biliyor.
+   * PHASE 3: Transform raw result into a professional report.
+   * History has plan + review — it knows what to clean up.
    */
   async synthesize(result: string, reviewFeedback?: string): Promise<string> {
-    emitProgress(`🧠 Strategy Agent rapor sentezliyor (${this.agentType})...`);
+    emitProgress(`🧠 Strategy Agent synthesizing report (${this.agentType})...`);
 
     const contextParts: string[] = [
-      `[SENTEZ FAZI]`,
-      `Sub-agent ham sonuç:`,
+      `[SYNTHESIS PHASE]`,
+      `Sub-agent raw result:`,
       result.slice(0, 12000),
     ];
     if (reviewFeedback) {
-      contextParts.push(`\nKendi denetim notların (yukarıda yazdıkların):`, reviewFeedback.slice(0, 3000));
+      contextParts.push(`\nYour own review notes (from above):`, reviewFeedback.slice(0, 3000));
     }
 
     this.history.push({
@@ -226,37 +229,76 @@ export class StrategySession {
     });
 
     try {
-      const response = await this.callLLM();
+      const response = await this.callLLM('synthesize');
       const synthesized = response ?? '';
 
       if (synthesized.length > 100) {
         this.history.push({ role: 'assistant', content: synthesized });
-        this.logPhase('SYNTHESIZE', `Girdi: ${(result.length / 1024).toFixed(1)}KB ham → Çıktı: ${(synthesized.length / 1024).toFixed(1)}KB sentezlenmiş rapor`);
+        this.logPhase('SYNTHESIZE', `Input: ${(result.length / 1024).toFixed(1)}KB raw → Output: ${(synthesized.length / 1024).toFixed(1)}KB synthesized report`);
         await this.flushLog();
         return synthesized;
       }
       return result;
     } catch (err) {
-      logger.warn('AGENT', `[Strategy-Synthesize] Hata: ${(err as Error).message}`);
+      logger.warn('AGENT', `[Strategy-Synthesize] Error: ${(err as Error).message}`);
       return result;
     }
   }
 
   /**
-   * Ortak LLM çağrısı — her zaman session history'yi gönderir.
+   * Shared LLM call — always sends the session history.
    */
-  private async callLLM(): Promise<string | undefined> {
-    const response = (await client.chat.completions.create({
-      model: STRATEGY_MODEL,
-      messages: this.history,
-      max_tokens: 10000,
-    })) as ChatCompletion;
+  private async callLLM(phase: 'plan' | 'review' | 'synthesize'): Promise<string | undefined> {
+    const startedAt = Date.now();
+    const attempt = ++this.completionAttempt;
+    try {
+      const response = (await client.chat.completions.create({
+        model: STRATEGY_MODEL,
+        messages: this.history,
+        max_tokens: 10000,
+      })) as ChatCompletion;
 
-    return response.choices?.[0]?.message?.content?.trim();
+      const telemetry = buildLLMTelemetryEvent({
+        agent: 'StrategyAgent',
+        phase,
+        reason: phase,
+        attempt,
+        requestedModel: STRATEGY_MODEL,
+        actualModel: response.model,
+        responseId: response.id,
+        status: 'success',
+        latencyMs: Date.now() - startedAt,
+        messages: this.history as Message[],
+        usage: response.usage as any,
+      });
+      emitTelemetry(telemetry);
+      void persistLLMTelemetryEvent(telemetry).catch((error) => {
+        emitProgress(`⚠️ [Strategy-${phase}] Telemetry persist failed: ${(error as Error).message}`);
+      });
+
+      return response.choices?.[0]?.message?.content?.trim();
+    } catch (error) {
+      const telemetry = buildLLMTelemetryEvent({
+        agent: 'StrategyAgent',
+        phase,
+        reason: phase,
+        attempt,
+        requestedModel: STRATEGY_MODEL,
+        status: 'error',
+        latencyMs: Date.now() - startedAt,
+        messages: this.history as Message[],
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      emitTelemetry(telemetry);
+      void persistLLMTelemetryEvent(telemetry).catch((persistError) => {
+        emitProgress(`⚠️ [Strategy-${phase}] Telemetry persist failed: ${(persistError as Error).message}`);
+      });
+      throw error;
+    }
   }
 
   /**
-   * History özeti — debugging için
+   * History size — for debugging
    */
   getHistorySize(): number {
     return this.history.length;
@@ -264,13 +306,13 @@ export class StrategySession {
 }
 
 // ============================================================================
-// Backward-compatible wrapper fonksiyonları
-// Supervisor'da eski çağrı formatını kullanan yerler varsa diye
+// Backward-compatible wrapper functions
+// For any places in Supervisor using the old call format
 // ============================================================================
 
 /**
- * Sub-agent çalışmadan önce stratejik plan oluştur.
- * Stateles sürüm — session hafızası yok.
+ * Create a strategic plan before sub-agent runs.
+ * Stateless version — no session memory.
  */
 export async function createStrategyPlan(
   agentType: 'identity' | 'media' | 'academic',
@@ -282,8 +324,8 @@ export async function createStrategyPlan(
 }
 
 /**
- * Sub-agent tamamlandıktan sonra sonuçları review et.
- * Stateles sürüm — plan parametre olarak geçilir.
+ * Review results after sub-agent completes.
+ * Stateless version — plan is passed as a parameter.
  */
 export async function reviewStrategyResult(
   agentType: string,
@@ -295,7 +337,7 @@ export async function reviewStrategyResult(
     agentType as 'identity' | 'media' | 'academic',
     query,
   );
-  // Plan'ı history'ye enjekte et ki review'da hatırlasın
+  // Inject plan into history so review remembers it
   if (plan) {
     session['history'].push({ role: 'assistant', content: plan });
   }
@@ -303,8 +345,8 @@ export async function reviewStrategyResult(
 }
 
 /**
- * Sub-agent'ın ham sonucunu profesyonel rapora dönüştürür.
- * Stateles sürüm.
+ * Transform the sub-agent's raw result into a professional report.
+ * Stateless version.
  */
 export async function synthesizeReport(
   agentType: string,

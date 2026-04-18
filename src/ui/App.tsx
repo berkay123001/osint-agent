@@ -1,11 +1,12 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 
 import { runSupervisor } from '../agents/supervisorAgent.js';
 import { closeNeo4j } from '../lib/neo4j.js';
 import type { Message } from '../agents/types.js';
-import { progressEmitter } from '../lib/progressEmitter.js';
+import { emitSessionReset, progressEmitter } from '../lib/progressEmitter.js';
+import { formatLLMTelemetryLine, type LLMTelemetryEvent } from '../lib/llmTelemetry.js';
 import {
   loadActiveSession,
   saveSession,
@@ -33,36 +34,61 @@ export function App(): React.ReactElement {
   const [progressLog, setProgressLog] = useState<string[]>([]);
   const [showLog, setShowLog] = useState(false);
   const [logScrollOffset, setLogScrollOffset] = useState(0);
+  const progressBufferRef = useRef<string[]>([]);
+  const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const logGenerationRef = useRef(0);
+
+  const clearPendingLogFlush = useCallback(() => {
+    progressBufferRef.current = [];
+    if (progressTimerRef.current) {
+      clearTimeout(progressTimerRef.current);
+      progressTimerRef.current = null;
+    }
+  }, []);
+
+  const resetProgressLog = useCallback((hideLog: boolean) => {
+    logGenerationRef.current += 1;
+    clearPendingLogFlush();
+    setProgressLog([]);
+    setLogScrollOffset(0);
+    if (hideLog) setShowLog(false);
+  }, [clearPendingLogFlush]);
 
   // progressEmitter dinle — agent/tool loglarını UI'da göster
   // Batch: 150ms içinde gelen logları tek seferde render et — titreme önler
   useEffect(() => {
-    let buffer: string[] = [];
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleFlush = () => {
+      if (progressTimerRef.current) return;
 
-    const flush = () => {
-      timer = null;
-      if (buffer.length === 0) return;
-      const batch = buffer;
-      buffer = [];
-      setProgressLog(prev => [...prev.slice(-200), ...batch]);
-      // Scroll offset sadece kullanıcı scroll yapmadıysa sıfırla
-      setLogScrollOffset(prev => prev === 0 ? 0 : prev);
-      // setShowLog(true) kaldırıldı — log otomatik açılmasın, kullanıcı L tuşuyla açsın
+      const generation = logGenerationRef.current;
+      progressTimerRef.current = setTimeout(() => {
+        progressTimerRef.current = null;
+        const batch = progressBufferRef.current;
+        progressBufferRef.current = [];
+
+        if (generation !== logGenerationRef.current || batch.length === 0) return;
+
+        setProgressLog(prev => [...prev.slice(-200), ...batch]);
+        setLogScrollOffset(prev => prev === 0 ? 0 : prev);
+      }, 150);
     };
 
     const handler = (msg: string) => {
-      buffer.push(msg);
-      if (!timer) {
-        timer = setTimeout(flush, 150);
-      }
+      progressBufferRef.current.push(msg);
+      scheduleFlush();
+    };
+    const telemetryHandler = (event: LLMTelemetryEvent) => {
+      progressBufferRef.current.push(formatLLMTelemetryLine(event));
+      scheduleFlush();
     };
     progressEmitter.on('progress', handler);
+    progressEmitter.on('telemetry', telemetryHandler);
     return () => {
       progressEmitter.off('progress', handler);
-      if (timer) clearTimeout(timer);
+      progressEmitter.off('telemetry', telemetryHandler);
+      clearPendingLogFlush();
     };
-  }, []);
+  }, [clearPendingLogFlush]);
 
   // Startup: önceki aktif oturumu arşivle — /resume listesinde görünsün
   useEffect(() => {
@@ -120,6 +146,8 @@ export function App(): React.ReactElement {
       deleteActiveSession();
       setMessages([]);
       setCreatedAt(new Date().toISOString());
+      resetProgressLog(true);
+      emitSessionReset();
       setStatusMsg('Session cleared.');
       return;
     }
@@ -164,8 +192,7 @@ export function App(): React.ReactElement {
     // Normal mesaj → supervisor
     setIsProcessing(true);
     setStatusMsg(null);
-    setProgressLog([]);        // Önceki sorgunun loglarını temizle
-    setLogScrollOffset(0);
+    resetProgressLog(false);
     const newMessages: Message[] = [...messages, { role: 'user', content: trimmed }];
     setMessages(newMessages);
 
@@ -177,7 +204,7 @@ export function App(): React.ReactElement {
       setStatusMsg(`Error: ${(e as Error).message}`);
     }
     setIsProcessing(false);
-  }, [messages, createdAt, exit]);
+  }, [messages, createdAt, exit, resetProgressLog]);
 
   const handleMenuSelect = useCallback((cmd: string) => {
     setView('chat');
@@ -196,12 +223,14 @@ export function App(): React.ReactElement {
       archiveSession(messages, createdAt);
       deleteActiveSession();
     }
+    resetProgressLog(true);
+    emitSessionReset();
     setMessages(session.data.history);
     setCreatedAt(session.data.createdAt);
     saveSession(session.data.history, session.data.createdAt);
     setStatusMsg(`Oturum yükle: ${session.data.history.filter(m => m.role === 'user').length} soru.`);
     setView('chat');
-  }, [messages, createdAt]);
+  }, [messages, createdAt, resetProgressLog]);
 
   const handleDeleteSelect = useCallback((item: { value: string }) => {
     const sessions = listSessions(); // taze oku

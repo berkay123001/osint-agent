@@ -4,4 +4,4 @@ export { ai } from './lib/ai.js'
 import './tools/sherlockTool.js'
 import './flows/investigateFlow.js'
 
-console.log('🕵️ OSINT Agent başlatıldı.')
+console.log('🕵️ OSINT Agent started.')

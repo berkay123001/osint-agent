@@ -1,11 +1,11 @@
 /**
- * Twitter/X profil aracı — Scrapling Stealth + Puppeteer stealth fallback
+ * Twitter/X profile tool — Scrapling Stealth + Puppeteer stealth fallback
  *
- * Nitter instance'ları artık çoğunlukla bot korumalı veya kapalı.
- * Bu araç doğrudan twitter.com/x.com adresini Scrapling StealthyFetcher
- * ile çeker. Scrapling başarısız olursa Puppeteer stealth devreye girer.
+ * Nitter instances are now mostly bot-protected or offline.
+ * This tool fetches twitter.com/x.com directly using Scrapling StealthyFetcher.
+ * If Scrapling fails, Puppeteer stealth is used as a fallback.
  *
- * Scrapling conda ortamı: /home/berkayhsrt/anaconda3/envs/scrapling
+ * Scrapling conda environment: /home/berkayhsrt/anaconda3/envs/scrapling
  */
 
 import { execFile } from 'child_process'
@@ -16,7 +16,7 @@ import { fileURLToPath } from 'url'
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-const SCRAPLING_PYTHON = process.env.SCRAPLING_PYTHON || '/home/berkayhsrt/anaconda3/envs/scrapling/bin/python'
+const SCRAPLING_PYTHON = process.env.SCRAPLING_PYTHON || process.env.PYTHON_PATH || 'python3'
 const SCRAPLING_RUNNER = path.join(__dirname, 'scrapling_runner.py')
 
 export interface NitterProfile {
@@ -37,8 +37,8 @@ export interface NitterProfile {
 }
 
 /**
- * Twitter/X profilini Scrapling stealth browser ile çek.
- * og:description, og:title, og:image meta taglerine öncelik verir.
+ * Fetches a Twitter/X profile using Scrapling stealth browser.
+ * Prioritises og:description, og:title, og:image meta tags.
  */
 export async function fetchNitterProfile(username: string): Promise<NitterProfile> {
   const cleanUsername = username.replace(/^@/, '').trim()
@@ -55,15 +55,15 @@ export async function fetchNitterProfile(username: string): Promise<NitterProfil
     )
     scrapleResult = JSON.parse(stdout)
   } catch {
-    // Scrapling yoksa / hata → Puppeteer fallback aşağıda
+    // If Scrapling is unavailable / errors → Puppeteer fallback below
   }
 
-  // 2. Scrapling başarılı mı kontrol et
+  // 2. Check whether Scrapling succeeded
   if (scrapleResult && !scrapleResult.error && scrapleResult.markdown) {
     return parseScraplingResult(cleanUsername, scrapleResult, 'scrapling-stealth')
   }
 
-  // 3. dynamic mod fallback (JS ağır sayfalar için)
+  // 3. dynamic mode fallback (for JS-heavy pages)
   try {
     const { stdout } = await execFileAsync(
       SCRAPLING_PYTHON,
@@ -78,10 +78,10 @@ export async function fetchNitterProfile(username: string): Promise<NitterProfil
     // devam
   }
 
-  // 4. Tüm yöntemler başarısız
+  // 4. All methods failed
   return empty(cleanUsername,
-    `Twitter/X profili çekilemedi. Scrapling conda ortamı aktif değil veya ` +
-    `@${cleanUsername} profili gizli/silinmiş olabilir. ` +
+    `Failed to fetch Twitter/X profile. Scrapling conda environment is inactive or ` +
+    `@${cleanUsername} profile may be private/deleted. ` +
     `Manuel kontrol: https://x.com/${cleanUsername}`
   )
 }
@@ -90,18 +90,18 @@ function parseScraplingResult(username: string, result: any, source: string): Ni
   const markdown: string = result.markdown ?? ''
   const title: string = result.title ?? ''
 
-  // title genellikle "Display Name (@username) / X" formatında gelir
+  // title is typically in "Display Name (@username) / X" format
   const displayNameMatch = title.match(/^(.+?)\s*\(@/)
   const displayName = displayNameMatch ? displayNameMatch[1].trim() : username
 
-  // Bio — og:description genellikle profil biyografisini içerir
+  // Bio — og:description usually contains the profile biography
   const bioMatch = markdown.match(/(?:bio|description)[:\s]+([^\n]{10,200})/i)
   const bio = result.description ?? bioMatch?.[1]?.trim() ?? ''
 
-  // Follower/following sayıları — metin içinden çek
-  const followersMatch = markdown.match(/(\d[\d,.]+)\s*(?:Followers?|Takipçi)/i)
+  // Follower/following counts — extract from text
+  const followersMatch = markdown.match(/(\d[\d,.]+)\s*(?:Followers?)/i)
   const followingMatch = markdown.match(/(\d[\d,.]+)\s*(?:Following|Takip)/i)
-  const tweetsMatch = markdown.match(/(\d[\d,.]+)\s*(?:posts?|tweets?|Gönderi)/i)
+  const tweetsMatch = markdown.match(/(\d[\d,.]+)\s*(?:posts?|tweets?)/i)
 
   return {
     username,
@@ -151,21 +151,21 @@ function empty(username: string, error: string): NitterProfile {
  */
 export function formatNitterResult(profile: NitterProfile): string {
   if (profile.error) {
-    return `❌ Twitter/X profil hatası (@${profile.username}): ${profile.error}`
+    return `❌ Twitter/X profile error (@${profile.username}): ${profile.error}`
   }
 
   const lines: string[] = [
     `🐦 Twitter/X Profili: @${profile.username}`,
     `(Kaynak: ${profile.instanceUsed ?? 'scrapling'})`,
     '',
-    `İsim: ${profile.displayName || 'N/A'}`,
+    `Name: ${profile.displayName || 'N/A'}`,
     `Bio: ${profile.bio || 'N/A'}`,
     `Konum: ${profile.location || 'N/A'}`,
     `Web: ${profile.website || 'N/A'}`,
     `Tweet: ${profile.tweets || 'N/A'}`,
-    `Takipçi: ${profile.followers || 'N/A'}`,
+    `Followers: ${profile.followers || 'N/A'}`,
     `Takip: ${profile.following || 'N/A'}`,
-    `Doğrulanmış: ${profile.verified ? '✅ Evet' : '❌ Hayır'}`,
+    `Verified: ${profile.verified ? '✅ Yes' : '❌ No'}`,
   ]
 
   if (profile.avatarUrl) lines.push(`Avatar: ${profile.avatarUrl}`)

@@ -287,7 +287,7 @@ export async function analyzeGpxFiles(filePaths: string[]): Promise<GpxAnalysisR
       const gpx = parseGpx(xml, resolved.split('/').pop() ?? resolved)
 
       if (gpx.tracks.length === 0) {
-        errors.push(`${resolved}: GPX dosyasında track bulunamadı`)
+        errors.push(`${resolved}: No tracks found in GPX file`)
         continue
       }
 
@@ -361,7 +361,7 @@ export async function analyzeGpxFiles(filePaths: string[]): Promise<GpxAnalysisR
 export function formatGpxResult(result: GpxAnalysisResult): string {
   const lines: string[] = []
 
-  lines.push('📍 GPX ANALİZİ SONUÇLARI')
+  lines.push('📍 GPX ANALYSIS RESULTS')
   lines.push('═'.repeat(50))
 
   // File summary
@@ -375,12 +375,12 @@ export function formatGpxResult(result: GpxAnalysisResult): string {
   lines.push(`\n📊 Toplam: ${result.totalPoints} nokta, ${result.totalTracks} track`)
 
   // Center point
-  lines.push(`\n🎯 COĞRAFİ MERKEZ: ${result.geographicCenter.lat}, ${result.geographicCenter.lon}`)
+  lines.push(`\n🎯 GEOGRAPHIC CENTER: ${result.geographicCenter.lat}, ${result.geographicCenter.lon}`)
 
   if (result.centerGeocode) {
     lines.push(`📍 Adres: ${result.centerGeocode.displayName}`)
-    lines.push(`🏙️ Şehir: ${result.centerGeocode.city ?? 'Bilinmiyor'}`)
-    lines.push(`🌍 Ülke: ${result.centerGeocode.country ?? 'Bilinmiyor'} (${result.centerGeocode.countryCode ?? '?'})`)
+    lines.push(`🏙️ City: ${result.centerGeocode.city ?? 'Unknown'}`)
+    lines.push(`🌍 Country: ${result.centerGeocode.country ?? 'Unknown'} (${result.centerGeocode.countryCode ?? '?'})`)
     if (result.centerGeocode.landmark) {
       lines.push(`🏛️ Landmark: ${result.centerGeocode.landmark}`)
     }
@@ -397,10 +397,10 @@ export function formatGpxResult(result: GpxAnalysisResult): string {
     for (let i = 0; i < result.hotspots.length; i++) {
       const hs = result.hotspots[i]
       lines.push(`\n  Hotspot #${i + 1}: ${hs.lat}, ${hs.lon}`)
-      lines.push(`  Ziyaret sayısı: ${hs.visitCount} nokta (%${hs.percentageOfTracks} oranında)`)
+      lines.push(`  Visit count: ${hs.visitCount} points (${hs.percentageOfTracks}% of tracks)`)
       if (hs.geocode) {
         lines.push(`  📍 ${hs.geocode.displayName}`)
-        if (hs.geocode.city) lines.push(`  🏙️ Şehir: ${hs.geocode.city}`)
+        if (hs.geocode.city) lines.push(`  🏙️ City: ${hs.geocode.city}`)
         if (hs.geocode.landmark) lines.push(`  🏛️ Landmark: ${hs.geocode.landmark}`)
         if (hs.geocode.road) lines.push(`  🛣️ Yol: ${hs.geocode.road}`)
       }
@@ -409,12 +409,12 @@ export function formatGpxResult(result: GpxAnalysisResult): string {
 
   // Cross-track overlap analysis
   if (result.files.length > 1) {
-    lines.push(`\n🔗 DOSYALAR ARASI ÖRTÜŞME:`)
+    lines.push(`\n🔗 CROSS-FILE OVERLAP:`)
     const center = result.geographicCenter
     for (const file of result.files) {
       const allPts = file.tracks.flatMap(t => t.points)
       const nearCenter = allPts.filter(p => haversineDistanceKm(center, p) < 0.1)
-      lines.push(`  • ${file.metadata.name ?? file.filename}: ${nearCenter.length}/${allPts.length} nokta merkez yakınında (<100m)`)
+      lines.push(`  • ${file.metadata.name ?? file.filename}: ${nearCenter.length}/${allPts.length} points near centre (<100m)`)
     }
   }
 

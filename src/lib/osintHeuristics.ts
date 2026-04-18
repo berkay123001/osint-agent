@@ -5,7 +5,7 @@ export function isLikelyUsernameCandidate(value: string): boolean {
   return true
 }
 
-/** Yaygın Türk isimlerini tespit et — doğrulama gerektiren adaylar */
+/** Detect common Turkish names — candidates that require verification */
 const COMMON_TURKISH_NAMES = new Set([
   'mehmet', 'ali', 'ahmet', 'mustafa', 'ibrahim', 'hasan', 'hüseyin', 'ismail',
   'osman', 'murat', 'yusuf', 'ömer', 'emre', 'burak', 'can', 'fatih',
@@ -17,7 +17,7 @@ const COMMON_TURKISH_SURNAMES = new Set([
   'koç', 'kurt', 'özkan', 'şimşek', 'polat', 'dursun', 'korkmaz', 'bayrak',
 ])
 
-/** Bir ismin yaygın/jenerik olup olmadığını kontrol et */
+/** Check whether a name is too common/generic */
 export function isCommonName(fullName: string): boolean {
   const parts = fullName.toLowerCase().trim().split(/\s+/)
   if (parts.length < 2) return false
@@ -26,7 +26,7 @@ export function isCommonName(fullName: string): boolean {
   return COMMON_TURKISH_NAMES.has(firstName) || COMMON_TURKISH_SURNAMES.has(lastName)
 }
 
-/** Çapraz doğrulama skoru — iki bilgi seti ne kadar örtüşüyor? */
+/** Cross-validation score — how much do two information sets overlap? */
 export function crossReferenceScore(
   known: { emails: string[]; handles: string[]; websites: string[] },
   candidate: { email?: string; handle?: string; website?: string; name?: string }
@@ -43,7 +43,7 @@ export function crossReferenceScore(
     matches.push(`website: ${candidate.website}`)
   }
 
-  // İsim tek başına yeterli değil — sadece bonus puan
+  // Name alone is not sufficient — bonus point only
   const score = matches.length
   return { score, matches }
 }

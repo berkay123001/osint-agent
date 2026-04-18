@@ -231,7 +231,7 @@ async function setupEnv(): Promise<void> {
 
   if (existsSync(envPath)) {
     ok('.env dosyasi zaten mevcut — degerler korunacak')
-    // Neo4j sifresini güncelle (eger yeni kurulduysa)
+    // Update Neo4j password (if freshly installed)
     if (neo4jSetupPassword) {
       let content = readFileSync(envPath, 'utf-8')
       content = content.replace(
@@ -249,7 +249,7 @@ async function setupEnv(): Promise<void> {
   if (existsSync(examplePath)) {
     let content = readFileSync(examplePath, 'utf-8')
 
-    // Neo4j sifresini güncelle
+    // Update Neo4j password
     if (neo4jSetupPassword) {
       content = content.replace(/NEO4J_PASSWORD=.*/, `NEO4J_PASSWORD=${neo4jSetupPassword}`)
     }

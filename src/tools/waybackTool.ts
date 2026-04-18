@@ -1,6 +1,6 @@
 /**
- * Wayback Machine Tool — archive.org üzerinden silinmiş/eski sayfa snapshot'larını çeker.
- * OSINT'te silinmiş profiller, eski tweet'ler, değiştirilmiş bio'lar için kullanılır.
+ * Wayback Machine Tool — fetches deleted/old page snapshots via archive.org.
+ * Used in OSINT for deleted profiles, old tweets, and modified bios.
  * API key gerektirmez.
  */
 
@@ -35,7 +35,7 @@ async function fetchWithTimeout(url: string, ms = TIMEOUT): Promise<Response> {
 }
 
 /**
- * Wayback Machine CDX API ile bir URL'nin tüm arşiv snapshot'larını listeler.
+ * Lists all archive snapshots of a URL using the Wayback Machine CDX API.
  * CDX API: https://github.com/internetarchive/wayback/tree/master/wayback-cdx-server
  */
 export async function waybackSearch(targetUrl: string, limit = 20): Promise<WaybackResult> {
@@ -51,13 +51,13 @@ export async function waybackSearch(targetUrl: string, limit = 20): Promise<Wayb
 
     const res = await fetchWithTimeout(cdxUrl)
     if (!res.ok) {
-      result.error = `Wayback CDX API hatası: HTTP ${res.status}`
+      result.error = `Wayback CDX API error: HTTP ${res.status}`
       return result
     }
 
     const data = await res.json() as string[][]
 
-    // İlk satır header, atla
+    // First row is a header, skip it
     for (let i = 1; i < data.length; i++) {
       const [timestamp, original, status] = data[i]
       const year = timestamp.slice(0, 4)
@@ -74,7 +74,7 @@ export async function waybackSearch(targetUrl: string, limit = 20): Promise<Wayb
       })
     }
 
-    // En son snapshot'ın içeriğini çek
+    // Fetch the content of the most recent snapshot
     if (result.snapshots.length > 0) {
       const latest = result.snapshots[result.snapshots.length - 1]
       try {
@@ -93,15 +93,15 @@ export async function waybackSearch(targetUrl: string, limit = 20): Promise<Wayb
       }
     }
   } catch (e) {
-    result.error = `Wayback hatası: ${(e as Error).message}`
+    result.error = `Wayback error: ${(e as Error).message}`
   }
 
   return result
 }
 
 /**
- * Belirli bir tarihteki en yakın snapshot'ı çeker.
- * Wayback Availability API kullanır.
+ * Fetches the closest snapshot to a specific date.
+ * Uses the Wayback Availability API.
  */
 export async function waybackClosest(targetUrl: string, timestamp?: string): Promise<{
   available: boolean
@@ -141,7 +141,7 @@ export async function waybackClosest(targetUrl: string, timestamp?: string): Pro
 }
 
 /**
- * Wayback sonucunu okunabilir metin formatına çevirir.
+ * Converts a Wayback result to a human-readable text format.
  */
 export function formatWaybackResult(result: WaybackResult): string {
   if (result.error) return `Wayback Hata: ${result.error}`
@@ -149,7 +149,7 @@ export function formatWaybackResult(result: WaybackResult): string {
   const lines: string[] = [`=== Wayback Machine: ${result.originalUrl} ===`]
 
   if (result.snapshots.length === 0) {
-    lines.push('⚠️  Bu URL için arşivlenmiş snapshot bulunamadı.')
+    lines.push('⚠️  No archived snapshot found for this URL.')
     return lines.join('\n')
   }
 
@@ -159,8 +159,8 @@ export function formatWaybackResult(result: WaybackResult): string {
   }
 
   if (result.latestContent) {
-    lines.push(`\n📄 En son snapshot içeriği (özet):`)
-    // İlk 2000 karakter
+    lines.push(`\n📄 Most recent snapshot content (preview):`)
+    // First 2000 characters
     const preview = result.latestContent.slice(0, 2000)
     lines.push(preview)
   }

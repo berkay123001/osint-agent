@@ -17,24 +17,24 @@ export async function writeFactCheckToGraph(data: FactCheckData): Promise<void> 
   const session = driver.session();
   try {
     const query = `
-      // 1. İddia Düğümü (Claim)
+      // 1. Claim Node
       MERGE (c:Claim {id: $claimId})
       SET c.text = $claimText, 
           c.date = $claimDate,
           c.createdAt = timestamp()
 
-      // 2. Kaynak Düğümü (Source - Haber Sitesi, Twitter vs.)
+      // 2. Source Node (news site, Twitter, etc.)
       MERGE (s:Source {name: $source})
       MERGE (s)-[:PUBLISHED]->(c)
 
-      // 3. Karar/Doğrulama Düğümü (Verdict/Fact)
+      // 3. Verdict/Fact Node
       MERGE (f:Fact {id: $claimId + "_fact"})
       SET f.verdict = $verdict,
           f.explanation = $truthExplanation
       
       MERGE (f)-[:ANALYZED]->(c)
 
-      // 4. Görseller
+      // 4. Images
       WITH c, $imageUrl AS img
       CALL {
         WITH c, img

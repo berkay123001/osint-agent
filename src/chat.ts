@@ -9,7 +9,7 @@ import { runSupervisor } from './agents/supervisorAgent.js';
 import { DEFAULT_MODEL, SUPERVISOR_MODEL } from './agents/baseAgent.js';
 import type { Message } from './agents/types.js';
 
-// ── Oturum kalıcılığı ────────────────────────────────────────────────────────
+// ── Session persistence ────────────────────────────────────────────────────────
 const SESSION_DIR = path.join(process.cwd(), '.osint-sessions');
 const SESSION_PREFIX = 'session-';
 
@@ -20,14 +20,14 @@ interface SessionData {
   history: Message[];
 }
 
-/** Tüm kayıtlı oturumları tarih sırasına göre (en yeni ilk) listeler */
+/** Lists all saved sessions in date order (newest first) */
 function listSessions(): { filename: string; data: SessionData }[] {
   try {
     if (!fs.existsSync(SESSION_DIR)) return [];
     const files = fs.readdirSync(SESSION_DIR)
       .filter(f => f.startsWith(SESSION_PREFIX) && f.endsWith('.json'))
       .sort()
-      .reverse(); // en yeni ilk
+      .reverse(); // newest first
     return files.map(filename => {
       try {
         const raw = fs.readFileSync(path.join(SESSION_DIR, filename), 'utf-8');
@@ -41,7 +41,7 @@ function listSessions(): { filename: string; data: SessionData }[] {
   }
 }
 
-/** Mevcut aktif oturum dosyasını döner */
+/** Returns the current active session file path */
 function currentSessionFile(): string {
   return path.join(SESSION_DIR, `${SESSION_PREFIX}active.json`);
 }
@@ -68,11 +68,11 @@ function saveSession(history: Message[]): void {
     };
     fs.writeFileSync(currentSessionFile(), JSON.stringify(data, null, 2), 'utf-8');
   } catch {
-    // sessizce geç — kalıcılık kritik değil
+    // skip silently — persistence is not critical
   }
 }
 
-/** Aktif oturumu tarih damgalı dosyaya arşivler */
+/** Archives the active session to a timestamped file */
 function archiveSession(history: Message[]): void {
   try {
     if (history.length === 0) return;
@@ -87,14 +87,14 @@ function archiveSession(history: Message[]): void {
       history,
     };
     fs.writeFileSync(archiveFile, JSON.stringify(data, null, 2), 'utf-8');
-  } catch { /* sessizce geç */ }
+  } catch { /* skip silently */ }
 }
 
 function deleteActiveSession(): void {
   try { const f = currentSessionFile(); if (fs.existsSync(f)) fs.rmSync(f); } catch { /* no-op */ }
 }
 
-// ── Başlatma banneri ──────────────────────────────────────────────────────
+// ── Startup banner ──────────────────────────────────────────────────────
 function printBanner() {
   const g  = chalk.gray
   const c  = chalk.bold.cyan
@@ -111,10 +111,10 @@ function printBanner() {
 
   art.forEach(line => console.log(line))
   console.log(g('  Supervisor : ') + chalk.green(SUPERVISOR_MODEL))
-  console.log(g('  Alt ajan   : ') + chalk.green(DEFAULT_MODEL))
+  console.log(g('  Sub-agent  : ') + chalk.green(DEFAULT_MODEL))
   console.log()
   console.log(
-    g('  Komutlar: ') +
+    g('  Commands: ') +
     chalk.cyan('/resume') + g(' · ') +
     chalk.cyan('/history') + g(' · ') +
     chalk.cyan('/show') + g(' · ') +
@@ -130,22 +130,22 @@ function printBanner() {
 
 printBanner()
 
-// ── Oturum yükleme ───────────────────────────────────────────────────────────
+// ── Session loading ───────────────────────────────────────────────────────────
 const SLASH_COMMANDS = ['/delete', '/help', '/history', '/logs', '/reset', '/resume', '/show'];
 const CMD_DESCRIPTIONS: Record<string, string> = {
-  '/delete':  'Oturum sil',
-  '/help':    'Komutları listele',
-  '/history': 'Mesaj istatistikleri',
-  '/logs':    'Araç çağrılarını dosyaya aktar',
-  '/reset':   'Oturumu sıfırla',
-  '/resume':  'Kayıtlı oturum yükle',
-  '/show':    'Geçmişi ekrana yazdır',
+  '/delete':  'Delete session',
+  '/help':    'List commands',
+  '/history': 'Message statistics',
+  '/logs':    'Export tool calls to file',
+  '/reset':   'Reset session',
+  '/resume':  'Load saved session',
+  '/show':    'Print history to screen',
 };
 
-// ── Numaralı komut menüsü (ı yaz + Enter → açılır, sefer ile seç, 0/Enter=iptal) ──────
+// ── Numbered command menu (type / + Enter to open, select by number, 0/Enter=cancel) ──────
 function showCommandMenu(): Promise<void> {
   const maxLen = Math.max(...SLASH_COMMANDS.map(c => c.length));
-  console.log(chalk.cyan('\n  Komutlar:\n'));
+  console.log(chalk.cyan('\n  Commands:\n'));
   for (let i = 0; i < SLASH_COMMANDS.length; i++) {
     const cmd = SLASH_COMMANDS[i];
     const num = chalk.bold.white(`${i + 1}.`);
@@ -155,7 +155,7 @@ function showCommandMenu(): Promise<void> {
   console.log();
 
   return new Promise((resolve) => {
-    rl.question(chalk.bold.yellow(`  Seçim (1–${SLASH_COMMANDS.length}, Enter=iptal): `), (ans) => {
+    rl.question(chalk.bold.yellow(`  Selection (1–${SLASH_COMMANDS.length}, Enter=cancel): `), (ans) => {
       const trimmed = ans.trim();
       if (!trimmed) { prompt(); resolve(); return; }
       const idx = parseInt(trimmed, 10);
@@ -163,7 +163,7 @@ function showCommandMenu(): Promise<void> {
         const cmd = SLASH_COMMANDS[idx - 1];
         handleUserInput(cmd).then(resolve);
       } else {
-        console.log(chalk.dim('  İptal.\n'));
+        console.log(chalk.dim('  Cancelled.\n'));
         prompt();
         resolve();
       }
@@ -184,57 +184,57 @@ let existingSession = loadActiveSession();
 async function askResume(): Promise<boolean> {
   if (!existingSession) return false;
   const msgCount = existingSession.messageCount;
-  const lastDate = new Date(existingSession.lastActiveAt).toLocaleString('tr-TR');
+  const lastDate = new Date(existingSession.lastActiveAt).toLocaleString('en-US');
   return new Promise((resolve) => {
-    console.log(chalk.yellow(`\n  💾 Kayıtlı oturum:`))
-    console.log(chalk.dim(`     ${lastDate}  ·  ${msgCount} mesaj`))
+    console.log(chalk.yellow(`\n  💾 Saved session:`))
+    console.log(chalk.dim(`     ${lastDate}  ·  ${msgCount} messages`))
     if (msgCount > 0) {
       const last = existingSession!.history.slice(-2).find(m => m.role === 'user');
       if (last) {
         const preview = typeof last.content === 'string'
           ? last.content.slice(0, 70)
-          : '[karmaşık mesaj]';
+          : '[complex message]';
         const ellipsis = typeof last.content === 'string' && last.content.length > 70 ? '…' : ''
         console.log(chalk.dim(`     Son: "${preview}${ellipsis}"`))
       }
     }
-    rl.question(chalk.bold.yellow('\n  Kaldığın yerden devam etsem mi? [E/h] '), (ans) => {
-      resolve(ans.trim().toLowerCase() !== 'h');
+    rl.question(chalk.bold.yellow('\n  Resume from where you left off? [Y/n] '), (ans) => {
+      resolve(ans.trim().toLowerCase() !== 'n');
     });
   });
 }
 
-// ── /resume komutu ───────────────────────────────────────────────────────────
+// ── /resume command ───────────────────────────────────────────────────────────
 function handleResume(): void {
   const sessions = listSessions();
 
-  // Mevcut aktif oturumu da listeye ekle
+  // Also include the currently active session in the list
   const active = loadActiveSession();
   const allSessions: { filename: string; data: SessionData; isActive: boolean }[] = [];
   if (active && active.messageCount > 0) {
-    allSessions.push({ filename: '(aktif)', data: active, isActive: true });
+    allSessions.push({ filename: '(active)', data: active, isActive: true });
   }
   for (const s of sessions) {
     allSessions.push({ ...s, isActive: false });
   }
 
   if (allSessions.length === 0) {
-    console.log(chalk.yellow('\n  📭 Kayıtlı oturum bulunamadı.\n'));
+    console.log(chalk.yellow('\n  📭 No saved session found.\n'));
     prompt();
     return;
   }
 
-  console.log(chalk.cyan('\n  📂 Kayıtlı oturumlar:\n'));
+  console.log(chalk.cyan('\n  📂 Saved sessions:\n'));
 
   for (let i = 0; i < allSessions.length; i++) {
     const s = allSessions[i];
-    const date = new Date(s.data.lastActiveAt).toLocaleString('tr-TR');
+    const date = new Date(s.data.lastActiveAt).toLocaleString('en-US');
     const userMsgs = s.data.history.filter(m => m.role === 'user').length;
     const last = s.data.history.slice(-2).find(m => m.role === 'user');
-    const tag = s.isActive ? chalk.green(' [aktif]') : '';
+    const tag = s.isActive ? chalk.green(' [active]') : '';
     const num = chalk.bold.white(`${i + 1}.`);
 
-    process.stdout.write(`  ${num} ${chalk.dim(date)} · ${userMsgs} soru${tag}\n`);
+    process.stdout.write(`  ${num} ${chalk.dim(date)} · ${userMsgs} messages${tag}\n`);
 
     if (last && typeof last.content === 'string') {
       const preview = last.content.slice(0, 60);
@@ -244,42 +244,42 @@ function handleResume(): void {
   }
 
   console.log();
-  rl.question(chalk.bold.yellow('  Devam etmek istediğiniz oturum numarası (iptal: 0): '), (ans) => {
+  rl.question(chalk.bold.yellow('  Session number to resume (cancel: 0): '), (ans) => {
     const idx = parseInt(ans.trim(), 10);
     if (isNaN(idx) || idx < 1 || idx > allSessions.length) {
-      console.log(chalk.dim('\n  İptal edildi.\n'));
+      console.log(chalk.dim('\n  Cancelled.\n'));
       prompt();
       return;
     }
 
     const chosen = allSessions[idx - 1];
 
-    // Mevcut oturumu arşivle (eğer farklı bir oturuma geçiliyorsa)
+    // Archive current session (if switching to a different session)
     if (!chosen.isActive && history.length > 0) {
       archiveSession(history);
-      console.log(chalk.dim('  💾 Mevcut oturum arşivlendi.'));
+      console.log(chalk.dim('  💾 Current session archived.'));
     }
 
-    // Seçilen oturumu yükle
+    // Load the selected session
     history = chosen.data.history;
     activeSessionMeta = { createdAt: chosen.data.createdAt };
 
-    // Arşivden yüklenen oturumu aktif yap
+    // Make the loaded session the active one
     if (!chosen.isActive) {
       saveSession(history);
-      console.log(chalk.green(`\n  ✔ Oturum yüklendi — ${chosen.data.history.filter(m => m.role === 'user').length} soru, ${new Date(chosen.data.lastActiveAt).toLocaleString('tr-TR')} tarihinden.`));
+      console.log(chalk.green(`\n  ✔ Session loaded — ${chosen.data.history.filter(m => m.role === 'user').length} messages from ${new Date(chosen.data.lastActiveAt).toLocaleString('en-US')}.`));
     } else {
-      console.log(chalk.green(`\n  ✔ Aktif oturum zaten yüklü.`));
+      console.log(chalk.green(`\n  ✔ Active session already loaded.`));
     }
 
-    // Yüklenen mesajları terminale yazdır
+    // Print loaded messages to terminal
     printHistory(history);
 
     prompt();
   });
 }
 
-/** Oturum geçmişini terminale okunabilir şekilde yazdırır */
+/** Prints session history to terminal in a readable format */
 function printHistory(msgs: Message[]): void {
   const visible = msgs.filter(
     (m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim().length > 0
@@ -288,19 +288,19 @@ function printHistory(msgs: Message[]): void {
 
   const userCount = visible.filter(m => m.role === 'user').length;
   const asstCount = visible.filter(m => m.role === 'assistant').length;
-  console.log(chalk.dim(`\n  ── Yüklenen geçmiş: ${userCount} soru · ${asstCount} yanıt ──────────────────`));
+  console.log(chalk.dim(`\n  ── Loaded history: ${userCount} questions · ${asstCount} answers ──────────────────`));
 
   for (const msg of visible) {
     const content = (msg.content as string).trim();
     if (msg.role === 'user') {
-      // Kullanıcı mesajı — tam göster
+      // User message — show in full
       console.log(chalk.bold.green('\n  ❯ ') + chalk.white(content));
     } else if (msg.role === 'assistant') {
-      // Asistan yanıtı — son 2 mesajı geniş göster, öncekiler kısa
+      // Assistant reply — show last 2 messages in full, earlier ones abbreviated
       const isRecent = msg === visible[visible.length - 1] || msg === visible[visible.length - 2];
       const maxLen = isRecent ? 1500 : 400;
       const text = content.length > maxLen
-        ? content.slice(0, maxLen) + chalk.dim(` …[+${content.length - maxLen} karakter]`)
+        ? content.slice(0, maxLen) + chalk.dim(` …[+${content.length - maxLen} chars]`)
         : content;
       const indented = text.split('\n').join('\n     ');
       console.log(chalk.dim('  🤖 ') + indented);
@@ -309,10 +309,10 @@ function printHistory(msgs: Message[]): void {
   console.log(chalk.dim('\n  ─────────────────────────────────────────────────────────\n'));
 }
 
-/** Mevcut history'deki tüm araç çağrılarını zaman damgalı bir dosyaya aktarır */
+/** Exports all tool calls in the current history to a timestamped file */
 function handleLogs(): void {
   if (history.length === 0) {
-    console.log(chalk.yellow('\n  📭 Henüz araç çağrısı yok.\n'));
+    console.log(chalk.yellow('\n  📭 No tool calls yet.\n'));
     prompt();
     return;
   }
@@ -324,12 +324,12 @@ function handleLogs(): void {
   const toolResults = history.filter(m => m.role === 'tool') as (Message & { tool_call_id?: string; content: string })[];
 
   if (toolCallMsgs.length === 0) {
-    console.log(chalk.yellow('\n  📭 Bu oturumda araç çağrısı bulunamadı.\n'));
+    console.log(chalk.yellow('\n  📭 No tool calls found in this session.\n'));
     prompt();
     return;
   }
 
-  // tool_call_id → result içeriği haritası
+  // tool_call_id → result content map
   const resultMap = new Map<string, string>();
   for (const r of toolResults) {
     if (r.tool_call_id) {
@@ -338,9 +338,9 @@ function handleLogs(): void {
   }
 
   const lines: string[] = [
-    `# OSINT Araç Çağrısı Günlüğü`,
-    `**Tarih:** ${new Date().toLocaleString('tr-TR')}`,
-    `**Toplam araç çağrısı:** ${toolResults.length}`,
+    `# OSINT Tool Call Log`,
+    `**Date:** ${new Date().toLocaleString('en-US')}`,
+    `**Total tool calls:** ${toolResults.length}`,
     '',
   ];
 
@@ -350,15 +350,15 @@ function handleLogs(): void {
       callIndex += 1;
       let args: unknown;
       try { args = JSON.parse(tc.function.arguments); } catch { args = tc.function.arguments; }
-      const result = resultMap.get(tc.id) ?? '(sonuç bulunamadı)';
-      const truncated = result.length > 2000 ? result.slice(0, 2000) + '\n…(kırpıldı)' : result;
+      const result = resultMap.get(tc.id) ?? '(result not found)';
+      const truncated = result.length > 2000 ? result.slice(0, 2000) + '\n…(truncated)' : result;
 
       lines.push(`## ${callIndex}. \`${tc.function.name}\``);
-      lines.push('**Parametreler:**');
+      lines.push('**Parameters:**');
       lines.push('```json');
       lines.push(JSON.stringify(args, null, 2));
       lines.push('```');
-      lines.push('**Sonuç:**');
+      lines.push('**Result:**');
       lines.push('```');
       lines.push(truncated);
       lines.push('```');
@@ -371,36 +371,36 @@ function handleLogs(): void {
   if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
   fs.writeFileSync(outPath, lines.join('\n'), 'utf-8');
 
-  console.log(chalk.green(`\n  ✅ ${callIndex} araç çağrısı dışa aktarıldı:`));
+  console.log(chalk.green(`\n  ✅ ${callIndex} tool calls exported:`));
   console.log(chalk.bold.white(`     ${outPath}\n`));
   prompt();
 }
 
-/** Kayıtlı oturumları listeler ve seçilen silinir */
+/** Lists saved sessions and deletes the selected one */
 function handleDelete(): void {
   const sessions = listSessions();
   const active = loadActiveSession();
   const allSessions: { filename: string; isActive: boolean; data: SessionData }[] = [];
   if (active && active.messageCount > 0) {
-    allSessions.push({ filename: '(aktif)', isActive: true, data: active });
+    allSessions.push({ filename: '(active)', isActive: true, data: active });
   }
   for (const s of sessions) {
     allSessions.push({ filename: s.filename, isActive: false, data: s.data });
   }
 
   if (allSessions.length === 0) {
-    console.log(chalk.yellow('\n  📭 Silinecek oturum bulunamadı.\n'));
+    console.log(chalk.yellow('\n  📭 No session found to delete.\n'));
     prompt();
     return;
   }
 
-  console.log(chalk.cyan('\n  🗑️  Kayıtlı oturumlar:\n'));
+  console.log(chalk.cyan('\n  🗑️  Saved sessions:\n'));
   for (let i = 0; i < allSessions.length; i++) {
     const s = allSessions[i];
-    const date = new Date(s.data.lastActiveAt).toLocaleString('tr-TR');
+    const date = new Date(s.data.lastActiveAt).toLocaleString('en-US');
     const userMsgs = s.data.history.filter(m => m.role === 'user').length;
-    const tag = s.isActive ? chalk.green(' [aktif]') : '';
-    process.stdout.write(`  ${chalk.bold.white(`${i + 1}.`)} ${chalk.dim(date)} · ${userMsgs} soru${tag}\n`);
+    const tag = s.isActive ? chalk.green(' [active]') : '';
+    process.stdout.write(`  ${chalk.bold.white(`${i + 1}.`)} ${chalk.dim(date)} · ${userMsgs} messages${tag}\n`);
     const last = s.data.history.slice(-2).find(m => m.role === 'user');
     if (last && typeof last.content === 'string') {
       const preview = last.content.slice(0, 60);
@@ -408,13 +408,13 @@ function handleDelete(): void {
       console.log(chalk.dim(`     "${preview}${ellipsis}"`));
     }
   }
-  console.log('\n  ' + chalk.bold.yellow('all') + chalk.dim(' — Tümünü sil'));
+  console.log('\n  ' + chalk.bold.yellow('all') + chalk.dim(' — Delete all'));
   console.log();
 
-  rl.question(chalk.bold.yellow('  Silmek istediğiniz oturum (iptal: 0): '), (ans) => {
+  rl.question(chalk.bold.yellow('  Session to delete (cancel: 0): '), (ans) => {
     const trimmed = ans.trim().toLowerCase();
-    if (trimmed === '0' || trimmed === '' || trimmed === 'iptal') {
-      console.log(chalk.dim('\n  İptal edildi.\n'));
+    if (trimmed === '0' || trimmed === '' || trimmed === 'cancel') {
+      console.log(chalk.dim('\n  Cancelled.\n'));
       prompt();
       return;
     }
@@ -430,13 +430,13 @@ function handleDelete(): void {
         }
         deleted++;
       }
-      console.log(chalk.green(`\n  ✔ ${deleted} oturum silindi.\n`));
+      console.log(chalk.green(`\n  ✔ ${deleted} session(s) deleted.\n`));
       prompt();
       return;
     }
     const idx = parseInt(trimmed, 10);
     if (isNaN(idx) || idx < 1 || idx > allSessions.length) {
-      console.log(chalk.red('\n  Geçersiz seçim.\n'));
+      console.log(chalk.red('\n  Invalid selection.\n'));
       prompt();
       return;
     }
@@ -448,7 +448,7 @@ function handleDelete(): void {
     } else {
       try { fs.rmSync(path.join(SESSION_DIR, chosen.filename)); } catch { /* no-op */ }
     }
-    console.log(chalk.green('\n  ✔ Oturum silindi.\n'));
+    console.log(chalk.green('\n  ✔ Session deleted.\n'));
     prompt();
   });
 }
@@ -459,27 +459,27 @@ function handleDelete(): void {
     history = existingSession.history;
     activeSessionMeta = { createdAt: existingSession.createdAt };
     const resumeCount = history.filter(m => m.role === 'user').length;
-    console.log(chalk.green(`  ✔ Oturum devam ediyor — ${resumeCount} önceki soru yüklendi.`));
+    console.log(chalk.green(`  ✔ Resuming session — ${resumeCount} previous messages loaded.`));
     printHistory(history);
   } else {
-    // Kullanici devam etmek istemedi — once arşivle, sonra aktif dosyayı sil
+    // User chose not to resume — archive first, then delete active file
     if (existingSession && existingSession.messageCount > 0) {
       archiveSession(existingSession.history);
-      console.log(chalk.dim('  💾 Önceki oturum arşivlendi.'));
+      console.log(chalk.dim('  💾 Previous session archived.'));
     }
     deleteActiveSession();
     activeSessionMeta = null;
-    console.log(chalk.dim('  Yeni oturum başlatıldı.\n'));
+    console.log(chalk.dim('  New session started.\n'));
   }
 
-  console.log(chalk.dim('  Örnek: ') + chalk.cyan('"torvalds GitHub hesabını araştır"'))
-  console.log(chalk.dim('         ') + chalk.cyan('"Bu haber doğru mu: [URL]"'))
+  console.log(chalk.dim('  Example: ') + chalk.cyan('"investigate torvalds GitHub account"'))
+  console.log(chalk.dim('           ') + chalk.cyan('"Is this news accurate: [URL]"'))
   console.log(chalk.gray('  ─────────────────────────────────────────────────────────\n'))
 
   prompt();
 })();
 
-// ── Paste buffer & ana giriş döngüsü ────────────────────────────────────────
+// ── Paste buffer & main input loop ────────────────────────────────────────
 let pasteCounter = 0;
 let pasteBuffer: string[] = [];
 let pasteTimer: NodeJS.Timeout | null = null;
@@ -506,7 +506,7 @@ async function handleUserInput(rawInput: string): Promise<void> {
   if (input.toLowerCase() === 'exit') {
     archiveSession(history);
     deleteActiveSession();
-    console.log(chalk.dim('\n  💾 Oturum arşivlendi. Görüşürüz!'));
+    console.log(chalk.dim('\n  💾 Session archived. Goodbye!'));
     await closeNeo4j();
     rl.close();
     process.exit(0);
@@ -517,7 +517,7 @@ async function handleUserInput(rawInput: string): Promise<void> {
     deleteActiveSession();
     history = [];
     activeSessionMeta = null;
-    console.log(chalk.yellow('  🔄 Oturum sıfırlandı. Yeni konuşma başlıyor.\n'));
+    console.log(chalk.yellow('  🔄 Session reset. Starting new conversation.\n'));
     prompt();
     return;
   }
@@ -527,9 +527,9 @@ async function handleUserInput(rawInput: string): Promise<void> {
     const asstMsgs = history.filter(m => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim()).length;
     const toolMsgs = history.filter(m => m.role === 'tool').length;
     const created = activeSessionMeta?.createdAt
-      ? chalk.dim(` · başlangıç: ${new Date(activeSessionMeta.createdAt).toLocaleString('tr-TR')}`)
+      ? chalk.dim(` · started: ${new Date(activeSessionMeta.createdAt).toLocaleString('en-US')}`)
       : '';
-    console.log(chalk.cyan(`\n  📋 ${userMsgs} soru · ${asstMsgs} yanıt · ${toolMsgs} araç çağrısı${created}\n`));
+    console.log(chalk.cyan(`\n  📋 ${userMsgs} questions · ${asstMsgs} answers · ${toolMsgs} tool calls${created}\n`));
     prompt();
     return;
   }
@@ -541,7 +541,7 @@ async function handleUserInput(rawInput: string): Promise<void> {
 
   if (input.toLowerCase() === '/show') {
     if (history.length === 0) {
-      console.log(chalk.yellow('\n  📭 Henüz mesaj yok.\n'));
+      console.log(chalk.yellow('\n  📭 No messages yet.\n'));
     } else {
       printHistory(history);
     }
@@ -565,7 +565,7 @@ async function handleUserInput(rawInput: string): Promise<void> {
     await runSupervisor(history);
     saveSession(history);
   } catch (e) {
-    console.log(chalk.red(`\n  ❌ Hata: ${(e as Error).message}`));
+    console.log(chalk.red(`\n  ❌ Error: ${(e as Error).message}`));
   }
   isProcessing = false;
   prompt();
@@ -579,16 +579,16 @@ function flushPasteBuffer(): void {
   const lines = pasteBuffer.splice(0);
   const combined = lines.join('\n');
   if (lines.length > 1) {
-    // Çok satırlı paste: önizleme göster, Enter bekle
+    // Multi-line paste: show preview, wait for Enter
     pasteCounter++;
     const preview = combined.trim().slice(0, 60).replace(/\n/g, ' ');
     const ellipsis = combined.trim().length > 60 ? '…' : '';
     pendingPaste = combined;
-    process.stdout.write(chalk.yellow(`\n  [paste #${pasteCounter}: "${preview}${ellipsis}" +${lines.length} satır]\n`));
-    process.stdout.write(chalk.dim('  ↵ göndermek için Enter, yeni mesaj yaz veya Ctrl+C ile iptal\n'));
+    process.stdout.write(chalk.yellow(`\n  [paste #${pasteCounter}: "${preview}${ellipsis}" +${lines.length} lines]\n`));
+    process.stdout.write(chalk.dim('  ↵ press Enter to send, type new message or Ctrl+C to cancel\n'));
     prompt();
   } else {
-    // Tek satır: normal giriş gibi davran
+    // Single line: treat as normal input
     handleUserInput(combined);
   }
 }
@@ -596,7 +596,7 @@ function flushPasteBuffer(): void {
 rl.on('line', (line: string) => {
   if (isProcessing) return;
 
-  // Bekleyen paste varsa: boş Enter → gönder, yeni metin → eski pasteyi iptal et yeni metni gönder
+  // If there's a pending paste: empty Enter → send it, new text → cancel old paste and send new text
   if (pendingPaste !== null) {
     const toSend = line.trim() ? line : pendingPaste;
     pendingPaste = null;
@@ -609,11 +609,11 @@ rl.on('line', (line: string) => {
   pasteTimer = setTimeout(flushPasteBuffer, PASTE_TIMEOUT_MS);
 });
 
-// Keypress olayı artık kullanılmıyor — tüm girdi rl.on('line') üzerinden alınır
+// Keypress events are no longer used — all input is handled via rl.on('line')
 
 rl.on('close', async () => {
   saveSession(history);
-  console.log(chalk.dim('  Oturum kaydedildi.'));
+  console.log(chalk.dim('  Session saved.'));
   await closeNeo4j();
   process.exit(0);
 });

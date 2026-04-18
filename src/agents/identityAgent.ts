@@ -26,7 +26,7 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
     const assistantMsg = msg as { role: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] };
     if (assistantMsg.role !== 'assistant' || !assistantMsg.tool_calls) continue;
     for (const tc of assistantMsg.tool_calls) {
-      const result = toolResultMap.get(tc.id) ?? '(sonuç yok)';
+      const result = toolResultMap.get(tc.id) ?? '(no result)';
       calls.push({ name: tc.function.name, args: tc.function.arguments, result });
     }
   }
@@ -37,8 +37,8 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
     groups[c.name].push(c);
   }
   const MAX_RESULT_CHARS = 3000;
-  let md = `# 🕵️ Kimlik Araştırması Ham Bilgi Tabanı\n\n`;
-  md += `**Sorgu:** ${query}\n**Tarih:** ${new Date().toISOString()}\n**Toplam araç çağrısı:** ${calls.length}\n\n---\n\n`;
+  let md = `# 🕵️ Identity Investigation Raw Knowledge Base\n\n`;
+  md += `**Query:** ${query}\n**Date:** ${new Date().toISOString()}\n**Total tool calls:** ${calls.length}\n\n---\n\n`;
   const emoji: Record<string, string> = {
     run_sherlock: '🔍', run_github_osint: '🐙', check_email_registrations: '📧',
     check_breaches: '🔓', search_person: '👤', cross_reference: '🔗',
@@ -46,24 +46,24 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
     web_fetch: '📄', scrape_profile: '👁️',
   };
   for (const [toolName, toolCalls] of Object.entries(groups)) {
-    md += `## ${emoji[toolName] ?? '🔧'} ${toolName} (${toolCalls.length} çağrı)\n\n`;
+    md += `## ${emoji[toolName] ?? '🔧'} ${toolName} (${toolCalls.length} calls)\n\n`;
     for (let i = 0; i < toolCalls.length; i++) {
       let args: Record<string, string> = {};
       try { args = JSON.parse(toolCalls[i].args); } catch { /* ignore */ }
       const argStr = Object.entries(args).map(([k, v]) => `${k}="${v}"`).join(', ');
       const result = toolCalls[i].result;
       const truncated = result.length > MAX_RESULT_CHARS
-        ? result.slice(0, MAX_RESULT_CHARS) + `\n... [${result.length - MAX_RESULT_CHARS} karakter kesildi]`
+        ? result.slice(0, MAX_RESULT_CHARS) + `\n... [${result.length - MAX_RESULT_CHARS} characters truncated]`
         : result;
-      md += `### Çağrı ${i + 1}: \`${argStr}\`\n\`\`\`\n${truncated}\n\`\`\`\n\n`;
+      md += `### Call ${i + 1}: \`${argStr}\`\n\`\`\`\n${truncated}\n\`\`\`\n\n`;
     }
   }
   try {
     const dir = path.resolve(__dirname, '../../.osint-sessions');
     await mkdir(dir, { recursive: true });
     await writeFile(path.join(dir, 'identity-knowledge.md'), md, 'utf-8');
-    emitProgress(`🧠 Kimlik bilgi tabanı kaydedildi (${calls.length} araç sonucu)`);
-  } catch { /* sessizce geç */ }
+    emitProgress(`🧠 Identity knowledge base saved (${calls.length} tool results)`);
+  } catch { /* skip silently */ }
 }
 
 const IDENTITY_TOOLS = [
@@ -102,7 +102,7 @@ Your task: Uncover a person's digital footprint, accounts, connections, and iden
    - Write "Unknown" or "No data" or "Inaccessible"
    - NEVER generate guesses/assumptions to fill gaps
 3. **LOGIN SCREEN = NO DATA**: If scrape_profile result contains "Sign Up", "Login", "Agree & Join" → the profile could not be read. Do NOT write "Profile examined in detail".
-4. **NAME MISMATCH = DIFFERENT PERSON**: If profile name does not match the target person ("ramazan daghan" vs "Dağhan Efe Barış") → mark as "Different person", do not present as matching.
+4. **NAME MISMATCH = DIFFERENT PERSON**: If profile name does not match the target person ("john smith" vs "Jonathan Smithfield") → mark as "Different person", do not present as matching.
 5. **NO EVIDENCE-LESS LINKS**: Linking two profiles to the same person requires at least 1 concrete evidence:
    - Same email hash, same avatar, cross-link, same organization in bio
    - "Name similarity" alone is NOT evidence
@@ -157,7 +157,7 @@ Insufficient evidence findings
 Which tools were called, what was found`
 };
 
-// depth → maxToolCalls çarpanı: quick=0.5x, normal=1x, deep=1.75x
+// depth → maxToolCalls multiplier: quick=0.5x, normal=1x, deep=1.75x
 const DEPTH_MULTIPLIERS: Record<string, number> = { quick: 0.5, normal: 1, deep: 1.75 };
 
 export interface SubAgentResult {
@@ -168,9 +168,9 @@ export interface SubAgentResult {
 export async function runIdentityAgent(query: string, context?: string, depth?: string, existingHistory?: Message[]): Promise<SubAgentResult> {
   const multiplier = DEPTH_MULTIPLIERS[depth ?? 'normal'] ?? 1;
   const maxToolCalls = Math.ceil((identityAgentConfig.maxToolCalls ?? 30) * multiplier);
-  emitProgress(`🕵️‍♂️ IdentityAgent → "${query.length > 120 ? query.slice(0, 117) + '...' : query}" [derinlik: ${depth ?? 'normal'}, bütçe: ${maxToolCalls}]`);
+  emitProgress(`🕵️‍♂️ IdentityAgent → "${query.length > 120 ? query.slice(0, 117) + '...' : query}" [depth: ${depth ?? 'normal'}, budget: ${maxToolCalls}]`);
 
-  // Mevcut history varsa devam et (AutoGen-style), yoksa yeni başlat
+  // Continue with existing history if provided (AutoGen-style), otherwise start fresh
   const history: Message[] = existingHistory
     ? [...existingHistory]
     : [
@@ -183,7 +183,7 @@ export async function runIdentityAgent(query: string, context?: string, depth?: 
   const toolSummary = Object.entries(result.toolsUsed)
     .map(([tool, count]) => `${tool}×${count}`)
     .join(', ');
-  emitProgress(`✅ IdentityAgent tamamlandı [${result.toolCallCount} araç: ${toolSummary || 'yok'}]`);
-  const meta = `\n\n---\n**[META] IdentityAgent araç istatistikleri:** ${toolSummary || 'araç kullanılmadı'} (toplam: ${result.toolCallCount})`;
+  emitProgress(`✅ IdentityAgent completed [${result.toolCallCount} tools: ${toolSummary || 'none'}]`);
+  const meta = `\n\n---\n**[META] IdentityAgent tool stats:** ${toolSummary || 'no tools used'} (total: ${result.toolCallCount})`;
   return { response: result.finalResponse + meta, history };
 }

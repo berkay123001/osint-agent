@@ -1,48 +1,47 @@
 /**
- * Obsidian Vault Araçları
+ * Obsidian Vault Tools
  *
- * Agent'ın kendi Obsidian çalışma alanını aktif olarak kullanmasını sağlar:
- * - obsidian_write  : Vault'ta herhangi bir notu yaz / güncelle
- * - obsidian_append : Mevcut nota ek içerik ekle
- * - obsidian_read   : Vault'taki bir notu oku
- * - obsidian_daily  : Günlük defterine kayıt ekle (otomatik tarihleme)
- * - obsidian_list   : Vault içindeki dizin/dosyaları listele
+ * Enables the agent to actively use its own Obsidian workspace:
+ * - obsidian_write  : Write / update any note in the Vault
+ * - obsidian_append : Append content to an existing note
+ * - obsidian_read   : Read a note from the Vault
+ * - obsidian_daily  : Add an entry to the daily log (auto-dated)
+ * - obsidian_list   : List directories/files inside the Vault
  */
 
 import { mkdir, writeFile, readFile, appendFile, readdir, stat } from 'fs/promises'
 import path from 'path'
+import os from 'os'
 
-// ─── Sabitleri ──────────────────────────────────────────────────────────────
-export const VAULT_ROOT = path.resolve(
-  process.env.HOME ?? '/home/berkayhsrt',
-  'Agent_Knowladges/OSINT/OSINT-Agent',
-)
+// ─── Constants ──────────────────────────────────────────────────────────────
+export const VAULT_ROOT = process.env.OBSIDIAN_VAULT ||
+  path.resolve(process.env.HOME ?? os.homedir(), 'Agent_Knowladges/OSINT/OSINT-Agent')
 
-const DAILY_DIR = path.join(VAULT_ROOT, '06 - Günlük')
-const NOTES_DIR = path.join(VAULT_ROOT, '07 - Notlar')      // agent'ın serbest not alanı
-const PROFILES_DIR = path.join(VAULT_ROOT, '08 - Profiller') // araştırılan kişi profilleri
+const DAILY_DIR = path.join(VAULT_ROOT, '06 - Daily')
+const NOTES_DIR = path.join(VAULT_ROOT, '07 - Notlar')      // agent's free note area
+const PROFILES_DIR = path.join(VAULT_ROOT, '08 - Profiller') // investigated person profiles
 
-/** Vault dışına çıkmayı engelle (path traversal güvenliği) */
+/** Prevent escaping outside the Vault (path traversal security) */
 function safePath(relativePath: string): string {
   const resolved = path.resolve(VAULT_ROOT, relativePath)
   if (!resolved.startsWith(VAULT_ROOT)) {
-    throw new Error(`Vault dışına erişim engellendi: ${relativePath}`)
+    throw new Error(`Access outside Vault is forbidden: ${relativePath}`)
   }
   return resolved
 }
 
-/** Bugünün tarihini YYYY-MM-DD formatında döndür */
+/** Returns today's date in YYYY-MM-DD format */
 function today(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-// ─── Tool işlevleri ──────────────────────────────────────────────────────────
+// ─── Tool functions ──────────────────────────────────────────────────────────
 
 /**
- * Vault'ta bir not oluştur veya tamamen güncelle.
- * @param notePath  Vault'a göre göreli yol, örn. "07 - Notlar/kullanıcı-tercihleri.md"
- * @param content   Not içeriği (Markdown)
- * @param overwrite true → üzerine yaz, false → sadece yoksa oluştur (varsayılan: true)
+ * Create or fully update a note in the Vault.
+ * @param notePath  Relative path from Vault root, e.g. "07 - Notlar/user-preferences.md"
+ * @param content   Note content (Markdown)
+ * @param overwrite true → overwrite, false → only create if it doesn't exist (default: true)
  */
 export async function obsidianWrite(
   notePath: string,
@@ -55,28 +54,28 @@ export async function obsidianWrite(
   if (!overwrite) {
     try {
       await stat(full)
-      return `⏩ Zaten var, üzerine yazılmadı: ${notePath}`
+      return `⏩ Already exists, not overwritten: ${notePath}`
     } catch {
-      // Dosya yok → oluştur
+      // File does not exist → create
     }
   }
 
   await writeFile(full, content, 'utf8')
-  return `✅ Yazıldı: ${notePath}`
+  return `✅ Written: ${notePath}`
 }
 
 /**
- * Mevcut bir notun sonuna içerik ekle. Dosya yoksa oluşturur.
+ * Append content to the end of an existing note. Creates the file if it doesn't exist.
  */
 export async function obsidianAppend(notePath: string, content: string): Promise<string> {
   const full = safePath(notePath)
   await mkdir(path.dirname(full), { recursive: true })
   await appendFile(full, '\n' + content, 'utf8')
-  return `✅ Eklendi: ${notePath}`
+  return `✅ Appended: ${notePath}`
 }
 
 /**
- * Vault'taki bir notu oku.
+ * Read a note from the Vault.
  */
 export async function obsidianRead(notePath: string): Promise<string> {
   const full = safePath(notePath)
@@ -84,31 +83,31 @@ export async function obsidianRead(notePath: string): Promise<string> {
     const content = await readFile(full, 'utf8')
     return content
   } catch {
-    return `❌ Dosya bulunamadı: ${notePath}`
+    return `❌ File not found: ${notePath}`
   }
 }
 
 /**
- * Bugünün günlük notuna kayıt ekler.
- * Dosya yoksa başlıklı yeni bir günlük sayfası oluşturur.
- * @param entry  Kaydedilecek metin (tek cümle veya Markdown blok)
- * @param tag    Opsiyonel etiket: "araştırma" | "kullanıcı-tercihi" | "gözlem" | "hatırlatma"
+ * Adds an entry to today's daily log note.
+ * Creates a new titled daily page if the file does not exist.
+ * @param entry  Text to record (single sentence or Markdown block)
+ * @param tag    Optional tag: "research" | "user-pref" | "observation" | "reminder"
  */
 export async function obsidianDailyLog(entry: string, tag?: string): Promise<string> {
   const date = today()
   const fileName = `${date}.md`
   const full = path.join(DAILY_DIR, fileName)
-  const relPath = path.join('06 - Günlük', fileName)
+  const relPath = path.join('06 - Daily', fileName)
 
   await mkdir(DAILY_DIR, { recursive: true })
 
-  // Dosya yoksa başlık oluştur
+  // Create header if file doesn't exist
   let exists = false
   try {
     await stat(full)
     exists = true
   } catch {
-    const header = `# ${date} — Günlük\n\n`
+    const header = `# ${date} — Daily Log\n\n`
     await writeFile(full, header, 'utf8')
   }
 
@@ -117,12 +116,12 @@ export async function obsidianDailyLog(entry: string, tag?: string): Promise<str
   const line = `\n## ${timestamp}${tagStr}\n${entry}\n`
 
   await appendFile(full, line, 'utf8')
-  return `✅ Günlüğe kaydedildi: ${relPath} (${exists ? 'mevcut dosyaya eklendi' : 'yeni günlük oluşturuldu'})`
+  return `✅ Saved to daily log: ${relPath} (${exists ? 'appended to existing file' : 'new daily log created'})`
 }
 
 /**
- * Vault içindeki bir dizini listele (özyinelemeli değil).
- * @param dir Göreli yol veya boş bırakarak vault kökünü listele
+ * List a directory inside the Vault (non-recursive).
+ * @param dir Relative path, or leave empty to list the vault root
  */
 export async function obsidianList(dir = ''): Promise<string> {
   const full = dir ? safePath(dir) : VAULT_ROOT
@@ -131,15 +130,15 @@ export async function obsidianList(dir = ''): Promise<string> {
     const lines = entries
       .filter(e => !e.name.startsWith('.'))
       .map(e => `${e.isDirectory() ? '📁' : '📄'} ${e.name}`)
-    return lines.length > 0 ? lines.join('\n') : '(boş dizin)'
+    return lines.length > 0 ? lines.join('\n') : '(empty directory)'
   } catch {
-    return `❌ Dizin bulunamadı: ${dir || '(vault kökü)'}`
+    return `❌ Directory not found: ${dir || '(vault root)'}`
   }
 }
 
 /**
- * Vault içindeki tüm .md dosyalarını özyinelemeli gezer.
- * Gizli dosya/dizinleri (.) atlar.
+ * Recursively walks all .md files inside the Vault.
+ * Skips hidden files/directories (.).
  */
 async function walkMdFiles(dir: string): Promise<string[]> {
   const results: string[] = []
@@ -163,10 +162,10 @@ async function walkMdFiles(dir: string): Promise<string[]> {
 }
 
 /**
- * Vault içinde anahtar kelime araması yap.
- * Tüm .md dosyalarını tarar, eşleşen dosyaları ve bağlam satırlarını döndürür.
- * @param query  Aranacak metin (case-insensitive)
- * @param limit  Maksimum sonuç sayısı (varsayılan: 10)
+ * Search for a keyword inside the Vault.
+ * Scans all .md files and returns matching files with context lines.
+ * @param query  Text to search for (case-insensitive)
+ * @param limit  Maximum number of results (default: 10)
  */
 export async function obsidianSearch(query: string, limit = 10): Promise<string> {
   const q = query.toLowerCase()
@@ -202,22 +201,22 @@ export async function obsidianSearch(query: string, limit = 10): Promise<string>
   }
 
   if (matches.length === 0) {
-    return `🔍 "${query}" için sonuç bulunamadı.`
+    return `🔍 No results found for "${query}".`
   }
 
   const output = matches.map(m =>
     `📄 **${m.relPath}**\n${m.contextLines.join('\n')}`
   ).join('\n\n')
 
-  return `🔍 "${query}" — ${matches.length} dosyada bulundu:\n\n${output}`
+  return `🔍 "${query}" — found in ${matches.length} file(s):\n\n${output}`
 }
 
 /**
- * Araştırılan kişi için profil sayfası oluştur/güncelle.
- * Frontmatter ile yapılandırılmış metadata + Markdown özet.
- * @param username  Profil sahibi (dosya adı olarak kullanılır)
- * @param content   Profil içeriği (Markdown)
- * @param metadata  Opsiyonel frontmatter alanları
+ * Create or update a profile page for the investigated person.
+ * Structured metadata via frontmatter + Markdown summary.
+ * @param username  Profile owner (used as the filename)
+ * @param content   Profile content (Markdown)
+ * @param metadata  Optional frontmatter fields
  */
 export interface ProfileMetadata {
   realName?: string
@@ -256,10 +255,10 @@ export async function obsidianWriteProfile(
   await writeFile(full, body, 'utf8')
 
   const relPath = path.join('08 - Profiller', fileName)
-  return `✅ Profil kaydedildi: ${relPath}`
+  return `✅ Profile saved: ${relPath}`
 }
 
-// ─── Dizinlerin varlığını garantile ─────────────────────────────────────────
+// ─── Ensure required directories exist ─────────────────────────────────────
 export async function ensureVaultDirs(): Promise<void> {
   await Promise.all([
     mkdir(NOTES_DIR, { recursive: true }),

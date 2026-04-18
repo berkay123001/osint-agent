@@ -1,13 +1,12 @@
 /**
- * baseAgent.ts — regression guard testleri
+ * baseAgent.ts — regression guard tests
  *
- * Agent'ın LLM kararlarını değil, bizim yazdığımız deterministik
- * error-handling pathlerini test eder:
+ * Tests our own deterministic error-handling paths, not LLM decisions:
  *   - 429 rate limit → retry
- *   - DataInspectionFailed → Gemini fallback (başarılı)
- *   - DataInspectionFailed → Gemini fallback da başarısız → graceful return
- *   - 502 geçici hata → retry
- *   - Bilinmeyen hata → throw
+ *   - DataInspectionFailed → Gemini fallback (successful)
+ *   - DataInspectionFailed → Gemini fallback also fails → graceful return
+ *   - 502 transient error → retry
+ *   - Unknown error → throw
  */
 
 import assert from 'node:assert/strict';
@@ -16,7 +15,7 @@ import OpenAI from 'openai';
 import { runAgentLoop } from './baseAgent.js';
 import type { AgentConfig, Message } from './types.js';
 
-// --- Yardımcılar ---
+// --- Helpers ---
 
 function makeConfig(overrides?: Partial<AgentConfig>): AgentConfig {
   return {
@@ -32,7 +31,7 @@ function makeConfig(overrides?: Partial<AgentConfig>): AgentConfig {
 }
 
 function freshHistory(): Message[] {
-  return [{ role: 'user', content: 'merhaba' }];
+  return [{ role: 'user', content: 'hello' }];
 }
 
 function makeSuccessResponse(content: string) {
@@ -58,8 +57,8 @@ function makeSuccessResponse(content: string) {
 }
 
 /**
- * Çağrılar dizisine göre davranan sahte OpenAI client'ı oluşturur.
- * Her `create()` çağrısında sıradaki handler çalışır.
+ * Creates a mock OpenAI client that responds according to a sequence of handlers.
+ * Each `create()` call invokes the next handler in the sequence.
  */
 function makeMockClient(handlers: Array<() => unknown>): OpenAI {
   let i = 0;
@@ -67,7 +66,7 @@ function makeMockClient(handlers: Array<() => unknown>): OpenAI {
     chat: {
       completions: {
         create: async () => {
-          if (i >= handlers.length) throw new Error('Beklenmedik ekstra API çağrısı');
+          if (i >= handlers.length) throw new Error('Unexpected extra API call');
           return handlers[i++]();
         },
       },
@@ -77,30 +76,30 @@ function makeMockClient(handlers: Array<() => unknown>): OpenAI {
 
 // --- Testler ---
 
-test('normal başarılı yanıt — finalResponse döner', async () => {
+test('normal successful response — returns finalResponse', async () => {
   const client = makeMockClient([
-    () => makeSuccessResponse('merhaba dünya'),
+    () => makeSuccessResponse('hello world'),
   ]);
 
   const result = await runAgentLoop(freshHistory(), makeConfig(), client, 0);
 
-  assert.equal(result.finalResponse, 'merhaba dünya');
+  assert.equal(result.finalResponse, 'hello world');
   assert.equal(result.toolCallCount, 0);
 });
 
-test('429 rate limit hatası — retry sonrası finalResponse döner', async () => {
+test('429 rate limit error — returns finalResponse after retry', async () => {
   const client = makeMockClient([
     () => { throw new Error('429 Too Many Requests'); },
-    () => makeSuccessResponse('retry başarılı'),
+    () => makeSuccessResponse('retry successful'),
   ]);
 
-  // _retryDelayMs = 0 → test 5 saniye beklemez
+  // _retryDelayMs = 0 → test does not wait 5 seconds
   const result = await runAgentLoop(freshHistory(), makeConfig(), client, 0);
 
-  assert.equal(result.finalResponse, 'retry başarılı');
+  assert.equal(result.finalResponse, 'retry successful');
 });
 
-test('"rate limit" metni içeren hata — retry sonrası finalResponse döner', async () => {
+test('"rate limit" text in error message — returns finalResponse after retry', async () => {
   const client = makeMockClient([
     () => { throw new Error('OpenRouter: rate limit exceeded'); },
     () => makeSuccessResponse('rate limit retry ok'),
@@ -111,32 +110,32 @@ test('"rate limit" metni içeren hata — retry sonrası finalResponse döner', 
   assert.equal(result.finalResponse, 'rate limit retry ok');
 });
 
-test('DataInspectionFailed — Gemini fallback başarılı → finalResponse döner', async () => {
+test('DataInspectionFailed — Gemini fallback successful → returns finalResponse', async () => {
   const client = makeMockClient([
     () => { throw new Error('DataInspectionFailed: Input text may contain inappropriate content'); },
-    () => makeSuccessResponse('gemini yanıtı'),
+    () => makeSuccessResponse('gemini response'),
   ]);
 
   const result = await runAgentLoop(freshHistory(), makeConfig(), client, 0);
 
-  assert.equal(result.finalResponse, 'gemini yanıtı');
+  assert.equal(result.finalResponse, 'gemini response');
 });
 
-test('DataInspectionFailed → Gemini da başarısız → graceful return (crash yok)', async () => {
+test('DataInspectionFailed → Gemini also fails → graceful return (no crash)', async () => {
   const client = makeMockClient([
     () => { throw new Error('DataInspectionFailed'); },
-    () => { throw new Error('Gemini da reddetti'); },
+    () => { throw new Error('Gemini also rejected'); },
   ]);
 
   const result = await runAgentLoop(freshHistory(), makeConfig(), client, 0);
 
   assert.ok(
-    result.finalResponse.includes('⚠️') || result.finalResponse.includes('içerik filtresi'),
-    `Beklenen graceful mesaj, alınan: "${result.finalResponse}"`,
+    result.finalResponse.includes('⚠️') || result.finalResponse.includes('content filter'),
+    `Expected graceful message, received: "${result.finalResponse}"`,
   );
 });
 
-test('"inappropriate content" variant — Gemini fallback başarılı', async () => {
+test('"inappropriate content" variant — Gemini fallback successful', async () => {
   const client = makeMockClient([
     () => { throw new Error('Request contains inappropriate content'); },
     () => makeSuccessResponse('fallback ok'),
@@ -147,7 +146,7 @@ test('"inappropriate content" variant — Gemini fallback başarılı', async ()
   assert.equal(result.finalResponse, 'fallback ok');
 });
 
-test('502 geçici hata — retry sonrası finalResponse döner', async () => {
+test('502 transient error — returns finalResponse after retry', async () => {
   const client = makeMockClient([
     () => { throw new Error('502 Bad Gateway'); },
     () => makeSuccessResponse('502 retry ok'),
@@ -158,7 +157,7 @@ test('502 geçici hata — retry sonrası finalResponse döner', async () => {
   assert.equal(result.finalResponse, '502 retry ok');
 });
 
-test('bilinmeyen hata — throw edilir', async () => {
+test('unknown error — throws', async () => {
   const client = makeMockClient([
     () => { throw new Error('ECONNREFUSED: connection refused'); },
   ]);

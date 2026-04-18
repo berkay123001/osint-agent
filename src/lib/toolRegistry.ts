@@ -42,11 +42,11 @@ import { writeFile, unlink } from 'fs/promises'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-const PYTHON = process.env.PYTHON_PATH || '/home/berkayhsrt/anaconda3/bin/python'
+const PYTHON = process.env.PYTHON_PATH || 'python3'
 
 // ─── Report Content Buffer ────────────────────────────────────────────────────
-// Supervisor sub-agent raporlarını buraya yazar. generate_report additionalFindings
-// yoksa bu buffer'ı kullanır (model JSON'a encode edemiyorsa fallback).
+// Supervisor sub-agent reports are written here. generate_report uses this buffer
+// when additionalFindings is not provided (fallback when model can't JSON encode).
 let _reportContentBuffer: string = '';
 export function setReportContentBuffer(content: string): void { _reportContentBuffer = content; }
 export function clearReportContentBuffer(): void { _reportContentBuffer = ''; }
@@ -57,15 +57,15 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "add_custom_node",
-      description: "Neo4j graf veritabanına özel (custom) bir düğüm (node) ekler. Standart nesneler (Username, Email vb.) dışındaki bulguları (ör: CryptoWallet, Malware) kaydetmek için kullanılır. Etiketleri CamelCase kullanın.",
+      description: "Adds a custom node to the Neo4j graph database. Used for saving findings outside standard objects (Username, Email, etc.), e.g. CryptoWallet, Malware. Use CamelCase for labels.",
       parameters: {
         type: "object",
         properties: {
-          label: { type: "string", description: "Düğümün tipi (Örn: CryptoWallet, Malware)" },
+          label: { type: "string", description: "Node type (e.g. CryptoWallet, Malware)" },
           properties: { 
             type: "object", 
             additionalProperties: { type: "string" },
-            description: "Düğüm özellikleri. Key-value (string:string) formatında."
+            description: "Node properties. Key-value (string:string) format."
           }
         },
         required: ["label", "properties"]
@@ -76,13 +76,13 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "delete_custom_node",
-      description: "Graph veritabanından hatalı eklenmiş bir düğümü ID veya özellik bazlı olarak siler.",
+      description: "Deletes an erroneously added node from the graph database by ID or property.",
       parameters: {
         type: "object",
         properties: {
-          label: { type: "string", description: "Silinecek düğümün etiketi. (Örn: CryptoWallet)" },
-          matchKey: { type: "string", description: "Arama anahtarı. (Örn: address)" },
-          matchValue: { type: "string", description: "Arama yapılacak değer. (Örn: 0x123...)" }
+          label: { type: "string", description: "Label of the node to delete. (e.g. CryptoWallet)" },
+          matchKey: { type: "string", description: "Search key. (e.g. address)" },
+          matchValue: { type: "string", description: "Search value. (e.g. 0x123...)" }
         },
         required: ["label", "matchKey", "matchValue"]
       }
@@ -92,17 +92,17 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "add_custom_relationship",
-      description: "Graf veritabanındaki iki nesne arasına özel bir ilişki (Örn: OWNS, DISTRIBUTES) ekler.",
+      description: "Adds a custom relationship (e.g. OWNS, DISTRIBUTES) between two objects in the graph database.",
       parameters: {
         type: "object",
         properties: {
-          sourceLabel: { type: "string", description: "Kaynak etiket (Örn: Username)" },
-          sourceKey: { type: "string", description: "Kaynak arama anahtarı (Örn: value)" },
-          sourceValue: { type: "string", description: "Kaynak değer (Örn: wgodbarrelv4)" },
-          targetLabel: { type: "string", description: "Hedef etiket (Örn: Malware)" },
-          targetKey: { type: "string", description: "Hedef arama anahtarı (Örn: name)" },
-          targetValue: { type: "string", description: "Hedef arama değeri (Örn: Vidar)" },
-          relationshipType: { type: "string", description: "İlişki tipi BÜYÜK HARFLERLE (Örn: DISTRIBUTES)" }
+          sourceLabel: { type: "string", description: "Source label (e.g. Username)" },
+          sourceKey: { type: "string", description: "Source search key (e.g. value)" },
+          sourceValue: { type: "string", description: "Source value (e.g. wgodbarrelv4)" },
+          targetLabel: { type: "string", description: "Target label (e.g. Malware)" },
+          targetKey: { type: "string", description: "Target search key (e.g. name)" },
+          targetValue: { type: "string", description: "Target search value (e.g. Vidar)" },
+          relationshipType: { type: "string", description: "Relationship type in UPPERCASE (e.g. DISTRIBUTES)" }
         },
         required: ["sourceLabel", "sourceKey", "sourceValue", "targetLabel", "targetKey", "targetValue", "relationshipType"]
       }
@@ -112,7 +112,7 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "fact_check_to_graph",
-      description: "Şüpheli bir iddia (Claim) ile ilgili yapılan Doğruluk Kontrolü (Fact-Check) sonucunu Neo4j veritabanına kaydeder. Kaynak, görsel ve iddiayı birbirine bağlar.",
+      description: "Saves a Fact-Check result for a suspicious claim to the Neo4j database. Links the source, image, and claim together.",
       parameters: {
         type: "object",
         properties: {
@@ -133,26 +133,26 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'save_finding',
-      description: 'Araştırma sırasında keşfedilen önemli bir bulguyu Neo4j grafına yazar. Sadece doğrulanmış veya yüksek güvenilirlikli bulgular için kullan — spekülatif sonuçları kaydetme.',
+      description: 'Writes a significant finding discovered during investigation to the Neo4j graph. Use only for verified or high-confidence findings — do not save speculative results.',
       parameters: {
         type: 'object',
         properties: {
-          subject_label: { type: 'string', description: 'Özne node tipi (Username, Email, Person, Website vb.)' },
-          subject_value: { type: 'string', description: 'Özne node değeri' },
+          subject_label: { type: 'string', description: 'Subject node type (Username, Email, Person, Website, etc.)' },
+          subject_value: { type: 'string', description: 'Subject node value' },
           finding_type: {
             type: 'string',
             enum: ['identity', 'location', 'affiliation', 'alias', 'association'],
-            description: 'Bulgu kategorisi'
+            description: 'Finding category'
           },
-          target_label: { type: 'string', description: 'Hedef node tipi' },
-          target_value: { type: 'string', description: 'Hedef node değeri' },
-          relation: { type: 'string', description: 'İlişki tipi (USES_EMAIL, LOCATED_IN, WORKS_AT, ALIAS_OF, ASSOCIATED_WITH vb.)' },
+          target_label: { type: 'string', description: 'Target node type' },
+          target_value: { type: 'string', description: 'Target node value' },
+          relation: { type: 'string', description: 'Relationship type (USES_EMAIL, LOCATED_IN, WORKS_AT, ALIAS_OF, ASSOCIATED_WITH, etc.)' },
           confidence: {
             type: 'string',
             enum: ['verified', 'high', 'medium', 'low'],
-            description: 'Güvenilirlik seviyesi'
+            description: 'Confidence level'
           },
-          evidence: { type: 'string', description: 'Bulgunun kanıtı (kaynak URL veya açıklama)' },
+          evidence: { type: 'string', description: 'Evidence for the finding (source URL or description)' },
         },
         required: ['subject_label', 'subject_value', 'finding_type', 'target_label', 'target_value', 'relation'],
       },
@@ -162,23 +162,23 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'batch_save_findings',
-      description: 'Birden fazla OSINT bulgusunu tek seferde Neo4j grafına toplu yazar. save_finding yerine 5+ bulgu varsa bunu kullan — çok daha verimli (tek API call). Maksimum 30 bulgu. Her bulgu için subject→relation→target yapısı kullanılır.',
+      description: 'Writes multiple OSINT findings to the Neo4j graph in a single batch. Use instead of save_finding when there are 5+ findings — much more efficient (single API call). Maximum 30 findings. Each finding uses the subject→relation→target structure.',
       parameters: {
         type: 'object',
         properties: {
           findings: {
             type: 'array',
-            description: 'Bulgu listesi. Her eleman bir save_finding çağrısına denk gelir.',
+            description: 'List of findings. Each element corresponds to a save_finding call.',
             items: {
               type: 'object',
               properties: {
-                subject_label: { type: 'string', description: 'Özne node tipi (Username, Email, Person, Website vb.)' },
-                subject_value: { type: 'string', description: 'Özne node değeri' },
-                target_label: { type: 'string', description: 'Hedef node tipi' },
-                target_value: { type: 'string', description: 'Hedef node değeri' },
-                relation: { type: 'string', description: 'İlişki tipi (USES_EMAIL, LOCATED_IN, WORKS_AT vb.)' },
-                confidence: { type: 'string', enum: ['verified', 'high', 'medium', 'low'], description: 'Güvenilirlik seviyesi' },
-                evidence: { type: 'string', description: 'Kısa kanıt notu (max 200 karakter)' },
+                subject_label: { type: 'string', description: 'Subject node type (Username, Email, Person, Website, etc.)' },
+                subject_value: { type: 'string', description: 'Subject node value' },
+                target_label: { type: 'string', description: 'Target node type' },
+                target_value: { type: 'string', description: 'Target node value' },
+                relation: { type: 'string', description: 'Relationship type (USES_EMAIL, LOCATED_IN, WORKS_AT, etc.)' },
+                confidence: { type: 'string', enum: ['verified', 'high', 'medium', 'low'], description: 'Confidence level' },
+                evidence: { type: 'string', description: 'Short evidence note (max 200 characters)' },
               },
               required: ['subject_label', 'subject_value', 'target_label', 'target_value', 'relation'],
             },
@@ -193,23 +193,23 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'save_ioc',
-      description: 'Siber tehdit göstergesi (IOC), tehdit aktörü veya araştırma kaynağını Neo4j grafına yazar. ThreatActor, C2Server, Malware, Campaign, IOC, PhishingDomain, Tool, Framework tipleri desteklenir. UYARI: Akademik framework/tool (BloodHound, OpenCTI, THREATKG vb.) için Tool veya Framework kullan — Campaign DEĞİL.',
+      description: 'Writes a cybersecurity threat indicator (IOC), threat actor, or research source to the Neo4j graph. Supports ThreatActor, C2Server, Malware, Campaign, IOC, PhishingDomain, Tool, Framework types. WARNING: For academic frameworks/tools (BloodHound, OpenCTI, THREATKG, etc.) use Tool or Framework — NOT Campaign.',
       parameters: {
         type: 'object',
         properties: {
           node_type: {
             type: 'string',
-            description: 'Node tipi: ThreatActor | C2Server | Malware | Campaign | IOC | PhishingDomain | Tool | Framework'
+            description: 'Node type: ThreatActor | C2Server | Malware | Campaign | IOC | PhishingDomain | Tool | Framework'
           },
-          value: { type: 'string', description: 'Node değeri (domain, IP, hash, isim vb.)' },
+          value: { type: 'string', description: 'Node value (domain, IP, hash, name, etc.)' },
           properties: {
             type: 'object',
-            description: 'Ek özellikler (category, tlp, description, firstSeen vb.) — anahtar-değer çifti',
+            description: 'Additional properties (category, tlp, description, firstSeen, etc.) — key-value pairs',
             additionalProperties: { type: 'string' }
           },
-          linked_label: { type: 'string', description: 'Bağlanacak mevcut node tipi (opsiyonel)' },
-          linked_value: { type: 'string', description: 'Bağlanacak mevcut node değeri (opsiyonel)' },
-          linked_relation: { type: 'string', description: 'İlişki tipi (opsiyonel, ör: USES_C2, PART_OF_CAMPAIGN)' },
+          linked_label: { type: 'string', description: 'Existing node type to link to (optional)' },
+          linked_value: { type: 'string', description: 'Existing node value to link to (optional)' },
+          linked_relation: { type: 'string', description: 'Relationship type (optional, e.g.: USES_C2, PART_OF_CAMPAIGN)' },
         },
         required: ['node_type', 'value'],
       },
@@ -219,20 +219,20 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'link_entities',
-      description: 'Grafta zaten var olan (veya oluşturulacak) iki node\'u ilişkilendirir. SAME_AS, ALIAS_OF, ASSOCIATED_WITH gibi genel ilişkiler için kullan.',
+      description: 'Links two existing (or to-be-created) nodes in the graph. Use for general relationships like SAME_AS, ALIAS_OF, ASSOCIATED_WITH.',
       parameters: {
         type: 'object',
         properties: {
-          from_label: { type: 'string', description: 'Kaynak node tipi' },
-          from_value: { type: 'string', description: 'Kaynak node değeri' },
-          to_label: { type: 'string', description: 'Hedef node tipi' },
-          to_value: { type: 'string', description: 'Hedef node değeri' },
-          relation: { type: 'string', description: 'İlişki tipi (SAME_AS, ALIAS_OF, ASSOCIATED_WITH vb.)' },
-          evidence: { type: 'string', description: 'İlişkinin kanıtı (opsiyonel)' },
+          from_label: { type: 'string', description: 'Source node type' },
+          from_value: { type: 'string', description: 'Source node value' },
+          to_label: { type: 'string', description: 'Target node type' },
+          to_value: { type: 'string', description: 'Target node value' },
+          relation: { type: 'string', description: 'Relationship type (SAME_AS, ALIAS_OF, ASSOCIATED_WITH, etc.)' },
+          evidence: { type: 'string', description: 'Evidence for the relationship (optional)' },
           confidence: {
             type: 'string',
             enum: ['verified', 'high', 'medium', 'low'],
-            description: 'Güvenilirlik seviyesi (opsiyonel)'
+            description: 'Confidence level (optional)'
           },
         },
         required: ['from_label', 'from_value', 'to_label', 'to_value', 'relation'],
@@ -243,11 +243,11 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "reverse_image_search",
-      description: "Bir görselin internette ilk nerede ve ne zaman paylaşıldığını (Google Lens / SerpApi ile) bulur. Yalan haber veya yanlış bağlamdaki fotoğrafların gerçek kaynağını (eski deprem vb.) göstermek için kullanılır.",
+      description: "Finds where and when an image was first shared on the internet (via Google Lens / SerpApi). Use to reveal the true source of misinformation or out-of-context photos (e.g., old earthquake photos).",
       parameters: {
         type: "object",
         properties: {
-          imageUrl: { type: "string", description: "Aranacak görselin tam URL'si" }
+          imageUrl: { type: "string", description: "Full URL of the image to search" }
         },
         required: ["imageUrl"]
       }
@@ -257,12 +257,12 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "compare_images_phash",
-      description: "İki görselin perceptual hash (pHash) değerlerini karşılaştırarak kriptografik olarak benzerliklerini ölçer. Bir haberdeki görselin başka bağlamdaki bir fotoğrafla aynı olup olmadığını analiz eder.",
+      description: "Compares two images using perceptual hash (pHash) to measure visual similarity. Analyzes whether an image from a news article is the same as a photo in a different context.",
       parameters: {
         type: "object",
         properties: {
-          url1: { type: "string", description: "Birinci görselin tam URL'si" },
-          url2: { type: "string", description: "Karşılaştırma yapılacak ikinci görselin tam URL'si" }
+          url1: { type: "string", description: "Full URL of the first image" },
+          url2: { type: "string", description: "Full URL of the second image to compare" }
         },
         required: ["url1", "url2"]
       }
@@ -272,13 +272,13 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "auto_visual_intel",
-      description: "Profil URL'lerinden OTOMATIK görsel istihbarat üretir. Profil sayfasını çeker, avatar/profil fotoğrafını bulur, tersine görsel arama (Google Lens) yapar ve birden fazla platform varsa aralarında pHash karşılaştırması yapar. Manuel görsel yüklemeye gerek yoktur — URL verin, gerisi otomatik.",
+      description: "Automatically generates visual intelligence from profile URLs. Scrapes profile pages, finds avatar/profile photos, performs reverse image search (Google Lens), and runs pHash comparison across multiple platforms. No manual image upload needed — provide URLs and the rest is automatic.",
       parameters: {
         type: "object",
         properties: {
           profile_urls: {
             type: "string",
-            description: "Virgülle ayrılmış profil URL'leri. Örnek: 'https://kick.com/bbeckyg, https://tiktok.com/@bbeckyg3, https://instagram.com/bbeckyg01'"
+            description: "Comma-separated profile URLs. Example: 'https://kick.com/bbeckyg, https://tiktok.com/@bbeckyg3, https://instagram.com/bbeckyg01'"
           }
         },
         required: ["profile_urls"]
@@ -290,11 +290,11 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'clear_graph',
       description:
-        'Neo4j graf veritabanındaki tüm düğümleri (node) ve ilişkileri kalıcı olarak siler. Sadece kullanıcı açıkça veritabanını temizlemeni/silmeni istediğinde kullan.',
+        'Permanently deletes all nodes and relationships in the Neo4j graph database. Only use when the user explicitly requests database cleanup/deletion.',
       parameters: {
         type: 'object',
         properties: {
-          confirm: { type: 'boolean', description: 'Silme işlemini onaylamak için true gönder' },
+          confirm: { type: 'boolean', description: 'Set to true to confirm the deletion' },
         },
         required: ['confirm'],
       },
@@ -304,13 +304,13 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'search_academic_papers',
-      description: 'arXiv üzerinden güncel akademik makaleleri arar. "LLM RL eğitimi", "transformer mimarisi" gibi araştırma konuları için kullan. Sonuçları otomatik olarak Neo4j graf veritabanına kaydeder (Paper→Author, Paper→Topic).',
+      description: 'Searches for recent academic papers on arXiv. Use for research topics like "LLM RL training", "transformer architecture". Automatically saves results to the Neo4j graph database (Paper→Author, Paper→Topic).',
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: 'Araştırma sorgusu (Örn: "reinforcement learning large language models 2024")' },
-          maxResults: { type: 'string', description: 'Kaç makale getirilsin? (varsayılan: 10, max: 50)' },
-          sortBy: { type: 'string', description: '"submittedDate" (en yeni) veya "relevance" (en alakalı). Varsayılan: submittedDate.' },
+          query: { type: 'string', description: 'Research query (e.g. "reinforcement learning large language models 2024")' },
+          maxResults: { type: 'string', description: 'How many papers to fetch? (default: 10, max: 50)' },
+          sortBy: { type: 'string', description: '"submittedDate" (newest) or "relevance" (most relevant). Default: submittedDate.' },
         },
         required: ['query'],
       },
@@ -320,12 +320,12 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'search_researcher_papers',
-      description: 'Semantic Scholar Author API üzerinden bir araştırmacının tüm yayınlarını, h-index değerini ve atıf sayılarını getirir. Kişi adı + kurum kombinasyonuyla çalışır. arXiv\'de olmayan Türk akademisyenler için de idealdir.',
+      description: 'Fetches all publications, h-index, and citation counts for a researcher via the Semantic Scholar Author API. Works with a name + affiliation combination. Also ideal for researchers not on arXiv.',
       parameters: {
         type: 'object',
         properties: {
-          name: { type: 'string', description: 'Araştırmacının adı soyadı (Örn: "Bihter Daş" veya "Bihter Das")' },
-          affiliation: { type: 'string', description: 'Kurum adı — doğru kişiyi seçmek için kullanılır (Örn: "Fırat Üniversitesi" veya "Firat University")' },
+          name: { type: 'string', description: 'Researcher full name (e.g. "Bihter Das")' },
+          affiliation: { type: 'string', description: 'Institution name — used to select the correct person (e.g. "Firat University")' },
         },
         required: ['name'],
       },
@@ -335,12 +335,12 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'remove_false_positive',
-      description: 'Silinmesi gereken hatalı, yanlış eklenmiş veya hedefle uyuşmayan graf düğümünü ve onun ilişkilerini KALICI OLARAK siler. ⚠️ GNN eğitimi için negatif örnek korumak istiyorsan bunun yerine mark_false_positive kullan.',
+      description: 'PERMANENTLY deletes a graph node and its relationships that was incorrectly added or does not match the target. ⚠️ If you want to keep it as a negative example for GNN training, use mark_false_positive instead.',
       parameters: {
         type: 'object',
         properties: {
-          label: { type: 'string', description: 'Silinecek düğümün türü/etiketi (örn. Username, Email, Person, Profile)' },
-          value: { type: 'string', description: 'Silinecek düğümün spesifik değeri (örn. target@gmail.com, targetUsername)' },
+          label: { type: 'string', description: 'Type/label of the node to delete (e.g. Username, Email, Person, Profile)' },
+          value: { type: 'string', description: 'Specific value of the node to delete (e.g. target@gmail.com, targetUsername)' },
         },
         required: ['label', 'value'],
         additionalProperties: false,
@@ -351,18 +351,18 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'mark_false_positive',
-      description: 'Bir graf node\'unu silmeden GNN eğitimi için etiketler (soft label). false_positive → negatif eğitim örneği olarak korunur; verified → onaylanmış pozitif örnek; uncertain → eğitim setinden dışla. remove_false_positive\'in aksine node silinmez.',
+      description: 'Labels a graph node for GNN training without deleting it (soft label). false_positive → kept as a negative training example; verified → confirmed positive; uncertain → exclude from training set. Unlike remove_false_positive, the node is not deleted.',
       parameters: {
         type: 'object',
         properties: {
-          label: { type: 'string', description: 'Node tipi (örn. Username, Email, Profile)' },
-          value: { type: 'string', description: 'Node değeri' },
+          label: { type: 'string', description: 'Node type (e.g. Username, Email, Profile)' },
+          value: { type: 'string', description: 'Node value' },
           ml_label: {
             type: 'string',
             enum: ['false_positive', 'verified', 'uncertain'],
-            description: 'false_positive: bu hesap hedefle ilgisiz; verified: doğrulanmış hedef; uncertain: belirsiz'
+            description: 'false_positive: this account is unrelated to the target; verified: confirmed target; uncertain: ambiguous'
           },
-          reason: { type: 'string', description: 'Etiketleme gerekçesi (opsiyonel, ör: "ZTE geliştiricisi, Linus değil")' },
+          reason: { type: 'string', description: 'Reason for the label (optional, e.g. "ZTE developer, not Linus")' },
         },
         required: ['label', 'value', 'ml_label'],
       },
@@ -373,11 +373,11 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'search_web',
       description:
-        'SearXNG (self-hosted, öncelikli), Brave Search veya Tavily AI (fallback) ile web araması yapar. İsim, email, dork (site:example.com), kurum araması vb. için kullan. BULUNAN SONUÇLARI DOĞRUDAN KABUL ETME: Sonuçların hedefin bilinen diğer tanımlayıcılarıyla (email, username vb.) örtüşüp örtüşmediğini çapraz kontrol et.',
+        'Performs a web search using SearXNG (self-hosted, preferred), Brave Search, or Tavily AI (fallback). Use for name, email, dork (site:example.com), institution lookups, etc. DO NOT DIRECTLY ACCEPT RESULTS: Cross-check whether results overlap with the target\'s other known identifiers (email, username, etc.).',
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: 'Arama sorgusu (Örn: "sakurasnowangel83" veya site:pastebin.com "hedef@mail.com")' },
+          query: { type: 'string', description: 'Search query (e.g. "sakurasnowangel83" or site:pastebin.com "target@mail.com")' },
         },
         required: ['query'],
       },
@@ -388,13 +388,13 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'search_web_multi',
       description:
-        'Aynı konuyu farklı açılardan aramak için birden fazla sorguyu PARALEL çalıştırır ve URL bazlı tekilleştirilmiş sonuçlar döndürür. Maksimum 3 sorgu (virgülle ayrılmış). Örnek: "gamma app free plan, gamma presentation no signup, gamma.app pricing 2025"',
+        'Runs multiple queries IN PARALLEL to search the same topic from different angles and returns URL-deduplicated results. Maximum 3 queries (comma-separated). Example: "gamma app free plan, gamma presentation no signup, gamma.app pricing 2025"',
       parameters: {
         type: 'object',
         properties: {
           queries: {
             type: 'string',
-            description: 'Virgülle ayrılmış arama sorguları (maks. 3). Örn: "ücretsiz AI sunum, AI slides kayıt olmadan, gamma app bedava"',
+            description: 'Comma-separated search queries (max 3). E.g. "free AI presentation, AI slides no signup, gamma app free"',
           },
         },
         required: ['queries'],
@@ -406,12 +406,12 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'verify_claim',
       description:
-        'Bir iddianın ("ücretsiz", "kayıt gerektirmez", "Turkey based" vb.) birden fazla bağımsız kaynakla doğrulanıp doğrulanamadığını kontrol eder. Vendor sitesi iddiayı açıkça yazmıyorsa bu CEVAPSIZsaklanmaz — community kaynaklarında arar. Güven: high=2+ bağımsız kaynak, medium=1, low=yalnızca vendor, inconclusive=kanıt yok.',
+        'Checks whether a claim ("free", "no signup required", "Turkey based", etc.) can be verified against multiple independent sources. If the vendor site does not explicitly state the claim, it searches community sources. Confidence: high=2+ independent sources, medium=1, low=vendor only, inconclusive=no evidence.',
       parameters: {
         type: 'object',
         properties: {
-          url: { type: 'string', description: 'İddianın test edileceği ana URL (ürün/servis sitesi)' },
-          claim: { type: 'string', description: 'Doğrulanacak iddia metni (Örn: "ücretsiz kullanıma sahip, kredi kartı gerektirmez")' },
+          url: { type: 'string', description: 'Main URL of the product/service to test the claim against' },
+          claim: { type: 'string', description: 'Claim text to verify (e.g. "has a free tier, no credit card required")' },
         },
         required: ['url', 'claim'],
       },
@@ -612,7 +612,7 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'scrape_profile',
       description:
-        'Scrape a webpage using Firecrawl (self-hosted veya cloud). Works well on: GitHub, personal blogs, forums, CTF writeup sites, portfolio pages. Returns page as Markdown and auto-extracts emails, crypto wallets (BTC/ETH), Telegram links, and external URLs. NOTE: Twitter/X and Reddit are NOT supported by Firecrawl — use web_fetch for those (will auto-fallback to Puppeteer/Scrapling).',
+        'Scrape a webpage using Firecrawl (self-hosted or cloud). Works well on: GitHub, personal blogs, forums, CTF writeup sites, portfolio pages. Returns page as Markdown and auto-extracts emails, crypto wallets (BTC/ETH), Telegram links, and external URLs. NOTE: Twitter/X and Reddit are NOT supported by Firecrawl — use web_fetch for those (will auto-fallback to Puppeteer/Scrapling).',
       parameters: {
         type: 'object',
         properties: {
@@ -627,11 +627,11 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'verify_profiles',
       description:
-        'Sherlock sonuçlarını çapraz doğrula: Bulunan profil URL\'lerini Firecrawl ile kazıyarak, profil sahibinin hedef kişiye ait olup olmadığını kontrol eder. Bilinen email, gerçek isim, konum, blog ile sayfadaki bilgileri karşılaştırır. Eşleşme varsa güven "high"a yükselir. Sherlock çalıştıktan SONRA kullan — önce GitHub OSINT ile bilinen bilgileri topla.',
+        'Cross-verify Sherlock results: scrapes found profile URLs with Firecrawl to check whether the profile belongs to the target. Compares known email, real name, location, and blog against page content. If matched, confidence rises to "high". Use AFTER running Sherlock — first gather known information via GitHub OSINT.',
       parameters: {
         type: 'object',
         properties: {
-          username: { type: 'string', description: 'Araştırılan kullanıcı adı (graftan bilinen tanımlayıcılar çekilir)' },
+          username: { type: 'string', description: 'Username being investigated (known identifiers are pulled from the graph)' },
         },
         required: ['username'],
       },
@@ -642,11 +642,11 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'nitter_profile',
       description:
-        'Twitter/X profilini Nitter üzerinden oku. Firecrawl ve web_fetch Twitter\'da 403 verdiği için Nitter kullanılır. Bio, konum, website, katılım tarihi, tweet/takipçi sayısı ve son tweetleri çeker. Ücretsiz, API key gerektirmez.',
+        'Read a Twitter/X profile via Nitter. Nitter is used because Firecrawl and web_fetch return 403 on Twitter. Fetches bio, location, website, join date, tweet/follower counts, and recent tweets. Free, no API key required.',
       parameters: {
         type: 'object',
         properties: {
-          username: { type: 'string', description: 'Twitter/X kullanıcı adı (@ olmadan)' },
+          username: { type: 'string', description: 'Twitter/X username (without @)' },
         },
         required: ['username'],
       },
@@ -657,11 +657,11 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'unexplored_pivots',
       description:
-        'Graf üzerinden henüz pivot yapılmamış (araştırılmamış) node\'ları ve fırsatları bul. Örneğin: bir email bulundu ama check_email_registrations yapılmadı, veya bir website var ama scrape edilmedi. Agent\'ın "bir sonraki en verimli adımı" otomatik belirlemesine yardımcı olur.',
+        'Find nodes and opportunities in the graph that have not yet been pivoted on (investigated). For example: an email was found but check_email_registrations was not run, or a website exists but was not scraped. Helps the agent automatically determine the "next most productive step".',
       parameters: {
         type: 'object',
         properties: {
-          username: { type: 'string', description: 'Araştırma kök kullanıcı adı' },
+          username: { type: 'string', description: 'Root username for the investigation' },
         },
         required: ['username'],
       },
@@ -672,12 +672,12 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'search_person',
       description:
-        'Gerçek isimle araştırma başlat. Grafta ters arama yapar (Person node → Username/Email), olası username\'ler türetir ve web\'de arar. ÖNEMLİ: Yaygın isimler (Mehmet Yılmaz) ile yanlış pozitif riski yüksektir — ek bağlam (şehir, kurum, meslek) ver. Tam isimle Sherlock çalıştırmak da hatalı sonuç verir — önce bu tool ile username bul, sonra Sherlock kullan.',
+        'Start an investigation using a real name. Performs a reverse lookup in the graph (Person node → Username/Email), derives possible usernames, and searches the web. IMPORTANT: False positive risk is high for common names — provide extra context (city, institution, profession). Running Sherlock with a full name also produces false results — find the username with this tool first, then use Sherlock.',
       parameters: {
         type: 'object',
         properties: {
-          name: { type: 'string', description: 'Araştırılan kişinin gerçek ismi (Örn: "Berkay Hasırcı")' },
-          context: { type: 'string', description: 'Opsiyonel bağlam: meslek, şehir, kurum (Örn: "İstanbul yazılımcı")' },
+          name: { type: 'string', description: 'Real name of the person being investigated (e.g. "John Doe")' },
+          context: { type: 'string', description: 'Optional context: profession, city, institution (e.g. "Istanbul software developer")' },
         },
         required: ['name'],
       },
@@ -688,15 +688,15 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'check_plagiarism',
       description:
-        'Akademik metin, makale bölümü veya abstract üzerinde intihal/şatekarlık analizi ve/veya özgünlük değerlendirmesi yapar.\n\nmod seçenekleri:\n- "plagiarism" (varsayılan): Metin kopyası tespiti — Jaccard benzerlik, CrossRef/Semantic Scholar karşılaştırması, web exact-phrase arama.\n- "originality": Özgünlük değerlendirmesi — zaman önceliği (prior art), kavramsal yenilik (TF-IDF), dergi güvenilirliği (DOAJ/predatory kontrolü), atıf pattern analizi.\n- "full": İntihal + özgünlük birlikte.\n\nBulgular Neo4j\'e (:Publication)-[:SIMILAR_TO {score}]->(:Publication) olarak kaydedilir. "Bu makale intihal mi?", "Bu makale özgün mü?", "Bu dergi güvenilir mi?", "Bu yazar self-plagiarism yapıyor mu?" sorularında kullan.',
+        'Performs plagiarism/authorship analysis and/or originality assessment on an academic text, paper section, or abstract.\n\nmode options:\n- "plagiarism" (default): Text copy detection — Jaccard similarity, CrossRef/Semantic Scholar comparison, web exact-phrase search.\n- "originality": Originality evaluation — temporal precedence (prior art), conceptual novelty (TF-IDF), journal credibility (DOAJ/predatory check), citation pattern analysis.\n- "full": Plagiarism + originality together.\n\nFindings are saved to Neo4j as (:Publication)-[:SIMILAR_TO {score}]->(:Publication). Use for questions like "Is this paper plagiarized?", "Is this paper original?", "Is this journal trustworthy?", "Is this author self-plagiarizing?".',
       parameters: {
         type: 'object',
         properties: {
-          text: { type: 'string', description: 'İncelenecek metin (abstract, makale bölümü veya tam metin)' },
-          mode: { type: 'string', enum: ['plagiarism', 'originality', 'full'], description: 'Analiz modu. Varsayılan: "plagiarism". Özgünlük için "originality", her ikisi için "full".' },
-          author: { type: 'string', description: 'Yazar adı soyadı — self-plagiarism tespiti için (opsiyonel)' },
-          title: { type: 'string', description: 'Makalenin başlığı — CrossRef metadata araması için (opsiyonel)' },
-          doi: { type: 'string', description: 'Makalenin DOI\'si — metadata araması için (opsiyonel, Örn: "10.1016/j.jss.2023.111234")' },
+          text: { type: 'string', description: 'Text to analyze (abstract, paper section, or full text)' },
+          mode: { type: 'string', enum: ['plagiarism', 'originality', 'full'], description: 'Analysis mode. Default: "plagiarism". Use "originality" for originality check, "full" for both.' },
+          author: { type: 'string', description: 'Author full name — for self-plagiarism detection (optional)' },
+          title: { type: 'string', description: 'Paper title — for CrossRef metadata lookup (optional)' },
+          doi: { type: 'string', description: 'Paper DOI — for metadata lookup (optional, e.g. "10.1016/j.jss.2023.111234")' },
         },
         required: ['text'],
       },
@@ -707,13 +707,13 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: 'generate_report',
       description:
-        'Araştırma tamamlandıktan sonra tüm bulguları yapılandırılmış Markdown raporu olarak dosyaya kaydeder.\n\n🟣 OBSİDİAN SYNC: Bu araç her çalıştığında rapor OTOMATIK OLARAK Obsidian vault\'una kopyalanır:\n→ /home/berkayhsrt/Agent_Knowladges/OSINT/OSINT-Agent/04 - Araştırma Raporları/\nBu kod seviyesinde aktif bir entegrasyondur (syncToObsidian). Kullanıcı Obsidian vault\'unu açtığında rapor hazır olarak bulunur.\n\nreportType seçenekleri:\n- "osint" (varsayılan): Kişi/username araştırması — Neo4j grafından profil/email/sızıntı/platform verisini çeker.\n- "academic": Makale/konu araştırması — AcademicAgent raporu bittikten sonra kullan.\n- "factcheck": Haber/görsel doğrulama — MediaAgent raporu bittikten sonra kullan.\n\nKullanıcı "rapor oluştur" / "rapor ver" / "kaydet" dediğinde ya da bir alt-ajan tamamlandığında HEMEN çağır.\n⚠️ SADECE subject ve reportType gönder — içerik dahili buffer\'dan otomatik okunur, additionalFindings GÖNDERME.',
+        'Saves all findings as a structured Markdown report file after an investigation is complete.\n\n🟣 OBSIDIAN SYNC: Every time this tool runs the report is AUTOMATICALLY copied to the Obsidian vault:\n→ $OBSIDIAN_VAULT/04 - Research Reports/\nThis is an active code-level integration (syncToObsidian). The report will be ready when the user opens their Obsidian vault.\n\nreportType options:\n- "osint" (default): Person/username investigation — pulls profile/email/breach/platform data from the Neo4j graph.\n- "academic": Paper/topic research — use after AcademicAgent finishes.\n- "factcheck": News/image verification — use after MediaAgent finishes.\n\nCall IMMEDIATELY when the user says "generate report" / "give report" / "save", or when a sub-agent completes.\n⚠️ Send ONLY subject and reportType — content is read automatically from the internal buffer, do NOT send additionalFindings.',
       parameters: {
         type: 'object',
         properties: {
-          subject: { type: 'string', description: 'Araştırılan konu, kişi veya entity (username, makale konusu, iddia metni vb.)' },
-          reportType: { type: 'string', enum: ['osint', 'academic', 'factcheck'], description: 'Rapor tipi. Makale/akademik çalışma için "academic", görsel/haber doğrulama için "factcheck", kişi OSINT için "osint" (varsayılan).' },
-          title: { type: 'string', description: 'Opsiyonel rapor başlığı' },
+          subject: { type: 'string', description: 'The subject, person, or entity being investigated (username, paper topic, claim text, etc.)' },
+          reportType: { type: 'string', enum: ['osint', 'academic', 'factcheck'], description: 'Report type. Use "academic" for paper/academic research, "factcheck" for image/news verification, "osint" for person investigation (default).' },
+          title: { type: 'string', description: 'Optional report title' },
         },
         required: ['subject'],
       },
@@ -737,18 +737,18 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
       },
     },
   },
-  // ─── Obsidian Vault Araçları ─────────────────────────────────────────────
+  // ─── Obsidian Vault Tools ─────────────────────────────────────────────
   {
     type: 'function',
     function: {
       name: 'obsidian_write',
-      description: 'Obsidian vault\'unda bir not oluştur veya güncelle. Agent\'ın kendi bilgi tabanına kayıt açar. Vault kökü: Agent_Knowladges/OSINT/OSINT-Agent/. Örnek yollar: "07 - Notlar/kullanici-tercihleri.md", "08 - Profiller/torvalds.md"',
+      description: 'Create or update a note in the Obsidian vault. Opens a record in the agent\'s own knowledge base. Vault root: Agent_Knowladges/OSINT/OSINT-Agent/. Example paths: "07 - Notlar/user-preferences.md", "08 - Profiller/torvalds.md"',
       parameters: {
         type: 'object',
         properties: {
-          note_path: { type: 'string', description: 'Vault\'a göre göreli dosya yolu (örn: "07 - Notlar/önemli-bulgular.md")' },
-          content: { type: 'string', description: 'Notun tam Markdown içeriği' },
-          overwrite: { type: 'boolean', description: 'true → üzerine yaz (varsayılan), false → sadece yoksa oluştur' },
+          note_path: { type: 'string', description: 'Relative file path from the Vault root (e.g. "07 - Notlar/important-findings.md")' },
+          content: { type: 'string', description: 'Full Markdown content of the note' },
+          overwrite: { type: 'boolean', description: 'true → overwrite (default), false → only create if it does not exist' },
         },
         required: ['note_path', 'content'],
       },
@@ -758,12 +758,12 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'obsidian_append',
-      description: 'Obsidian vault\'undaki mevcut bir notun sonuna içerik ekle. Günlük defteri güncellemeleri, araştırma notları ve önemli bulgular için kullan.',
+      description: 'Append content to the end of an existing note in the Obsidian vault. Use for daily log updates, research notes, and important findings.',
       parameters: {
         type: 'object',
         properties: {
-          note_path: { type: 'string', description: 'Vault\'a göre göreli dosya yolu' },
-          content: { type: 'string', description: 'Eklenecek Markdown içerik' },
+          note_path: { type: 'string', description: 'Relative file path from the Vault root' },
+          content: { type: 'string', description: 'Markdown content to append' },
         },
         required: ['note_path', 'content'],
       },
@@ -773,11 +773,11 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'obsidian_read',
-      description: 'Obsidian vault\'undaki bir notu oku. Önceki notlar, kullanıcı tercihleri veya araştırma bağlamını hatırlamak için kullan.',
+      description: 'Read a note from the Obsidian vault. Use to recall previous notes, user preferences, or research context.',
       parameters: {
         type: 'object',
         properties: {
-          note_path: { type: 'string', description: 'Vault\'a göre göreli dosya yolu' },
+          note_path: { type: 'string', description: 'Relative file path from the Vault root' },
         },
         required: ['note_path'],
       },
@@ -787,12 +787,12 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'obsidian_daily',
-      description: 'Bugünün günlük defterine kayıt ekle (06 - Günlük/YYYY-MM-DD.md). Önemli bulguları, kullanıcı tercihlerini, gözlemleri ve hatırlatmaları buraya yaz. Dosya yoksa otomatik oluşturur.',
+      description: 'Add an entry to today\'s daily log (06 - Günlük/YYYY-MM-DD.md). Write important findings, user preferences, observations, and reminders here. Creates the file automatically if it does not exist.',
       parameters: {
         type: 'object',
         properties: {
-          entry: { type: 'string', description: 'Günlüğe eklenecek metin (Markdown)' },
-          tag: { type: 'string', description: 'Opsiyonel etiket: "araştırma" | "kullanıcı-tercihi" | "gözlem" | "hatırlatma"' },
+          entry: { type: 'string', description: 'Text to add to the daily log (Markdown)' },
+          tag: { type: 'string', description: 'Optional tag: "research" | "user-pref" | "observation" | "reminder"' },
         },
         required: ['entry'],
       },
@@ -802,16 +802,16 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'obsidian_write_profile',
-      description: 'Araştırılan kişi için yapılandırılmış profil sayfası oluştur (08 - Profiller/[username].md). Frontmatter metadata + Markdown özet. Kişi araştırması tamamlandığında veya önemli bulgular elde edildiğinde kullan. Obsidian wikilink [[username]] ile diğer profillere bağlantı kur.',
+      description: 'Create a structured profile page for the investigated person (08 - Profiller/[username].md). Frontmatter metadata + Markdown summary. Use when a person investigation is complete or significant findings are obtained. Link to other profiles with Obsidian wikilinks [[username]].',
       parameters: {
         type: 'object',
         properties: {
-          username: { type: 'string', description: 'Profil sahibi username veya identifier' },
-          content: { type: 'string', description: 'Profil içeriği (Markdown). Sections: ## Kimlik, ## Platformlar, ## Bulgular, vs.' },
-          real_name: { type: 'string', description: 'Gerçek isim (biliniyorsa)' },
-          emails: { type: 'string', description: 'Email adresleri (virgülle ayrılmış)' },
-          platforms: { type: 'string', description: 'Bulunduğu platformlar (virgülle ayrılmış)' },
-          confidence: { type: 'string', description: 'Güvenilirlik: verified | high | medium | low', enum: ['verified', 'high', 'medium', 'low'] },
+          username: { type: 'string', description: 'Profile owner username or identifier' },
+          content: { type: 'string', description: 'Profile content (Markdown). Sections: ## Identity, ## Platforms, ## Findings, etc.' },
+          real_name: { type: 'string', description: 'Real name (if known)' },
+          emails: { type: 'string', description: 'Email addresses (comma-separated)' },
+          platforms: { type: 'string', description: 'Platforms found on (comma-separated)' },
+          confidence: { type: 'string', description: 'Confidence level: verified | high | medium | low', enum: ['verified', 'high', 'medium', 'low'] },
         },
         required: ['username', 'content'],
       },
@@ -821,11 +821,11 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'obsidian_list',
-      description: 'Obsidian vault\'undaki bir dizinin içeriğini listele. Mevcut notları keşfetmek veya vault yapısını görmek için kullan.',
+      description: 'List the contents of a directory in the Obsidian vault. Use to explore existing notes or view the vault structure.',
       parameters: {
         type: 'object',
         properties: {
-          dir: { type: 'string', description: 'Listelenecek dizin (göreli yol). Boş bırakılırsa vault kökü listelenir.' },
+          dir: { type: 'string', description: 'Directory to list (relative path). Leave empty to list the vault root.' },
         },
         required: [],
       },
@@ -835,12 +835,12 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'obsidian_search',
-      description: 'Obsidian vault\'unda tam metin arama yap. Tüm .md dosyalarını tarar, eşleşen dosyaları ve bağlam satırlarını döndürür. Önceki araştırmaları, profil notlarını veya kullanıcı tercihlerini bulmak için kullan. Örnek: "torvalds", "GitHub", "kullanıcı-tercihi"',
+      description: 'Perform full-text search in the Obsidian vault. Scans all .md files and returns matching files with context lines. Use to find previous research, profile notes, or user preferences. Example: "torvalds", "GitHub", "user-pref"',
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: 'Aranacak anahtar kelime veya ifade (case-insensitive)' },
-          limit: { type: 'number', description: 'Maksimum sonuç sayısı (varsayılan: 10)' },
+          query: { type: 'string', description: 'Keyword or phrase to search for (case-insensitive)' },
+          limit: { type: 'number', description: 'Maximum number of results (default: 10)' },
         },
         required: ['query'],
       },
@@ -851,13 +851,13 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
 // ─── Tool Executors ──────────────────────────────────────────────────
 async function runSherlock(username: string): Promise<string> {
   if (!isLikelyUsernameCandidate(username)) {
-    return `Sherlock yalnızca username/handle aramaları için uygundur. "${username}" boşluk içeriyor; bu bir gerçek isim gibi görünüyor ve yanlış pozitif üretebilir.`
+    return `Sherlock is only suitable for username/handle searches. "${username}" contains a space; this looks like a real name and may produce false positives.`
   }
 
-  const SHERLOCK_BIN = process.env.SHERLOCK_BIN || '/home/berkayhsrt/anaconda3/bin/sherlock'
+  const SHERLOCK_BIN = process.env.SHERLOCK_BIN || 'sherlock'
   return new Promise((resolve) => {
-    logger.info('TOOL', `🌐 Sherlock ${username} için taranıyor...`)
-    logger.info('TOOL', '(Bu işlem 1-2 dk sürebilir)')
+    logger.info('TOOL', `🌐 Scanning Sherlock for ${username}...`)
+    logger.info('TOOL', '(This may take 1-2 minutes)')
     const proc = spawn(
       SHERLOCK_BIN,
       [
@@ -872,9 +872,9 @@ async function runSherlock(username: string): Promise<string> {
     proc.stderr.on('data', () => {})
     proc.on('close', async () => {
       const lines = out.split('\n').filter((l) => l.startsWith('[+'))
-      logger.info('TOOL', `✅ Sherlock: ${lines.length} platform bulundu`)
+      logger.info('TOOL', `✅ Sherlock: ${lines.length} platforms found`)
 
-      // Grafa yaz
+      // Write to graph
       try {
         const platforms = lines.map((l) => {
           const urlMatch = l.match(/https?:\/\/[^\s]+/)
@@ -882,9 +882,9 @@ async function runSherlock(username: string): Promise<string> {
           return { platform: nameMatch?.[1]?.trim() || 'unknown', url: urlMatch?.[0] || '' }
         }).filter(p => p.url)
         const stats = await writeOsintToGraph(username, { platforms }, 'sherlock')
-        logger.info('GRAPH', `💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`)
+        logger.info('GRAPH', `💾 Written to graph: ${stats.nodesCreated} nodes, ${stats.relsCreated} relationships`)
       } catch (e) {
-        logger.warn('GRAPH', '⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)')
+        logger.warn('GRAPH', '⚠️  Graph write skipped (Neo4j connection may be unavailable)')
       }
 
       resolve(out || 'No results found.')
@@ -894,15 +894,15 @@ async function runSherlock(username: string): Promise<string> {
 }
 
 async function runGithubOsint(username: string, deep = false): Promise<string> {
-  logger.info('TOOL', `🐙 GitHub API OSINT: ${username}${deep ? ' (DEEP MOD)' : ''}...`)
+  logger.info('TOOL', `🐙 GitHub API OSINT: ${username}${deep ? ' (DEEP MODE)' : ''}...`)
   const result = await githubOsint(username, deep)
   if (result.error) {
     logger.error('TOOL', `❌ ${result.error}`)
     return result.error
   }
-  logger.info('TOOL', `✅ GitHub OSINT: ${result.emails.length} email bulundu`)
+  logger.info('TOOL', `✅ GitHub OSINT: ${result.emails.length} emails found`)
 
-  // Grafa yaz
+  // Write to graph
   try {
     const profile = result.profile as Record<string, string | null>
     const stats = await writeOsintToGraph(username, {
@@ -918,33 +918,48 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
         url: acc.url
       })),
     }, 'github_api')
-    logger.info('GRAPH', `💾 Grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`)
+    logger.info('GRAPH', `💾 Written to graph: ${stats.nodesCreated} nodes, ${stats.relsCreated} relationships`)
   } catch {
-    logger.warn('GRAPH', '⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)')
+    logger.warn('GRAPH', '⚠️  Graph write skipped (Neo4j connection may be unavailable)')
   }
 
-  // Deep mod: following bağlantılarını grafa yaz
+  // Deep mode: write following connections to graph
   if (result.following.length > 0) {
     const realPeople = result.following.filter(f => !f.skipped)
-    logger.info('TOOL', `🔍 Following analizi: ${realPeople.length} gerçek kişi (${result.following.length - realPeople.length} atlandı)`)
+    logger.info('TOOL', `🔍 Following analysis: ${realPeople.length} real people (${result.following.length - realPeople.length} skipped)`)
     try {
       const stats = await writeFollowingConnections(username, result.following, 'github_api')
-      logger.info('GRAPH', `💾 Following grafa yazıldı: ${stats.nodesCreated} node, ${stats.relsCreated} ilişki`)
+      logger.info('GRAPH', `💾 Following written to graph: ${stats.nodesCreated} nodes, ${stats.relsCreated} relationships`)
     } catch {
-      logger.warn('GRAPH', '⚠️  Following graf yazma atlandı')
+      logger.warn('GRAPH', '⚠️  Following graph write skipped')
     }
   }
 
   return result.rawSummary
 }
 
-  // Session bazlı önbellekleme (Caching) yapısı: Aynı aramaların tekrar tekrar yapılmasını önler.
+  // Session-based caching: prevents repeated calls with the same arguments.
   const toolCache = new Map<string, string>();
+
+  // Tool name alias mapping — handles common model typos
+  const TOOL_ALIASES: Record<string, string> = {
+    'web_search': 'search_web',
+    'search_internet': 'search_web',
+    'web_search_multi': 'search_web_multi',
+    'search_webpage': 'web_fetch',
+    'fetch_url': 'web_fetch',
+    'fetch_page': 'web_fetch',
+    'reverse_image': 'reverse_image_search',
+    'image_reverse_search': 'reverse_image_search',
+    'check_plagiarism': 'check_plagiarism',
+  };
 
   export async function executeTool(
     name: string,
     args: Record<string, string>
   ): Promise<string> {
+    // Resolve alias — if model called a non-existent tool, try the canonical name
+    name = TOOL_ALIASES[name] ?? name;
     const cacheableTools = new Set([
       'run_sherlock', 'run_maigret', 'run_github_osint', 'cross_reference', 'extract_metadata',
       'parse_gpg_key', 'wayback_search', 'web_fetch', 'check_email_registrations',
@@ -953,14 +968,14 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     ]);
 
     const cacheKey = `${name}:${JSON.stringify(args)}`;
-    
+
     if (cacheableTools.has(name) && toolCache.has(cacheKey)) {
-      logger.debug('TOOL', `⚡ [Cache Hit] ${name} (${JSON.stringify(args)}) hafızadan getirildi. Tekrar çalıştırılmadı.`);
-      return `[⚡ ZATEN OKUNDU — Bu araç daha önce aynı parametrelerle çağrıldı. Aşağıdaki sonuç hafızadan geldi, tekrar çağırman gerekmez — bu veriyi kullanarak ilerle.]\n\n` + toolCache.get(cacheKey)!;
+      logger.debug('TOOL', `⚡ [Cache Hit] ${name} (${JSON.stringify(args)}) retrieved from cache. Not re-executed.`);
+      return `[⚡ ALREADY FETCHED — This tool was already called with the same parameters. The result below is from cache; no need to call it again — proceed using this data.]\n\n` + toolCache.get(cacheKey)!;
     }
 
     let result = '';
-    
+
     if (name === 'run_sherlock') result = await runSherlock(args.username)
     else if (name === 'run_maigret') {
       const maigretResult = await runMaigret(args.username, args.top_sites ? Number(args.top_sites) : 500)
@@ -989,20 +1004,20 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     else if (name === 'remove_false_positive') result = await runRemoveFalsePositive(args.label, args.value)
     else if (name === 'mark_false_positive') {
       const mlLabel = args.ml_label as 'false_positive' | 'verified' | 'uncertain'
-      logger.info('TOOL', `🏷️  ML etiket: ${args.label}:${args.value} → ${mlLabel}`)
+      logger.info('TOOL', `🏷️  ML label: ${args.label}:${args.value} → ${mlLabel}`)
       try {
         const updated = await markNodeMlLabel(args.label, args.value, mlLabel, args.reason)
         if (updated) {
-          result = `✅ Node etiketlendi: ${args.label}:${args.value} → mlLabel="${mlLabel}"${args.reason ? ` (${args.reason})` : ''}. Node graf'ta korunuyor — GNN eğitiminde ${mlLabel === 'false_positive' ? 'negatif örnek' : mlLabel === 'verified' ? 'pozitif örnek' : 'dışlanmış'} olarak kullanılacak.`
+          result = `✅ Node labeled: ${args.label}:${args.value} → mlLabel="${mlLabel}"${args.reason ? ` (${args.reason})` : ''}. Node is retained in graph — will be used as ${mlLabel === 'false_positive' ? 'negative example' : mlLabel === 'verified' ? 'positive example' : 'excluded'} in GNN training.`
         } else {
-          result = `⚠️ Node bulunamadı: ${args.label}:${args.value} — graf'ta mevcut değil.`
+          result = `⚠️ Node not found: ${args.label}:${args.value} — not present in graph.`
         }
       } catch (e: any) {
-        result = `❌ Etiketleme hatası: ${e.message}`
+        result = `❌ Labeling error: ${e.message}`
       }
     }
         else if (name === 'fact_check_to_graph') {
-      logger.info('TOOL', `🧠 Fact Check Kaydı (Neo4j): ${args.claimId}`)
+      logger.info('TOOL', `🧠 Fact Check Record (Neo4j): ${args.claimId}`)
       try {
         await writeFactCheckToGraph({
            claimId: args.claimId,
@@ -1014,27 +1029,27 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
            imageUrl: args.imageUrl,
            tags: args.tags ? JSON.parse(args.tags) : []
         });
-        result = `✅ Fact-Check sonucu Neo4j Veri Grafiğine başarıyla kaydedildi! (Claim ID: ${args.claimId})`;
+        result = `✅ Fact-Check result successfully saved to Neo4j Data Graph! (Claim ID: ${args.claimId})`;
       } catch (e: any) {
-        result = `❌ Graph kaydetme hatası: ${e.message}`;
+        result = `❌ Graph save error: ${e.message}`;
       }
     }
     else if (name === 'analyze_gpx') {
       const files = args.files.split(',').map((f: string) => f.trim()).filter(Boolean)
-      logger.info('TOOL', `📍 GPX analizi: ${files.length} dosya`)
+      logger.info('TOOL', `📍 GPX analysis: ${files.length} files`)
       try {
         const gpxResult = await analyzeGpxFiles(files)
         result = formatGpxResult(gpxResult)
       } catch (e: any) {
-        result = `❌ GPX analiz hatası: ${e.message}`
+        result = `❌ GPX analysis error: ${e.message}`
       }
     }
     else if (name === 'batch_save_findings') {
       const findings = args.findings
       if (!Array.isArray(findings) || findings.length === 0) {
-        result = '❌ findings boş veya geçersiz — en az 1 bulgu gerekli.'
+        result = '❌ findings is empty or invalid — at least 1 finding is required.'
       } else {
-        logger.info('TOOL', `💾 Toplu bulgu kaydı (Neo4j): ${findings.length} bulgu`)
+        logger.info('TOOL', `💾 Batch findings write (Neo4j): ${findings.length} findings`)
         try {
           const stats = await batchWriteFindings(
             findings.map((f: Record<string, string>) => ({
@@ -1047,18 +1062,18 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
               evidence: f.evidence,
             }))
           )
-          const parts = [`✅ ${findings.length} bulgu toplu olarak Neo4j grafına yazıldı. (${stats.nodesCreated} node, ${stats.relsCreated} ilişki)`]
+          const parts = [`✅ ${findings.length} findings written to Neo4j graph in batch. (${stats.nodesCreated} nodes, ${stats.relsCreated} relationships)`]
           if (stats.errors.length > 0) {
-            parts.push(`⚠️ ${stats.errors.length} hata: ${stats.errors.join('; ')}`)
+            parts.push(`⚠️ ${stats.errors.length} errors: ${stats.errors.join('; ')}`)
           }
           result = parts.join('\n')
         } catch (e: any) {
-          result = `❌ Toplu graf yazma hatası: ${e.message}`
+          result = `❌ Batch graph write error: ${e.message}`
         }
       }
     }
     else if (name === 'save_finding') {
-      logger.info('TOOL', `💾 Bulgu kaydediliyor (Neo4j): ${args.subject_label}:${args.subject_value} -[${args.relation}]-> ${args.target_label}:${args.target_value}`)
+      logger.info('TOOL', `💾 Saving finding (Neo4j): ${args.subject_label}:${args.subject_value} -[${args.relation}]-> ${args.target_label}:${args.target_value}`)
       try {
         const stats = await writeFinding(args.subject_label, args.subject_value, {
           type: args.finding_type as 'identity' | 'location' | 'affiliation' | 'alias' | 'association',
@@ -1068,13 +1083,13 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
           confidence: (args.confidence as any) ?? 'medium',
           evidence: args.evidence,
         })
-        result = `✅ Bulgu Neo4j grafına kaydedildi. (${stats.nodesCreated} node, ${stats.relsCreated} ilişki oluşturuldu)`
+        result = `✅ Finding saved to Neo4j graph. (${stats.nodesCreated} nodes, ${stats.relsCreated} relationships created)`
       } catch (e: any) {
-        result = `❌ Graf yazma hatası: ${e.message}`
+        result = `❌ Graph write error: ${e.message}`
       }
     }
     else if (name === 'save_ioc') {
-      logger.info('TOOL', `🛡️  IOC kaydediliyor (Neo4j): ${args.node_type}:${args.value}`)
+      logger.info('TOOL', `🛡️  Saving IOC (Neo4j): ${args.node_type}:${args.value}`)
       try {
         const props: Record<string, string> = {}
         if (args.properties && typeof args.properties === 'object') {
@@ -1084,13 +1099,13 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
           ? { label: args.linked_label, value: args.linked_value, relation: args.linked_relation }
           : undefined
         const stats = await writeCybersecurityNode(args.node_type, args.value, props, linkedTo)
-        result = `✅ IOC Neo4j grafına kaydedildi. (${stats.nodesCreated} node, ${stats.relsCreated} ilişki oluşturuldu)`
+        result = `✅ IOC saved to Neo4j graph. (${stats.nodesCreated} nodes, ${stats.relsCreated} relationships created)`
       } catch (e: any) {
-        result = `❌ Graf yazma hatası: ${e.message}`
+        result = `❌ Graph write error: ${e.message}`
       }
     }
     else if (name === 'link_entities') {
-      logger.info('TOOL', `🔗 Varlıklar ilişkilendiriliyor (Neo4j): ${args.from_label}:${args.from_value} -[${args.relation}]-> ${args.to_label}:${args.to_value}`)
+      logger.info('TOOL', `🔗 Linking entities (Neo4j): ${args.from_label}:${args.from_value} -[${args.relation}]-> ${args.to_label}:${args.to_value}`)
       try {
         const stats = await linkEntities(
           args.from_label, args.from_value,
@@ -1098,9 +1113,9 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
           args.relation,
           { evidence: args.evidence, confidence: (args.confidence as any) ?? 'medium' }
         )
-        result = `✅ Varlıklar ilişkilendirildi. (${stats.nodesCreated} node, ${stats.relsCreated} ilişki oluşturuldu)`
+        result = `✅ Entities linked. (${stats.nodesCreated} nodes, ${stats.relsCreated} relationships created)`
       } catch (e: any) {
-        result = `❌ Graf yazma hatası: ${e.message}`
+        result = `❌ Graph write error: ${e.message}`
       }
     }
     else if (name === 'reverse_image_search') {
@@ -1109,26 +1124,26 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       result = formatReverseImageResult(res)
     }
     else if (name === 'compare_images_phash') {
-      logger.info('TOOL', `🧩 pHash Karşılaştırması: ${args.url1} vs ${args.url2}`)
+      logger.info('TOOL', `🧩 pHash Comparison: ${args.url1} vs ${args.url2}`)
       result = await compareImages(args.url1, args.url2)
     }
     else if (name === 'auto_visual_intel') {
       const urls = (args.profile_urls || '').split(',').map((u: string) => u.trim()).filter(Boolean)
-      logger.info('TOOL', `🖼️ Otomatik Görsel İstihbarat: ${urls.length} profil`)
+      logger.info('TOOL', `🖼️ Auto Visual Intel: ${urls.length} profiles`)
       result = await autoVisualIntel(urls)
     }
     else if (name === 'add_custom_node') {
-      logger.info('TOOL', `➕ Özel düğüm ekleniyor: ${args.label}`);
+      logger.info('TOOL', `➕ Adding custom node: ${args.label}`);
       const res = await addCustomNodeTool({ label: args.label, properties: args.properties as any });
       result = JSON.stringify(res);
     }
     else if (name === 'delete_custom_node') {
-      logger.info('TOOL', `➖ Özel düğüm siliniyor: ${args.label} (${args.matchKey}: ${args.matchValue})`);
+      logger.info('TOOL', `➖ Deleting custom node: ${args.label} (${args.matchKey}: ${args.matchValue})`);
       const res = await deleteCustomNodeTool({ label: args.label, matchKey: args.matchKey, matchValue: args.matchValue });
       result = JSON.stringify(res);
     }
     else if (name === 'add_custom_relationship') {
-      logger.info('TOOL', `🔗 Özel ilişki ekleniyor: ${args.sourceLabel} -[${args.relationshipType}]-> ${args.targetLabel}`);
+      logger.info('TOOL', `🔗 Adding custom relationship: ${args.sourceLabel} -[${args.relationshipType}]-> ${args.targetLabel}`);
       const res = await addCustomRelationshipTool({
         sourceLabel: args.sourceLabel,
         sourceKey: args.sourceKey,
@@ -1141,10 +1156,10 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       result = JSON.stringify(res);
     }
     else if (name === 'search_researcher_papers') {
-      logger.info('TOOL', `👤 Araştırmacı Arama (Semantic Scholar): ${args.name}`)
+      logger.info('TOOL', `👤 Researcher Search (Semantic Scholar): ${args.name}`)
       const authorResult = await searchAuthorPapers(args.name, args.affiliation)
       result = formatAuthorResult(authorResult)
-      // Graf'a yaz — AuthorPaper'ı AcademicPaper formatına çevir
+      // Write to graph — convert AuthorPaper to AcademicPaper format
       if (authorResult.author && authorResult.author.papers.length > 0) {
         try {
           const { getDriver } = await import('./neo4j.js')
@@ -1166,19 +1181,19 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
             totalCitations: p.citationCount,
           }))
           const stats = await writeAcademicPapersToGraph(papers, args.name, neo4jWrite)
-          logger.info('GRAPH', `💾 Grafa yazıldı: ${stats.papersCreated} makale, ${stats.authorsLinked} yazar bağlantısı`)
-          result += `\n\n💾 Neo4j Graf: ${stats.papersCreated} Paper node, ${stats.authorsLinked} AUTHORED_BY ilişkisi oluşturuldu.`
+          logger.info('GRAPH', `💾 Written to graph: ${stats.papersCreated} papers, ${stats.authorsLinked} author links`)
+          result += `\n\n💾 Neo4j Graph: ${stats.papersCreated} Paper nodes, ${stats.authorsLinked} AUTHORED_BY relationships created.`
         } catch {
-          logger.warn('GRAPH', '⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)')
+          logger.warn('GRAPH', '⚠️  Graph write skipped (Neo4j connection may be unavailable)')
         }
       }
     }
     else if (name === 'generate_report') {
-      logger.info('TOOL', `📄 Rapor oluşturuluyor [${args.reportType || 'osint'}]: ${args.subject}`)
-      // additionalFindings yoksa buffer'dan oku (model JSON encode edemediyse fallback)
+      logger.info('TOOL', `📄 Generating report [${args.reportType || 'osint'}]: ${args.subject}`)
+      // If additionalFindings is absent, read from buffer (fallback when model can't JSON encode)
       const findings = args.additionalFindings || _reportContentBuffer || undefined;
       if (!args.additionalFindings && _reportContentBuffer) {
-        logger.debug('TOOL', `ℹ️  additionalFindings argümanı yoktu — dahili buffer kullanıldı (${_reportContentBuffer.length} karakter)`);
+        logger.debug('TOOL', `ℹ️  additionalFindings argument was missing — used internal buffer (${_reportContentBuffer.length} chars)`);
       }
       try {
         const reportResult = await generateOsintReport({
@@ -1187,11 +1202,11 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
           title: args.title,
           additionalFindings: findings,
         })
-        logger.info('TOOL', `✅ Rapor kaydedildi: ${reportResult.filePath}`)
+        logger.info('TOOL', `✅ Report saved: ${reportResult.filePath}`)
         result = [
-          `✅ **Rapor başarıyla oluşturuldu!**`,
+          `✅ **Report generated successfully!**`,
           ``,
-          `📁 **Dosya:** \`${reportResult.filePath}\``,
+          `📁 **File:** \`${reportResult.filePath}\``,
           ``,
           `---`,
           ``,
@@ -1199,13 +1214,13 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
         ].join('\n')
       } catch (e) {
         const msg = (e as Error).message
-        logger.error('TOOL', `❌ Rapor hatası: ${msg}`)
-        result = `❌ Rapor oluşturma hatası: ${msg}`
+        logger.error('TOOL', `❌ Report error: ${msg}`)
+        result = `❌ Report generation error: ${msg}`
       }
     }
     else if (name === 'check_plagiarism') {
-      const label = args.title ?? args.doi ?? args.author ?? 'metin'
-      logger.info('TOOL', `🔬 İntihal Analizi: ${label}`)
+      const label = args.title ?? args.doi ?? args.author ?? 'text'
+      logger.info('TOOL', `🔬 Plagiarism Analysis: ${label}`)
       try {
         const report = await checkPlagiarism({
           text: args.text,
@@ -1215,23 +1230,23 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
           doi: args.doi,
         })
         const riskEmoji = { clean: '🟢', low: '🔵', medium: '🟡', high: '🔴', critical: '🚨' }[report.overallRisk]
-        logger.info('TOOL', `✅ Analiz tamamlandı: ${riskEmoji} ${report.overallRisk.toUpperCase()} — ${report.matches.length} eşleşme`)
+        logger.info('TOOL', `✅ Analysis complete: ${riskEmoji} ${report.overallRisk.toUpperCase()} — ${report.matches.length} matches`)
         result = report.markdown
       } catch (e) {
         const msg = (e as Error).message
-        logger.error('TOOL', `❌ İntihal analizi hatası: ${msg}`)
-        result = `❌ İntihal analizi hatası: ${msg}`
+        logger.error('TOOL', `❌ Plagiarism analysis error: ${msg}`)
+        result = `❌ Plagiarism analysis error: ${msg}`
       }
     }
     else if (name === 'search_academic_papers') {
       const maxResults = parseInt(args.maxResults ?? '10') || 10
       const sortBy = (args.sortBy as 'relevance' | 'submittedDate' | 'lastUpdatedDate') ?? 'submittedDate'
-      logger.info('TOOL', `🔬 Akademik Araştırma (arXiv + Semantic Scholar): ${args.query}`)
+      logger.info('TOOL', `🔬 Academic Search (arXiv + Semantic Scholar): ${args.query}`)
       const searchResult = await searchAcademicPapers(args.query, maxResults, sortBy)
       const ssNote = (searchResult as AcademicSearchResult & { _ssNote?: string })._ssNote
       if (ssNote) logger.debug('TOOL', ssNote)
       result = formatAcademicResult(searchResult)
-      // Graf'a yaz
+      // Write to graph
       try {
         const { getDriver } = await import('./neo4j.js')
         const driver = getDriver()
@@ -1240,15 +1255,15 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
           try { await session.run(query, params) } finally { await session.close() }
         }
         const stats = await writeAcademicPapersToGraph(searchResult.papers, args.query, neo4jWrite)
-        logger.info('GRAPH', `💾 Grafa yazıldı: ${stats.papersCreated} makale, ${stats.authorsLinked} yazar bağlantısı`)
-        result += `\n\n💾 Neo4j Graf: ${stats.papersCreated} Paper node, ${stats.authorsLinked} AUTHORED_BY ilişkisi oluşturuldu.`
+        logger.info('GRAPH', `💾 Written to graph: ${stats.papersCreated} papers, ${stats.authorsLinked} author links`)
+        result += `\n\n💾 Neo4j Graph: ${stats.papersCreated} Paper nodes, ${stats.authorsLinked} AUTHORED_BY relationships created.`
       } catch {
-        logger.warn('GRAPH', '⚠️  Graf yazma atlandı (Neo4j bağlantısı yok olabilir)')
+        logger.warn('GRAPH', '⚠️  Graph write skipped (Neo4j connection may be unavailable)')
       }
     }
     else if (name === 'obsidian_write') {
       const overwrite = String(args.overwrite) !== 'false'
-      logger.info('OBSIDIAN', `🟣 Obsidian'a yazılıyor: ${args.note_path}`)
+      logger.info('OBSIDIAN', `🟣 Writing to Obsidian: ${args.note_path}`)
       result = await obsidianWrite(args.note_path, args.content, overwrite)
       logger.info('OBSIDIAN', result)
     }

@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * cli.ts — `osint` global komutu için giriş noktası
+ * cli.ts — Entry point for the `osint` global command
  *
- * npm install -g osint-agent → `osint` komutu kullanılabilir olur.
+ * npm install -g osint-agent → makes the `osint` command available.
  *
- * Kullanım:
- *   osint                   İnteraktif REPL başlat
- *   osint "soru"            Tek soru gönder
- *   osint --setup           Docker + .env kurulum sihirbazı
- *   osint --uninstall       Kaldirma sihirbazi (Docker, .env, oturumlar)
- *   osint --graph           Neo4j graf görselleştirme sunucusu (port 3333)
- *   osint --version         Versiyon göster
- *   osint --help            Yardım
+ * Usage:
+ *   osint                   Start interactive REPL
+ *   osint "question"        Send a single question
+ *   osint --setup           Docker + .env setup wizard
+ *   osint --uninstall       Uninstall wizard (Docker, .env, sessions)
+ *   osint --graph           Neo4j graph visualization server (port 3333)
+ *   osint --version         Show version
+ *   osint --help            Show help
  */
 
 import 'dotenv/config'
@@ -32,7 +32,7 @@ try {
 
 const args = process.argv.slice(2)
 
-// ── Flag işleme ──────────────────────────────────────────────────────────
+// ── Flag handling ───────────────────────────────────────────────────────
 
 if (args.includes('--version') || args.includes('-v')) {
   console.log(`osint-agent v${version}`)
@@ -41,37 +41,37 @@ if (args.includes('--version') || args.includes('-v')) {
 
 if (args.includes('--help') || args.includes('-h')) {
   console.log(`
-${chalk.bold.cyan('osint-agent')} v${version} — Cok ajanli acik kaynak istihbarat sistemi
+${chalk.bold.cyan('osint-agent')} v${version} — Multi-agent open source intelligence system
 
-${chalk.bold('Kullanim:')}
-  ${chalk.green('osint')}                   Interaktif REPL baslat
-  ${chalk.green('osint')} "soru"            Tek soru gonder, sonucu yazdir
-  ${chalk.green('osint')} --setup           Kurulum sihirbazi (Docker + .env + Neo4j + Python)
-  ${chalk.green('osint')} --uninstall       Kaldirma sihirbazi (Docker, .env, oturumlar)
-  ${chalk.green('osint')} --graph           Neo4j graf gorsellestirme sunucusu (port 3333)
-  ${chalk.green('osint')} --version         Versiyon goster
-  ${chalk.green('osint')} --help            Bu yardim
+${chalk.bold('Usage:')}
+  ${chalk.green('osint')}                   Start interactive REPL
+  ${chalk.green('osint')} "question"        Send a single question and print result
+  ${chalk.green('osint')} --setup           Setup wizard (Docker + .env + Neo4j + Python)
+  ${chalk.green('osint')} --uninstall       Uninstall wizard (Docker, .env, sessions)
+  ${chalk.green('osint')} --graph           Neo4j graph visualization server (port 3333)
+  ${chalk.green('osint')} --version         Show version
+  ${chalk.green('osint')} --help            This help
 
-${chalk.bold('REPL Komutlari:')}
-  /reset     Oturumu sifirla ve arsivle
-  /history   Oturum gecmisi
-  /resume    Kayitli oturumlari listele ve sec
-  exit       Oturumu arsivleyip cik
+${chalk.bold('REPL Commands:')}
+  /reset     Reset and archive session
+  /history   Session history
+  /resume    List and select saved sessions
+  exit       Archive session and exit
 
-${chalk.bold('Ajanlar:')}
-  Supervisor    Koordinator + graf + rapor
-  Identity      Kisi/username/email arastirmasi
-  Media         Gorsel/haber dogrulama
-  Academic      Akademik makale taramasi
+${chalk.bold('Agents:')}
+  Supervisor    Coordinator + graph + report
+  Identity      Person/username/email research
+  Media         Image/news verification
+  Academic      Academic paper search
 
-${chalk.bold('Gereksinimler:')}
+${chalk.bold('Requirements:')}
   Node.js 18+, OpenRouter API key
-  Istege bagli: Docker (SearXNG + Firecrawl), Neo4j, Python 3.10+
+  Optional: Docker (SearXNG + Firecrawl), Neo4j, Python 3.10+
 `)
   process.exit(0)
 }
 
-// ── Docker + .env setup ──────────────────────────────────────────────────
+// ── Docker + .env setup ─────────────────────────────────────────────────
 
 if (args.includes('--setup')) {
   const { runSetup } = await import('./tools/setupCommand.js')
@@ -79,7 +79,7 @@ if (args.includes('--setup')) {
   process.exit(0)
 }
 
-// ── Kaldirma ──────────────────────────────────────────────────────────────
+// ── Uninstall ────────────────────────────────────────────────────────────
 
 if (args.includes('--uninstall')) {
   const { runUninstall } = await import('./tools/setupCommand.js')
@@ -87,14 +87,14 @@ if (args.includes('--uninstall')) {
   process.exit(0)
 }
 
-// ── Graf gorsellestirme sunucusu ─────────────────────────────────────────
+// ── Graph visualization server ──────────────────────────────────────────
 
 if (args.includes('--graph')) {
   await import('./graphServer.js')
   process.exit(0)
 }
 
-// ── Tek soru modu ────────────────────────────────────────────────────────
+// ── Single question mode ────────────────────────────────────────────────
 
 if (args.length > 0 && !args[0].startsWith('-')) {
   const message = args.join(' ')
@@ -107,13 +107,13 @@ if (args.length > 0 && !args[0].startsWith('-')) {
   try {
     await runSupervisor(history as any)
   } catch (e) {
-    console.error(chalk.red(`Hata: ${(e as Error).message}`))
+    console.error(chalk.red(`Error: ${(e as Error).message}`))
   } finally {
     await closeNeo4j()
     process.exit(0)
   }
 }
 
-// ── Interaktif REPL ─────────────────────────────────────────────────────
+// ── Interactive REPL ────────────────────────────────────────────────────
 
 await import('./chat.js')

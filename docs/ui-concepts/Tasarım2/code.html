@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>OBSIDIAN LENS | Executive Intelligence</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style type="text/tailwindcss">
+        :root {
+            --agent-supervisor: #b8c3ff;
+            --agent-identity: #d0bcff;
+            --agent-strategy: #4edea3;
+            --agent-media: #f48fb1;
+            --agent-academic: #ffcc80;
+            --agent-network: #80deea;
+            --glass-bg: rgba(15, 17, 22, 0.6);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --glass-glow: rgba(184, 195, 255, 0.03);
+        }
+        .glass-panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(24px);
+            border: 1px solid var(--glass-border);
+            box-shadow: inset 0 0 20px var(--glass-glow);
+        }
+        .concentric-ring {
+            stroke: rgba(255, 255, 255, 0.05);
+            fill: none;
+            stroke-dasharray: 4 4;
+        }
+        .node-glow {
+            filter: drop-shadow(0 0 8px currentColor);
+        }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        .event-feed {
+            height: 240px;
+            mask-image: linear-gradient(to bottom, transparent, black 10%, black 90%, transparent);
+        }
+    </style>
+</head>
+<body class="bg-[#0c0e12] text-slate-200 font-['Inter'] overflow-hidden h-screen flex flex-col selection:bg-indigo-500/30">
+<header class="fixed top-0 w-full bg-[#0c0e12]/80 backdrop-blur-xl flex justify-between items-center px-8 h-16 z-50 border-b border-white/5">
+<div class="flex items-center gap-12">
+<div class="flex items-center gap-2 group cursor-pointer">
+<div class="w-2 h-8 bg-indigo-500 rounded-full group-hover:scale-y-125 transition-transform duration-500"></div>
+<span class="text-xl font-bold tracking-[0.2em] text-white font-['Space_Grotesk']">OBSIDIAN LENS</span>
+</div>
+<div class="relative hidden lg:block group">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">search</span>
+<input class="bg-white/5 border border-white/10 rounded-full focus:border-indigo-500/50 transition-all duration-500 w-96 py-1.5 pl-10 pr-4 text-xs focus:ring-0 placeholder:text-slate-600" placeholder="Analyze identity, entity or domain..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-2 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full">
+<span class="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+<span class="text-[10px] font-bold text-emerald-400 tracking-tighter uppercase">Operational</span>
+</div>
+<div class="flex items-center gap-4 border-l border-white/10 pl-6">
+<button class="p-2 text-slate-400 hover:text-white transition-colors relative">
+<span class="material-symbols-outlined text-[20px]">notifications</span>
+<span class="absolute top-2 right-2 w-1.5 h-1.5 bg-indigo-500 rounded-full"></span>
+</button>
+<div class="flex items-center gap-3">
+<div class="text-right hidden sm:block">
+<div class="text-[11px] font-bold text-white">Chief Investigator</div>
+<div class="text-[9px] text-slate-500">Level 4 Access</div>
+</div>
+<div class="h-9 w-9 rounded-full ring-2 ring-white/10 overflow-hidden bg-slate-800 p-0.5">
+<img alt="Investigator" class="w-full h-full rounded-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCEUnBoJBEhNDuGEqAPQru5Jt2YEneLXMslf1Wjn96khTeHQF8Ir3YV39XLSh1CwEqg3IYARtjgOh3Cg8LnDC-7xdLGE2pXdSUSB0yonc1LSCzbMcfs2SiSK4t5l_6DIHoaaA87UP723k3KiAzZ8H-QU6pa8J-Z-iQ0vZ9XYcB-MT7ZrJcSc9035QzNYB25JAA7X8Fkjs75ZDciNnEkM8T40lsrN2fG7XllvcWVXmkaN6zx4fGdZ5IaAlBzA_R-isHeA8IG84yokuU"/>
+</div>
+</div>
+</div>
+</div>
+</header>
+<main class="flex-1 mt-16 mb-10 grid grid-cols-12 gap-0 overflow-hidden">
+<section class="col-span-3 glass-panel border-r-0 flex flex-col h-full z-20">
+<div class="p-5 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
+<div>
+<h2 class="text-xs font-bold tracking-widest text-slate-400 uppercase">Live Intelligence</h2>
+<p class="text-[10px] text-indigo-400 font-mono mt-0.5">@defunkt_nexus_active</p>
+</div>
+<button class="p-1.5 hover:bg-white/5 rounded-lg text-slate-500 transition-colors">
+<span class="material-symbols-outlined text-[18px]">open_in_full</span>
+</button>
+</div>
+<div class="flex-1 flex flex-col overflow-hidden">
+<div class="event-feed overflow-y-auto p-5 space-y-4">
+<div class="group cursor-pointer">
+<div class="flex items-center gap-2 mb-1.5">
+<span class="text-[9px] font-mono text-slate-600">14:02:11</span>
+<div class="h-[1px] flex-1 bg-white/5"></div>
+<span class="text-[9px] uppercase tracking-tighter font-bold text-slate-500">Query</span>
+</div>
+<div class="text-xs text-slate-300 leading-relaxed group-hover:text-white transition-colors pl-2 border-l border-white/10">
+                        Analyzing GitHub footprint for <span class="text-indigo-300">@defunkt</span>. Cross-referencing 42 secondary nodes.
+                    </div>
+</div>
+<div class="group cursor-pointer">
+<div class="flex items-center gap-2 mb-1.5">
+<span class="text-[9px] font-mono text-slate-600">14:02:45</span>
+<div class="h-[1px] flex-1 bg-white/5"></div>
+<span class="text-[9px] uppercase tracking-tighter font-bold text-[var(--agent-identity)]">Identity</span>
+</div>
+<div class="text-xs text-slate-300 leading-relaxed pl-2 border-l border-[var(--agent-identity)]/30">
+                        Social graph reconstructed. High-density clusters found in <span class="text-white">Ruby on Rails</span> community.
+                    </div>
+</div>
+<div class="group cursor-pointer">
+<div class="flex items-center gap-2 mb-1.5">
+<span class="text-[9px] font-mono text-slate-600">14:03:12</span>
+<div class="h-[1px] flex-1 bg-white/5"></div>
+<span class="text-[9px] uppercase tracking-tighter font-bold text-[var(--agent-strategy)]">Strategy</span>
+</div>
+<div class="text-xs text-slate-300 leading-relaxed pl-2 border-l border-[var(--agent-strategy)]/30">
+                        Connectivity matrix finalized. Map updated with 8 high-impact influence points.
+                    </div>
+</div>
+<div class="group cursor-pointer">
+<div class="flex items-center gap-2 mb-1.5">
+<span class="text-[9px] font-mono text-slate-600">14:04:02</span>
+<div class="h-[1px] flex-1 bg-white/5"></div>
+<span class="text-[9px] uppercase tracking-tighter font-bold text-[var(--agent-network)]">Network</span>
+</div>
+<div class="text-xs text-slate-300 leading-relaxed pl-2 border-l border-[var(--agent-network)]/30">
+                        Sub-domain scan complete. No high-risk signals detected in current telemetry.
+                    </div>
+</div>
+</div>
+<div class="bg-white/5 border-t border-white/5 mt-auto p-5">
+<div class="flex items-center gap-3 mb-4">
+<div class="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px] text-indigo-400">forum</span>
+</div>
+<div class="flex-1">
+<div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Full Transcript</div>
+<div class="text-[11px] text-slate-500">Click to expand conversation history</div>
+</div>
+</div>
+<div class="relative group">
+<input class="w-full bg-black/40 border-white/10 focus:border-indigo-500/50 rounded-lg py-2 pl-3 pr-10 text-xs text-slate-300 transition-all placeholder:text-slate-600" placeholder="Directive for Swarm..." type="text"/>
+<button class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-indigo-400">
+<span class="material-symbols-outlined text-[18px]">send</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+<section class="col-span-6 flex flex-col h-full bg-[#0c0e12] overflow-y-auto">
+<div class="sticky top-0 z-30 bg-[#0c0e12]/80 backdrop-blur-md px-10 pt-8">
+<div class="flex justify-between items-end mb-6">
+<div>
+<div class="flex items-center gap-3 mb-2">
+<h1 class="text-4xl font-headline font-bold text-white tracking-tighter">Chris Wanstrath</h1>
+<span class="bg-indigo-500/10 text-indigo-400 text-[10px] font-bold px-3 py-1 rounded-full border border-indigo-500/20 uppercase tracking-widest">Core Entity</span>
+</div>
+<p class="text-slate-400 text-sm max-w-xl leading-relaxed">
+                        High-level synthesis of OSINT data. Focus on executive influence and architectural footprint.
+                    </p>
+</div>
+<div class="flex gap-2">
+<button class="p-2 border border-white/10 rounded-lg hover:bg-white/5 transition-colors">
+<span class="material-symbols-outlined text-slate-400">share</span>
+</button>
+<button class="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-500 transition-colors shadow-lg shadow-indigo-600/20">
+<span class="material-symbols-outlined text-[16px]">download</span> Export Report
+                    </button>
+</div>
+</div>
+<nav class="flex gap-10 border-b border-white/5">
+<button class="pb-4 text-indigo-400 border-b-2 border-indigo-400 font-bold text-xs uppercase tracking-widest">Executive Summary</button>
+<button class="pb-4 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-300 transition-colors">Digital Forensics</button>
+<button class="pb-4 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-300 transition-colors">Timeline</button>
+</nav>
+</div>
+<div class="p-10 space-y-8">
+<div class="grid grid-cols-3 gap-4">
+<div class="col-span-1 glass-panel p-5 rounded-2xl">
+<div class="flex items-center gap-2 mb-4">
+<span class="material-symbols-outlined text-indigo-400 text-[18px]">verified</span>
+<span class="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Primary Alias</span>
+</div>
+<div class="text-xl font-headline font-bold text-white">defunkt</div>
+<div class="text-[10px] text-slate-500 mt-1 font-mono">ID: 00000001-GITHUB</div>
+</div>
+<div class="col-span-1 glass-panel p-5 rounded-2xl">
+<div class="flex items-center gap-2 mb-4">
+<span class="material-symbols-outlined text-[var(--agent-strategy)] text-[18px]">location_on</span>
+<span class="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Base Hub</span>
+</div>
+<div class="text-xl font-headline font-bold text-white">San Francisco</div>
+<div class="text-[10px] text-slate-500 mt-1 uppercase">California, US</div>
+</div>
+<div class="col-span-1 glass-panel p-5 rounded-2xl">
+<div class="flex items-center gap-2 mb-4">
+<span class="material-symbols-outlined text-[var(--agent-identity)] text-[18px]">star</span>
+<span class="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Impact Score</span>
+</div>
+<div class="text-xl font-headline font-bold text-white">98.4<span class="text-xs font-normal text-slate-500 ml-1">/100</span></div>
+<div class="text-[10px] text-emerald-400 mt-1 uppercase">Top 0.1% Global</div>
+</div>
+</div>
+<div class="glass-panel rounded-3xl p-8 relative overflow-hidden">
+<div class="absolute top-0 right-0 p-8 opacity-10">
+<span class="material-symbols-outlined text-[120px] text-white">auto_awesome</span>
+</div>
+<h3 class="text-lg font-bold text-white mb-6 flex items-center gap-3">
+<span class="w-1.5 h-6 bg-indigo-500 rounded-full"></span>
+                    Strategic Intelligence Brief
+                </h3>
+<div class="prose prose-invert prose-sm max-w-none space-y-4">
+<p class="text-slate-300 leading-relaxed text-base italic">
+                        "Analysis indicates an entity of supreme architectural influence within the global open-source ecosystem. Foundational contributions to Ruby development and platform scaling."
+                    </p>
+<div class="grid grid-cols-2 gap-8 pt-4">
+<div class="space-y-3">
+<h4 class="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-bold">Key Vectors</h4>
+<ul class="space-y-2 text-xs">
+<li class="flex items-center gap-2"><span class="w-1 h-1 bg-indigo-500 rounded-full"></span> Platform Co-Founder / Architect</li>
+<li class="flex items-center gap-2"><span class="w-1 h-1 bg-indigo-500 rounded-full"></span> Early Ruby Core Contributor</li>
+<li class="flex items-center gap-2"><span class="w-1 h-1 bg-indigo-500 rounded-full"></span> High-Trust Identity Node</li>
+</ul>
+</div>
+<div class="space-y-3">
+<h4 class="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-bold">Active Signals</h4>
+<div class="space-y-3">
+<div class="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+<div class="bg-indigo-500 h-full w-[85%] rounded-full"></div>
+</div>
+<div class="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+<div class="bg-[var(--agent-strategy)] h-full w-[92%] rounded-full"></div>
+</div>
+<div class="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+<div class="bg-[var(--agent-identity)] h-full w-[74%] rounded-full"></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<section class="col-span-3 glass-panel border-l-0 flex flex-col h-full z-20">
+<div class="p-5 border-b border-white/5 bg-white/[0.02] flex justify-between items-center">
+<h2 class="text-xs font-bold tracking-widest text-slate-400 uppercase">Influence Map</h2>
+<div class="flex gap-2">
+<button class="w-6 h-6 rounded flex items-center justify-center bg-indigo-500 text-white text-[10px] font-bold">1</button>
+<button class="w-6 h-6 rounded flex items-center justify-center bg-white/5 text-slate-500 text-[10px] font-bold hover:bg-white/10 transition-colors">2</button>
+<button class="w-6 h-6 rounded flex items-center justify-center bg-white/5 text-slate-500 text-[10px] font-bold hover:bg-white/10 transition-colors">3</button>
+</div>
+</div>
+<div class="flex-1 relative bg-black/20 flex items-center justify-center overflow-hidden">
+<svg class="w-full h-full" viewBox="0 0 400 400">
+<circle class="concentric-ring" cx="200" cy="200" r="140"></circle>
+<circle class="concentric-ring" cx="200" cy="200" r="100"></circle>
+<circle class="concentric-ring" cx="200" cy="200" r="60"></circle>
+<g class="cursor-pointer group">
+<circle class="node-glow" cx="200" cy="200" fill="url(#centralGradient)" r="18" style="color: #6366f1"></circle>
+<text fill="white" font-family="Space Grotesk" font-size="10" font-weight="bold" text-anchor="middle" x="200" y="235">WANSTRATH</text>
+</g>
+<g class="cursor-pointer">
+<circle class="node-glow" cx="200" cy="60" fill="var(--agent-media)" r="8" style="color: var(--agent-media)"></circle>
+<text fill="var(--agent-media)" font-size="8" font-weight="bold" text-anchor="middle" x="200" y="45">TechCrunch</text>
+</g>
+<g class="cursor-pointer">
+<circle class="node-glow" cx="90" cy="290" fill="var(--agent-academic)" r="6" style="color: var(--agent-academic)"></circle>
+<text fill="var(--agent-academic)" font-size="8" font-weight="bold" text-anchor="middle" x="90" y="310">OpenSource.org</text>
+</g>
+<g class="cursor-pointer">
+<circle class="node-glow" cx="300" cy="200" fill="var(--agent-identity)" r="10" style="color: var(--agent-identity)"></circle>
+<text fill="var(--agent-identity)" font-size="9" font-weight="bold" text-anchor="start" x="315" y="203">@defunkt</text>
+</g>
+<g class="cursor-pointer">
+<circle class="node-glow" cx="130" cy="130" fill="var(--agent-strategy)" r="12" style="color: var(--agent-strategy)"></circle>
+<text fill="var(--agent-strategy)" font-size="9" font-weight="bold" text-anchor="end" x="110" y="125">Foundation</text>
+</g>
+<g class="cursor-pointer">
+<circle class="node-glow" cx="200" cy="260" fill="var(--agent-network)" r="14" style="color: var(--agent-network)"></circle>
+<text fill="var(--agent-network)" font-size="9" font-weight="bold" text-anchor="middle" x="200" y="290">GitHub</text>
+</g>
+<defs>
+<radialGradient id="centralGradient">
+<stop offset="0%" stop-color="#818cf8"></stop>
+<stop offset="100%" stop-color="#4f46e5"></stop>
+</radialGradient>
+</defs>
+</svg>
+<div class="absolute bottom-4 left-4 right-4 flex flex-wrap justify-center gap-4 bg-black/40 backdrop-blur-md p-3 rounded-xl border border-white/5">
+<div class="flex items-center gap-1.5">
+<div class="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
+<span class="text-[8px] uppercase tracking-tighter text-slate-400">Core</span>
+</div>
+<div class="flex items-center gap-1.5">
+<div class="w-1.5 h-1.5 rounded-full bg-[var(--agent-network)]"></div>
+<span class="text-[8px] uppercase tracking-tighter text-slate-400">Primary</span>
+</div>
+<div class="flex items-center gap-1.5">
+<div class="w-1.5 h-1.5 rounded-full bg-[var(--agent-strategy)]"></div>
+<span class="text-[8px] uppercase tracking-tighter text-slate-400">Active</span>
+</div>
+<div class="flex items-center gap-1.5">
+<div class="w-1.5 h-1.5 rounded-full bg-[var(--agent-identity)]"></div>
+<span class="text-[8px] uppercase tracking-tighter text-slate-400">Latent</span>
+</div>
+</div>
+</div>
+<div class="p-5 bg-white/[0.02] border-t border-white/5 space-y-4">
+<div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Digital Artifacts</div>
+<div class="space-y-2">
+<div class="flex items-center gap-3 p-2 bg-white/5 rounded-xl border border-white/5 hover:border-indigo-500/30 transition-all cursor-pointer">
+<div class="w-10 h-10 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400">
+<span class="material-symbols-outlined text-[20px]">image</span>
+</div>
+<div class="flex-1 overflow-hidden">
+<div class="text-[11px] text-white font-bold truncate">profile_primary_2024.jpg</div>
+<div class="text-[9px] text-slate-500 uppercase">Match Confidence: 99.8%</div>
+</div>
+</div>
+<div class="flex items-center gap-3 p-2 bg-white/5 rounded-xl border border-white/5 hover:border-indigo-500/30 transition-all cursor-pointer">
+<div class="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
+<span class="material-symbols-outlined text-[20px]">description</span>
+</div>
+<div class="flex-1 overflow-hidden">
+<div class="text-[11px] text-white font-bold truncate">sec_filing_ex_99_1.pdf</div>
+<div class="text-[9px] text-slate-500 uppercase">Verified Document</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+</main>
+<footer class="fixed bottom-0 w-full h-10 bg-[#0c0e12]/95 backdrop-blur-xl flex justify-between items-center px-8 z-50 border-t border-white/5 font-mono text-[9px] uppercase tracking-[0.1em]">
+<div class="flex items-center gap-8">
+<div class="flex items-center gap-2 text-indigo-400">
+<span class="material-symbols-outlined text-[14px]">shield</span>
+            Encrypted Session
+        </div>
+<div class="flex items-center gap-2 text-slate-500">
+<span class="material-symbols-outlined text-[14px]">psychology</span>
+            8 Active Agents
+        </div>
+</div>
+<div class="flex items-center gap-8">
+<div class="flex items-center gap-2 text-slate-500">
+<span class="material-symbols-outlined text-[14px]">bolt</span>
+            Process: 12.4 Tflops
+        </div>
+<div class="flex items-center gap-2 text-emerald-400">
+<span class="material-symbols-outlined text-[14px]">sync</span>
+            Live Refreshing
+        </div>
+</div>
+</footer>
+
+</body></html>

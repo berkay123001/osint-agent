@@ -11,9 +11,9 @@ import { emitProgress } from '../lib/progressEmitter.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-/** History'den araç call+result pair'larını çıkarır, raw knowledge olarak kaydeder */
+/** Extracts tool call+result pairs from history, saves as raw knowledge */
 async function saveKnowledgeFromHistory(history: Message[], query: string): Promise<void> {
-  // tool_call_id → { name, args, result } mapping kur
+  // Build tool_call_id → { name, args, result } mapping
   const toolResultMap = new Map<string, string>();
   for (const msg of history) {
     if (msg.role === 'tool') {
@@ -25,29 +25,29 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
     }
   }
 
-  // Assistant mesajlarındaki tool_calls ile sonuçları eşleştir
+  // Match assistant message tool_calls with their results
   const calls: { name: string; args: string; result: string }[] = [];
   for (const msg of history) {
     const assistantMsg = msg as { role: string; tool_calls?: { id: string; function: { name: string; arguments: string } }[] };
     if (assistantMsg.role !== 'assistant' || !assistantMsg.tool_calls) continue;
     for (const tc of assistantMsg.tool_calls) {
-      const result = toolResultMap.get(tc.id) ?? '(sonuç yok)';
+      const result = toolResultMap.get(tc.id) ?? '(no result)';
       calls.push({ name: tc.function.name, args: tc.function.arguments, result });
     }
   }
 
   if (calls.length === 0) return;
 
-  // Gruplara böl
+  // Group by tool name
   const groups: Record<string, { name: string; args: string; result: string }[]> = {};
   for (const c of calls) {
     if (!groups[c.name]) groups[c.name] = [];
     groups[c.name].push(c);
   }
 
-  const MAX_RESULT_CHARS = 3000; // Her araç sonucu için max karakter
-  let md = `# 📚 Akademik Araştırma Ham Bilgi Tabanı\n\n`;
-  md += `**Sorgu:** ${query}\n**Tarih:** ${new Date().toISOString()}\n**Toplam araç çağrısı:** ${calls.length}\n\n---\n\n`;
+  const MAX_RESULT_CHARS = 3000; // Max chars per tool result
+  let md = `# 📚 Academic Research Raw Knowledge Base\n\n`;
+  md += `**Query:** ${query}\n**Date:** ${new Date().toISOString()}\n**Total tool calls:** ${calls.length}\n\n---\n\n`;
 
   for (const [toolName, toolCalls] of Object.entries(groups)) {
     const emoji: Record<string, string> = {
@@ -59,16 +59,16 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
       wayback_search: '🕰️',
       query_graph: '🗃️',
     };
-    md += `## ${emoji[toolName] ?? '🔧'} ${toolName} (${toolCalls.length} çağrı)\n\n`;
+    md += `## ${emoji[toolName] ?? '🔧'} ${toolName} (${toolCalls.length} calls)\n\n`;
     for (let i = 0; i < toolCalls.length; i++) {
       let args: Record<string, string> = {};
       try { args = JSON.parse(toolCalls[i].args); } catch { /* ignore */ }
       const argStr = Object.entries(args).map(([k, v]) => `${k}="${v}"`).join(', ');
       const result = toolCalls[i].result;
       const truncated = result.length > MAX_RESULT_CHARS
-        ? result.slice(0, MAX_RESULT_CHARS) + `\n... [${result.length - MAX_RESULT_CHARS} karakter kesildi]`
+        ? result.slice(0, MAX_RESULT_CHARS) + `\n... [${result.length - MAX_RESULT_CHARS} characters truncated]`
         : result;
-      md += `### Çağrı ${i + 1}: \`${argStr}\`\n\`\`\`\n${truncated}\n\`\`\`\n\n`;
+      md += `### Call ${i + 1}: \`${argStr}\`\n\`\`\`\n${truncated}\n\`\`\`\n\n`;
     }
   }
 
@@ -76,19 +76,19 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
     const dir = path.resolve(__dirname, '../../.osint-sessions');
     await mkdir(dir, { recursive: true });
     await writeFile(path.join(dir, 'academic-knowledge.md'), md, 'utf-8');
-    emitProgress(`🧠 Akademik bilgi tabanı kaydedildi (${calls.length} araç sonucu)`);
-  } catch { /* sessizce geç */ }
+    emitProgress(`🧠 Academic knowledge base saved (${calls.length} tool results)`);
+  } catch { /* skip silently */ }
 }
 
 const ACADEMIC_TOOLS = [
-  'search_researcher_papers', // Semantic Scholar Author API — araştırmacı profili ve tüm makale listesi
-  'search_academic_papers',   // arXiv API — konu bazlı makale arama (au: prefix desteği dahil)
-  'check_plagiarism',         // İntihal/şatekarlık analizi — benzerlik skoru + Neo4j graf kaydı
-  'search_web',               // ResearchGate, DergiPark, ORCID, üniversite sayfası, web dork
-  'web_fetch',                // ar5iv tam metin, arxiv.org/abs, DOI sayfası, journal sayfası
-  'scrape_profile',           // üniversite profil sayfaları, kişisel lab sayfası
-  'wayback_search',           // geri çekilmiş makaleler, arşivlenmiş sayfalar
-  'query_graph',              // grafte zaten kayıtlı Paper/Author node var mı?
+  'search_researcher_papers', // Semantic Scholar Author API — researcher profile and full paper list
+  'search_academic_papers',   // arXiv API — topic-based paper search (includes au: prefix support)
+  'check_plagiarism',         // Plagiarism/authorship analysis — similarity score + Neo4j graph storage
+  'search_web',               // ResearchGate, DergiPark, ORCID, university profile, web dork
+  'web_fetch',                // ar5iv full text, arxiv.org/abs, DOI page, journal page
+  'scrape_profile',           // University profile pages, personal lab pages
+  'wayback_search',           // Retracted papers, archived pages
+  'query_graph',              // Check if Paper/Author node already exists in graph
 ];
 
 export const academicAgentConfig: AgentConfig = {
@@ -115,7 +115,7 @@ When unsure:
 
 # TASK TYPE RECOGNITION
 
-**RESEARCHER MODE** → When a person's name + institution is mentioned (e.g., "Bihter Daş Fırat University")
+**RESEARCHER MODE** → When a person's name + institution is mentioned (e.g., "Jane Smith MIT") 
 **TOPIC MODE** → General academic topic (e.g., "LLM reinforcement learning 2025")
 
 # RESEARCHER MODE — 3 PHASES
@@ -219,19 +219,19 @@ How has the field changed since 2020?
 - If Semantic Scholar returns nothing: ORCID → ResearchGate → DergiPark → university page`,
 };
 
-// depth → maxToolCalls çarpanı: quick=0.5x, normal=1x, deep=1.75x
+// depth → maxToolCalls multiplier: quick=0.5x, normal=1x, deep=1.75x
 const DEPTH_MULTIPLIERS: Record<string, number> = { quick: 0.5, normal: 1, deep: 1.75 };
 
 export async function runAcademicAgent(query: string, context?: string, depth?: string, existingHistory?: Message[]): Promise<SubAgentResult> {
   const multiplier = DEPTH_MULTIPLIERS[depth ?? 'normal'] ?? 1;
   const maxToolCalls = Math.ceil((academicAgentConfig.maxToolCalls ?? 30) * multiplier);
-  emitProgress(`📚 AcademicAgent → "${query.length > 120 ? query.slice(0, 117) + '...' : query}" [derinlik: ${depth ?? 'normal'}, bütçe: ${maxToolCalls}]`);
+  emitProgress(`📚 AcademicAgent → "${query.length > 120 ? query.slice(0, 117) + '...' : query}" [depth: ${depth ?? 'normal'}, budget: ${maxToolCalls}]`);
 
   const history: Message[] = existingHistory
     ? [...existingHistory]
     : [
         { role: 'system', content: academicAgentConfig.systemPrompt },
-        { role: 'user', content: context ? `Context:\n${context}\n\nAraştırma Görevi:\n${query}` : query },
+        { role: 'user', content: context ? `Context:\n${context}\n\nResearch Task:\n${query}` : query },
       ];
 
   const result = await runAgentLoop(history, { ...academicAgentConfig, maxToolCalls });
@@ -239,8 +239,8 @@ export async function runAcademicAgent(query: string, context?: string, depth?: 
   const toolSummary = Object.entries(result.toolsUsed)
     .map(([tool, count]) => `${tool}×${count}`)
     .join(', ');
-  emitProgress(`✅ AcademicAgent tamamlandı [${result.toolCallCount} araç: ${toolSummary || 'yok'}]`);
-  const meta = `\n\n---\n**[META] AcademicAgent araç istatistikleri:** ${toolSummary || 'araç kullanılmadı'} (toplam: ${result.toolCallCount})`;
+  emitProgress(`✅ AcademicAgent completed [${result.toolCallCount} tools: ${toolSummary || 'none'}]`);
+  const meta = `\n\n---\n**[META] AcademicAgent tool stats:** ${toolSummary || 'no tools used'} (total: ${result.toolCallCount})`;
   return { response: result.finalResponse + meta, history };
 }
 

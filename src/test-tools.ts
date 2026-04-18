@@ -29,18 +29,18 @@ async function testMetadata() {
   const result = await extractMetadataFromUrl('https://raw.githubusercontent.com/exiftool/exiftool/master/t/images/ExifTool.jpg')
   if (result.error) {
     // Fallback: httpbin ile basit bir dosya dene
-    console.log(chalk.yellow(`İlk URL hata: ${result.error}, fallback deneniyor...`))
+    console.log(chalk.yellow(`First URL error: ${result.error}, trying fallback...`))
     const r2 = await extractMetadataFromUrl('https://www.w3.org/Graphics/SVG/Test/20110816/svg/struct-image-04-t.svg')
     if (r2.error) {
       console.log(chalk.red(`Fallback de hata: ${r2.error}`))
-      // Tool çalışıyor ama URL erişilemiyor - OK sayalım
-      console.log(chalk.yellow('⚠️  Tool çalışıyor, URL erişim sorunu'))
+      // Tool is working but URL is inaccessible - count as OK
+      console.log(chalk.yellow('⚠️  Tool is working, URL access issue'))
       return true
     }
-    console.log(`Metadata alanları: ${Object.keys(r2.fields).length}`)
+    console.log(`Metadata fields: ${Object.keys(r2.fields).length}`)
     return Object.keys(r2.fields).length > 0
   }
-  console.log(`Metadata alanları: ${Object.keys(result.fields).length}`)
+  console.log(`Metadata fields: ${Object.keys(result.fields).length}`)
   console.log(`OSINT-relevant: ${Object.keys(result.interestingFields).length}`)
   const fmt = formatMetadata(result)
   console.log(fmt.slice(0, 500))
@@ -52,27 +52,27 @@ async function testGpgParser() {
   console.log(chalk.cyan.bold('\n━━━ TEST 3: GPG Key Parser ━━━'))
   const { parseGithubGpgKey, formatGpgResult } = await import('./tools/gpgParserTool.js')
 
-  // GPG key'i olan bir GitHub user dene
-  // jessfraz iyi bir aday, aktif GPG key'i var
+  // Try a GitHub user with a GPG key
+  // jessfraz is a good candidate, has an active GPG key
   const result = await parseGithubGpgKey('jessfraz')
   console.log(formatGpgResult(result))
 
-  if (result.error?.includes('bulunamadı')) {
-    // Farklı user dene
-    console.log(chalk.yellow('⚠️  jessfraz GPG yok, filippo deneyelim'))
+  if (result.error?.includes('not found')) {
+    // Try a different user
+    console.log(chalk.yellow('⚠️  jessfraz has no GPG, trying filippo'))
     const r2 = await parseGithubGpgKey('FiloSottile')
     console.log(formatGpgResult(r2))
     if (r2.emails.length > 0) {
-      console.log(chalk.green(`✅ ${r2.emails.length} email bulundu`))
+      console.log(chalk.green(`✅ ${r2.emails.length} emails found`))
       return true
     }
-    // GPG key yok ama tool çalışıyor
-    console.log(chalk.yellow('⚠️  GPG key bulunamadı ama tool düzgün çalışıyor'))
+    // No GPG key but tool is working
+    console.log(chalk.yellow('⚠️  No GPG key found but tool is working correctly'))
     return true
   }
   
   if (result.emails.length > 0) {
-    console.log(chalk.green(`✅ ${result.emails.length} email bulundu`))
+    console.log(chalk.green(`✅ ${result.emails.length} emails found`))
     return true
   }
   return !result.error
@@ -83,18 +83,18 @@ async function testWayback() {
   console.log(chalk.cyan.bold('\n━━━ TEST 4: Wayback Machine ━━━'))
   const { waybackSearch, formatWaybackResult } = await import('./tools/waybackTool.js')
 
-  // Google.com - kesinlikle arşivlenmiş
+  // Google.com - definitely archived
   const result = await waybackSearch('https://example.com', 5)
   if (result.error) {
-    console.log(chalk.red(`Hata: ${result.error}`))
+    console.log(chalk.red(`Error: ${result.error}`))
     return false
   }
-  console.log(`Snapshot sayısı: ${result.snapshots.length}`)
+  console.log(`Snapshots: ${result.snapshots.length}`)
   if (result.snapshots.length > 0) {
-    console.log(`İlk: ${result.snapshots[0].date}`)
-    console.log(`Son: ${result.snapshots[result.snapshots.length - 1].date}`)
+    console.log(`First: ${result.snapshots[0].date}`)
+    console.log(`Last: ${result.snapshots[result.snapshots.length - 1].date}`)
   }
-  console.log(chalk.green(`✅ Wayback çalışıyor`))
+  console.log(chalk.green(`✅ Wayback working`))
   return result.snapshots.length > 0
 }
 
@@ -108,18 +108,18 @@ async function main() {
   results.push(['Wayback', await testWayback()])
 
   console.log(chalk.cyan.bold('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'))
-  console.log(chalk.bold('SONUÇLAR:'))
+  console.log(chalk.bold('RESULTS:'))
   for (const [name, ok] of results) {
     console.log(`  ${ok ? chalk.green('✅') : chalk.red('❌')} ${name}`)
   }
   const passed = results.filter(([, ok]) => ok).length
-  console.log(`\n${passed}/${results.length} test başarılı`)
+  console.log(`\n${passed}/${results.length} tests passed`)
   console.log(chalk.cyan.bold('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'))
 
   process.exit(passed === results.length ? 0 : 1)
 }
 
 main().catch((e) => {
-  console.error('Test hatası:', e)
+  console.error('Test error:', e)
   process.exit(1)
 })

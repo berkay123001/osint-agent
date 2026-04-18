@@ -11,7 +11,7 @@ test('normalizeAssistantMessage replaces null final content with a fallback', ()
   } as any)
 
   assert.equal(normalized.role, 'assistant')
-  assert.equal(normalized.content, 'Araçlar çalıştı ancak model boş yanıt döndürdü.')
+  assert.equal(normalized.content, 'Tools completed but the model returned an empty response.')
 })
 
 test('normalizeAssistantMessage preserves refusal text', () => {
@@ -49,5 +49,5 @@ test('sanitizeHistoryForProvider converts assistant tool-call content null to em
 })
 
 test('normalizeToolContent prevents empty tool messages', () => {
-  assert.equal(normalizeToolContent('   '), 'Tool sonuç üretemedi.')
+  assert.equal(normalizeToolContent('   '), 'Tool produced no output.')
 })

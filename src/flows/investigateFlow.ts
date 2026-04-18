@@ -92,7 +92,7 @@ export const investigateFlow = ai.defineFlow(
         }
       }
 
-      // 3. LLM ile PII çıkar
+      // 3. Extract PII with LLM
       if (rawData.trim()) {
         try {
           const pii = await llmGenerateJSON<PIIData>(
@@ -144,7 +144,7 @@ export const investigateFlow = ai.defineFlow(
       }
     }
 
-    console.log(`\n✅ Araştırma tamamlandı. ${visited.size} lead, ${graph.length} bağlantı.`)
+    console.log(`\n✅ Research complete. ${visited.size} leads, ${graph.length} connections.`)
 
     return {
       totalLeads: visited.size,

@@ -7,7 +7,7 @@ export async function compareImages(url1: string, url2: string): Promise<string>
     const hash2Info: any = await fetchAndHashImage(url2);
 
     if (!hash1Info || !hash2Info) {
-      return "❌ Görüntülerden biri veya her ikisi işlenemedi. Linkleri kontrol edin.";
+      return "❌ One or both images could not be processed. Check the URLs.";
     }
 
     // It returns the string directly, not an object with a hash property
@@ -15,12 +15,12 @@ export async function compareImages(url1: string, url2: string): Promise<string>
     const hash2 = typeof hash2Info === 'string' ? hash2Info : hash2Info.hash;
 
     if (!hash1 || !hash2) {
-         return "❌ Hash oluşturulamadı.";
+         return "❌ Hash could not be generated.";
     }
 
     // fix for default export format in fast-levenshtein
     const distance: any = (levenshtein as any).get || (levenshtein as any).default?.get;
-    if (!distance) throw new Error("Levenshtein modülü yüklenemedi");
+    if (!distance) throw new Error("Levenshtein module could not be loaded");
 
     const diff = distance(hash1, hash2);
     
@@ -29,21 +29,21 @@ export async function compareImages(url1: string, url2: string): Promise<string>
 
     let conclusion = "";
     if (diff === 0) {
-      conclusion = "🔴 KESİN EŞLEŞME: İki fotoğraf piksel bazında %100 aynı. (Tespiti: Dezenformasyonda kullanılmış)";
+      conclusion = "🔴 EXACT MATCH: Both images are pixel-for-pixel identical. (Indicator of disinformation reuse)";
     } else if (diff <= 10) {
-      conclusion = "🟠 YÜKSEK BENZERLİK: İki fotoğraf büyük ihtimalle aynı ama biri kırpılmış/filtrelenmiş olabilir.";
+      conclusion = "🟠 HIGH SIMILARITY: Images are likely the same but one may be cropped/filtered.";
     } else {
-      conclusion = "🟢 FARKLI: İki fotoğraf birbirinden bağımsız.";
+      conclusion = "🟢 DIFFERENT: The two images are unrelated.";
     }
 
-    return `🔍 Görsel Kriminoloji Raporu (Algoritmik pHashing Analizi):
-- Görsel 1 Hash: ${hash1}
-- Görsel 2 Hash: ${hash2}
-- Mesafe Skoru: ${diff}
-- Benzerlik Oranı: %${similarity.toFixed(2)}
+    return `🔍 Visual Forensics Report (Algorithmic pHash Analysis):
+- Image 1 Hash: ${hash1}
+- Image 2 Hash: ${hash2}
+- Distance Score: ${diff}
+- Similarity: ${similarity.toFixed(2)}%
 ${conclusion}`;
 
   } catch (e: any) {
-    return `❌ Karşılaştırma Hatası: ${e.message}`;
+    return `❌ Comparison Error: ${e.message}`;
   }
 }

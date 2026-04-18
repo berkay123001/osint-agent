@@ -47,6 +47,7 @@ export async function searchAuthorPapers(
     const fields = 'name,affiliations,paperCount,hIndex,papers,papers.paperId,papers.title,papers.year,papers.citationCount,papers.externalIds'
     const url = `https://api.semanticscholar.org/graph/v1/author/search?query=${encoded}&fields=${fields}&limit=5`
 
+    await enforceSemanticRateLimit()
     const res = await fetchWithRetry(url)
 
     if (!res.ok) {
@@ -242,9 +243,22 @@ export async function searchAcademicPapers(
   } as AcademicSearchResult & { _ssNote?: string };
 }
 
-// arXiv rate limiter — çağrılar arası minimum 3 saniye bekle
+// arXiv rate limiter — minimum 3 seconds between calls
 let lastArxivCall = 0;
 const ARXIV_MIN_INTERVAL_MS = 3000;
+
+// Semantic Scholar rate limiter — minimum 1.5 seconds between calls
+let lastSemanticCall = 0;
+const SEMANTIC_MIN_INTERVAL_MS = 1500;
+
+async function enforceSemanticRateLimit(): Promise<void> {
+  const now = Date.now();
+  const elapsed = now - lastSemanticCall;
+  if (elapsed < SEMANTIC_MIN_INTERVAL_MS) {
+    await new Promise(resolve => setTimeout(resolve, SEMANTIC_MIN_INTERVAL_MS - elapsed));
+  }
+  lastSemanticCall = Date.now();
+}
 
 async function _searchArxiv(
   query: string,
@@ -301,6 +315,7 @@ async function _searchSemanticScholar(query: string, limit: number): Promise<SSP
     const encoded = encodeURIComponent(query);
     const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encoded}&fields=${fields}&limit=${limit}`;
 
+    await enforceSemanticRateLimit()
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
     if (!res.ok) return [];
 

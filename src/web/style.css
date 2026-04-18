@@ -593,6 +593,50 @@ html, body {
   border-right: none;
 }
 
+.telemetry-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(6, 8, 13, 0.55), rgba(6, 8, 13, 0.22));
+  flex-shrink: 0;
+}
+
+.telemetry-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 62px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+}
+
+.telemetry-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.telemetry-value {
+  font-size: 18px;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+
+.telemetry-model {
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.telemetry-subvalue {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
 .panel-tabs {
   display: flex;
   border-bottom: 1px solid var(--border);
@@ -707,6 +751,8 @@ html, body {
 .feed-line.cat-media .feed-msg { color: var(--accent-orange); }
 .feed-line.cat-academic { border-left-color: var(--accent-green); }
 .feed-line.cat-academic .feed-msg { color: var(--accent-green); }
+.feed-line.cat-telemetry { border-left-color: var(--accent-gold); }
+.feed-line.cat-telemetry .feed-msg { color: var(--accent-gold); }
 .feed-line.cat-default .feed-msg { color: var(--text-secondary); }
 
 /* Graph */
@@ -877,4 +923,8 @@ html, body {
   #main { grid-template-columns: 1fr; }
   #intel-panel { display: none; }
   .agent-indicators { display: none; }
+}
+
+@media (max-width: 1200px) {
+  .telemetry-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

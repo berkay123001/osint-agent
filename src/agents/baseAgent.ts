@@ -2,7 +2,8 @@ import OpenAI from 'openai';
 import type { ChatCompletion } from 'openai/resources/chat/completions';
 import { sanitizeHistoryForProvider, normalizeAssistantMessage, normalizeToolContent } from '../lib/chatHistory.js';
 import { logger } from '../lib/logger.js';
-import { emitProgress, emitToolDetail } from '../lib/progressEmitter.js';
+import { emitProgress, emitTelemetry, emitToolDetail } from '../lib/progressEmitter.js';
+import { buildLLMTelemetryEvent, persistLLMTelemetryEvent } from '../lib/llmTelemetry.js';
 import { readFile } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -15,7 +16,7 @@ const DEFAULT_MODEL = 'kwaipilot/kat-coder-pro-v2';
 const SUPERVISOR_MODEL = 'minimax/minimax-m2.7';
 export { DEFAULT_MODEL, SUPERVISOR_MODEL };
 
-// Fallback modeller — content filter (PII) VEYA rate limit durumunda sirayla denenir
+// Fallback models — tried sequentially on content filter (PII) or rate limit errors
 const FALLBACK_MODELS = [
   'kwaipilot/kat-coder-pro-v2',
   'google/gemini-2.0-flash-001',
@@ -24,7 +25,7 @@ const FALLBACK_MODELS = [
 ];
 
 const DEFAULT_MAX_TOOL_CALLS = 30;
-const DEFAULT_MAX_TOKENS = 32768; // Qwen3 thinking tokens için geniş bütçe
+const DEFAULT_MAX_TOKENS = 32768; // Generous budget for Qwen3 thinking tokens
 
 const client = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -32,8 +33,8 @@ const client = new OpenAI({
 });
 
 /**
- * Qwen3 modelleri <think/> etiketleri arasında reasoning yapar.
- * Bu etiketleri temizleyip salt kullanıcıya dönecek içeriği bırakır.
+ * Qwen3 models perform reasoning between <think/> tags.
+ * This function strips those tags, leaving only the content to be returned to the user.
  */
 function stripThinkingTokens(text: string): string {
   return text.replace(/<think[\s\S]*?<\/think>/gi, '').trim();
@@ -50,165 +51,244 @@ export async function runAgentLoop(
   let toolCallCount = 0;
   let emptyRetries = 0;
   let correctionRetries = 0;
-  let totalCorrectionAttempts = 0; // Global cap — sonsuz döngüyü önler
-  let forceTextRetries = 0; // Metin zorlama deneme sayacı
-  let toolsDisabledMessageSent = false; // Araç bütçesi dolunca özet isteği yalnızca bir kez gönderilir
+  let totalCorrectionAttempts = 0; // Global cap — prevents infinite loops
+  let forceTextRetries = 0; // Text forcing retry counter
+  let toolsDisabledMessageSent = false; // Summary request sent only once when tool budget is exhausted
   const toolsUsed: Record<string, number> = {};
   const maxToolCalls = config.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
-  // Tool call deduplication: aynı tool+args kombinasyonu önceden çağrıldıysa cache'den dön
+  // Tool call deduplication: return from cache if the same tool+args combination was called before
   const callCache = new Map<string, string>();
-  // Per-tool hard limiti: tek bir tool'un bütün bütçeyi yemesini engeller
-  const PER_TOOL_LIMITS: Record<string, number> = { search_academic_papers: 8 };
+  // Per-tool hard limit: prevents a single tool from consuming the entire budget
+  const PER_TOOL_LIMITS: Record<string, number> = {
+    search_academic_papers: 8,
+    search_web: 20,
+    search_web_multi: 8,
+    search_researcher_papers: 8,
+  };
   const perToolCount: Record<string, number> = {};
+  // Stagnation detection: track consecutive low-yield calls
+  let lowYieldStreak = 0;
+  const LOW_YIELD_THRESHOLD = 5; // After this many consecutive low-yield calls, force synthesis
+  const seenUrls = new Set<string>(); // Track unique URLs found across all search results
+  let completionAttempt = 0;
+
+  async function createTrackedCompletion(
+    request: {
+      model: string
+      messages: Message[]
+      tools?: OpenAI.Chat.ChatCompletionTool[]
+      tool_choice?: 'auto' | 'none'
+      max_tokens: number
+    },
+    meta: {
+      reason: string
+      phase?: string
+    }
+  ): Promise<ChatCompletion> {
+    const startedAt = Date.now();
+    const attempt = ++completionAttempt;
+
+    try {
+      const completion = (await _client.chat.completions.create(request) as ChatCompletion);
+      const telemetry = buildLLMTelemetryEvent({
+        agent: config.name,
+        phase: meta.phase,
+        reason: meta.reason,
+        attempt,
+        requestedModel: request.model,
+        actualModel: completion.model,
+        responseId: completion.id,
+        status: 'success',
+        latencyMs: Date.now() - startedAt,
+        messages: request.messages,
+        usage: completion.usage as any,
+      });
+      emitTelemetry(telemetry);
+      void persistLLMTelemetryEvent(telemetry).catch((error) => {
+        emitProgress(`⚠️ [${config.name}] Telemetry persist failed: ${(error as Error).message}`);
+      });
+      return completion;
+    } catch (error) {
+      const telemetry = buildLLMTelemetryEvent({
+        agent: config.name,
+        phase: meta.phase,
+        reason: meta.reason,
+        attempt,
+        requestedModel: request.model,
+        status: 'error',
+        latencyMs: Date.now() - startedAt,
+        messages: request.messages,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      emitTelemetry(telemetry);
+      void persistLLMTelemetryEvent(telemetry).catch((persistError) => {
+        emitProgress(`⚠️ [${config.name}] Telemetry persist failed: ${(persistError as Error).message}`);
+      });
+      throw error;
+    }
+  }
+
   while (true) {
     const toolsDisabled = toolCallCount >= maxToolCalls;
     const toolChoice: 'auto' | 'none' = toolsDisabled ? 'none' : 'auto';
     if (toolsDisabled && !toolsDisabledMessageSent) {
       toolsDisabledMessageSent = true;
-      logger.warn('AGENT', `[${config.name}] Maksimum araç çağrısı aşıldı, nihai rapor isteniyor...`);
-      // Modelin bağlamı kaybedip selamlama döndürmesini önlemek için açık yönlendirme
+      logger.warn('AGENT', `[${config.name}] Maximum tool calls exceeded, requesting final report...`);
+      // Explicit guidance to prevent the model from losing context and returning a greeting
       history.push({
         role: 'user',
         content:
-          'TÜM ARAÇLAR TAMAMLANDI. Yukarıda çalıştırılan araçların sonuçlarını kullanarak ' +
-          'nihai Markdown raporunu ŞİMDİ yaz. ' +
-          'Yeni araç çağırma — sadece mevcut bulgulardan oluşan tam ve detaylı final rapor sun. ' +
-          'Selamlama veya "nasıl yardımcı olabilirim" YAZMA.',
+          'ALL TOOLS COMPLETED. Using the results from the tools executed above, ' +
+          'write the final Markdown report NOW. ' +
+          'Do not call any new tools — present a complete and detailed final report from existing findings only. ' +
+          'Do NOT write a greeting or "how can I help you".',
       });
     }
 
     logger.agentThinking(config.name);
 
-    // OpenAI SDK: create() metodu 2 overload'a sahip:
-    //   1) stream:false → ChatCompletion döner
-    //   2) stream:true  → Stream<ChatCompletionChunk> döner
-    // TypeScript her iki durumu da kapsayan union tip çıkarımı yapar: Stream | ChatCompletion
-    // Biz stream:true kullanmadığımız için her zaman ChatCompletion gelir,
-    // ama TS bunu bilemez → .choices erişimi derleme hatası verir (Stream'de .choices yok).
-    // Çözüm: `any` tipi ile TS tip kontrolünü atlıyoruz + her çağrıda `as ChatCompletion` cast.
+    // OpenAI SDK: create() method has 2 overloads:
+    //   1) stream:false → returns ChatCompletion
+    //   2) stream:true  → returns Stream<ChatCompletionChunk>
+    // TypeScript infers a union type covering both: Stream | ChatCompletion
+    // Since we don't use stream:true, we always get ChatCompletion,
+    // but TS can't know this → .choices access causes a compile error (Stream has no .choices).
+    // Solution: skip TS type checking with `any` type + cast as ChatCompletion on each call.
     let response: ChatCompletion | undefined;
     try {
-      response = (await _client.chat.completions.create({
+      response = await createTrackedCompletion({
         model: config.model ?? DEFAULT_MODEL,
         messages: sanitizeHistoryForProvider(history),
         tools: config.tools.length > 0 ? config.tools : undefined,
         tool_choice: config.tools.length > 0 ? toolChoice : undefined,
         max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-      }) as ChatCompletion);
+      }, {
+        reason: 'initial',
+      });
     } catch (apiError: unknown) {
       const msg = apiError instanceof Error ? apiError.message : String(apiError);
       const currentModel = config.model ?? DEFAULT_MODEL;
 
-      // Alibaba content filter — PII içerik algılandınca fallback modele geç
+      // Alibaba content filter — switch to fallback model when PII content is detected
       if (msg.includes('DataInspectionFailed') || msg.includes('inappropriate content')) {
         const fallbackModel = FALLBACK_MODELS[0]; // Gemini
-        logger.warn('AGENT', `[${config.name}] Alibaba içerik filtresi → ${fallbackModel} modeline geçiliyor...`);
+        logger.warn('AGENT', `[${config.name}] Alibaba content filter → switching to ${fallbackModel} model...`);
         try {
-          response = (await _client.chat.completions.create({
+          response = await createTrackedCompletion({
             model: fallbackModel,
             messages: sanitizeHistoryForProvider(history),
             tools: config.tools.length > 0 ? config.tools : undefined,
             tool_choice: config.tools.length > 0 ? toolChoice : undefined,
             max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-          }) as ChatCompletion);
+          }, {
+            reason: 'content-filter-fallback',
+          });
         } catch (fallbackErr) {
-          // Fallback model de reddedirse → graceful degradation, crash etme
-          logger.warn('AGENT', `[${config.name}] Fallback model de başarısız — içerik filtresi atlanamıyor.`);
+          // If fallback model also refuses → graceful degradation, don't crash
+          logger.warn('AGENT', `[${config.name}] Fallback model also failed — content filter cannot be bypassed.`);
           return {
-            finalResponse: '⚠️ Bu sorgu içerik filtresine takıldı. Soruyu farklı bir şekilde ifade etmeyi veya konuyu değiştirmeyi dene.',
+            finalResponse: '⚠️ This query was caught by the content filter. Try rephrasing the question or changing the topic.',
             toolsUsed,
             toolCallCount,
             history,
           };
         }
       }
-      // OpenRouter rate limit — exponential backoff + fallback model zinciri
+      // OpenRouter rate limit — exponential backoff + fallback model chain
       else if (msg.includes('429') || msg.toLowerCase().includes('rate limit') || msg.toLowerCase().includes('too many requests')) {
-        // 1. deneme: ayni model, 5s bekle
+        // 1st attempt: same model, wait 5s
         const waitMs = 5000;
-        logger.warn('AGENT', `[${config.name}] Rate limit (429) — ${waitMs / 1000}s bekleyip tekrar deneniyor...`);
+        logger.warn('AGENT', `[${config.name}] Rate limit (429) — waiting ${waitMs / 1000}s before retrying...`);
         await _delay(waitMs);
         try {
-          response = (await _client.chat.completions.create({
+          response = await createTrackedCompletion({
             model: currentModel,
             messages: sanitizeHistoryForProvider(history),
             tools: config.tools.length > 0 ? config.tools : undefined,
             tool_choice: config.tools.length > 0 ? toolChoice : undefined,
             max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-          }) as ChatCompletion);
+          }, {
+            reason: 'rate-limit-retry',
+          });
         } catch (retryErr) {
-          // 2. deneme: fallback modelleri sirayla dene
+          // 2nd attempt: try fallback models sequentially
           const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
           if (retryMsg.includes('429') || retryMsg.toLowerCase().includes('rate limit')) {
             for (const fbModel of FALLBACK_MODELS) {
-              if (fbModel === currentModel) continue; // ayni modeli atla
-              logger.warn('AGENT', `[${config.name}] 429 devam — fallback deneniyor: ${fbModel}`);
+              if (fbModel === currentModel) continue; // skip same model
+              logger.warn('AGENT', `[${config.name}] 429 persists — trying fallback: ${fbModel}`);
               await _delay(2000);
               try {
-                response = (await _client.chat.completions.create({
+                response = await createTrackedCompletion({
                   model: fbModel,
                   messages: sanitizeHistoryForProvider(history),
                   tools: config.tools.length > 0 ? config.tools : undefined,
                   tool_choice: config.tools.length > 0 ? toolChoice : undefined,
                   max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-                }) as ChatCompletion);
-                logger.info('AGENT', `[${config.name}] Fallback basarili: ${fbModel}`);
-                break; // basarili → donguden cik
+                }, {
+                  reason: 'rate-limit-fallback',
+                });
+                logger.info('AGENT', `[${config.name}] Fallback successful: ${fbModel}`);
+                break; // success → exit loop
               } catch {
-                // bu fallback de basarisiz → sonrakini dene
+                // this fallback also failed → try next
                 continue;
               }
             }
             if (!response?.choices?.[0]) {
-              throw new Error(`Tum modeller rate limit (429) — biraz bekle ve tekrar dene.`);
+              throw new Error(`All models rate limited (429) — wait a moment and try again.`);
             }
           } else {
             throw retryErr;
           }
         }
       }
-        // Diğer geçici hatalar (502, 504, 529) için aynı modelde retry
+        // Other transient errors (502, 504, 529) — retry with same model
       else if (msg.includes('502') || msg.includes('504') || msg.includes('529') || msg.includes('InternalError') || msg.toLowerCase().includes('aborted') || msg.toLowerCase().includes('timeout')) {
-        logger.warn('AGENT', `[${config.name}] API geçici hata (${msg.slice(0, 60)}...), 3s bekleyip tekrar deneniyor...`);
+        logger.warn('AGENT', `[${config.name}] API transient error (${msg.slice(0, 60)}...), waiting 3s before retrying...`);
         await _delay(3000);
-        response = (await _client.chat.completions.create({
+        response = await createTrackedCompletion({
           model: currentModel,
           messages: sanitizeHistoryForProvider(history),
           tools: config.tools.length > 0 ? config.tools : undefined,
           tool_choice: config.tools.length > 0 ? toolChoice : undefined,
           max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-        }) as ChatCompletion);
+        }, {
+          reason: 'transient-retry',
+        });
       }
       else {
         throw apiError;
       }
     }
 
-    // OpenRouter bazen hata durumunda choices olmaksızın obje döndürür
+    // OpenRouter sometimes returns an object without choices on error
     const respAny = response as unknown as Record<string, unknown>;
     if (!response?.choices?.[0]) {
       if (respAny['error']) {
         const upstreamErr = JSON.stringify(respAny['error']);
-        // Gerçek hata içeriğini logla — neyin kırıldığını anlamak için
-        logger.error('AGENT', `[${config.name}] OpenRouter upstream hatası: ${upstreamErr.slice(0, 500)}`);
+        // Log actual error content — to understand what broke
+        logger.error('AGENT', `[${config.name}] OpenRouter upstream error: ${upstreamErr.slice(0, 500)}`);
 
-        // 429 rate limit → fallback model zinciri dene (response body içinde gelen 429)
+        // 429 rate limit → try fallback model chain (429 received in response body)
         if (upstreamErr.includes('429') || upstreamErr.toLowerCase().includes('rate limit') || upstreamErr.toLowerCase().includes('too many requests')) {
           const currentModel = config.model ?? DEFAULT_MODEL;
           for (const fbModel of FALLBACK_MODELS) {
             if (fbModel === currentModel) continue;
-            logger.warn('AGENT', `[${config.name}] Response-body 429 → fallback deneniyor: ${fbModel}`);
+            logger.warn('AGENT', `[${config.name}] Response-body 429 → trying fallback: ${fbModel}`);
             await _delay(2000);
             try {
-              response = (await _client.chat.completions.create({
+              response = await createTrackedCompletion({
                 model: fbModel,
                 messages: sanitizeHistoryForProvider(history),
                 tools: config.tools.length > 0 ? config.tools : undefined,
                 tool_choice: config.tools.length > 0 ? toolChoice : undefined,
                 max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-              }) as ChatCompletion);
+              }, {
+                reason: 'response-body-rate-limit-fallback',
+              });
               if (response?.choices?.[0]) {
-                logger.info('AGENT', `[${config.name}] Fallback başarılı: ${fbModel}`);
+                logger.info('AGENT', `[${config.name}] Fallback successful: ${fbModel}`);
                 break;
               }
             } catch {
@@ -216,62 +296,66 @@ export async function runAgentLoop(
             }
           }
           if (!response?.choices?.[0]) {
-            throw new Error(`Tüm modeller rate limit (429) — biraz bekle ve tekrar dene.`);
+            throw new Error(`All models rate limited (429) — wait a moment and try again.`);
           }
         }
-        // Alibaba içerik filtresi → fallback modele geç
+        // Alibaba content filter → switch to fallback model
         else if (upstreamErr.includes('DataInspectionFailed')) {
           const fallbackModel = FALLBACK_MODELS[0];
-          logger.warn('AGENT', `[${config.name}] Alibaba DataInspection → ${fallbackModel} fallback deneniyor...`);
-          response = (await _client.chat.completions.create({
+          logger.warn('AGENT', `[${config.name}] Alibaba DataInspection → trying ${fallbackModel} fallback...`);
+          response = await createTrackedCompletion({
             model: fallbackModel,
             messages: sanitizeHistoryForProvider(history),
             tools: config.tools.length > 0 ? config.tools : undefined,
             tool_choice: config.tools.length > 0 ? toolChoice : undefined,
             max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-          }) as ChatCompletion);
-          // Fallback sonrası tekrar kontrol et
+          }, {
+            reason: 'response-body-content-filter-fallback',
+          });
+          // Check again after fallback
           if (!response?.choices?.[0]) {
-            throw new Error(`Model hatası (fallback de başarısız): ${upstreamErr.slice(0, 200)}`);
+            throw new Error(`Model error (fallback also failed): ${upstreamErr.slice(0, 200)}`);
           }
         }
-        // Geçersiz JSON argümanı hatası → modele düzeltme fırsatı ver (maks 3 deneme)
-        // 504 upstream timeout / operation aborted → fallback model zinciri dene
+        // Invalid JSON argument error → give the model a chance to correct (max 3 attempts)
+        // 504 upstream timeout / operation aborted → try fallback model chain
         else if (upstreamErr.includes('504') || upstreamErr.toLowerCase().includes('aborted') || upstreamErr.toLowerCase().includes('timeout')) {
           const currentModel504 = config.model ?? DEFAULT_MODEL;
-          logger.warn('AGENT', `[${config.name}] 504/timeout upstream hatası → fallback model zinciri deneniyor...`);
+          logger.warn('AGENT', `[${config.name}] 504/timeout upstream error → trying fallback model chain...`);
           let recovered = false;
           for (const fbModel of FALLBACK_MODELS) {
             if (fbModel === currentModel504) continue;
             await _delay(3000);
             try {
-              response = (await _client.chat.completions.create({
+              response = await createTrackedCompletion({
                 model: fbModel,
                 messages: sanitizeHistoryForProvider(history),
                 tools: config.tools.length > 0 ? config.tools : undefined,
                 tool_choice: config.tools.length > 0 ? toolChoice : undefined,
                 max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-              }) as ChatCompletion);
+              }, {
+                reason: 'response-body-timeout-fallback',
+              });
               if (response?.choices?.[0]) {
-                logger.info('AGENT', `[${config.name}] 504 sonrası fallback başarılı: ${fbModel}`);
+                logger.info('AGENT', `[${config.name}] Fallback successful after 504: ${fbModel}`);
                 recovered = true;
                 break;
               }
             } catch { continue; }
           }
           if (!recovered || !response?.choices?.[0]) {
-            throw new Error(`504 upstream timeout — tüm fallback modeller başarısız. Biraz bekleyip tekrar dene.`);
+            throw new Error(`504 upstream timeout — all fallback models failed. Wait a moment and try again.`);
           }
         }
         else if (upstreamErr.includes('function.arguments') || upstreamErr.includes('InvalidParameter')) {
-          // Araçlar devre dışıyken veya 3 düzeltme sonrası model hâlâ araç çağırıyorsa
+          // When tools are disabled or model still tries to call tools after 3 corrections
           if (toolsDisabled || totalCorrectionAttempts >= 3) {
             forceTextRetries++
             if (forceTextRetries > 1) {
-              // 2. denemede bile başarısız → temiz bir API çağrısı yap (session file'lardan zengin context ile)
-              logger.warn('AGENT', `[${config.name}] Model araç çağırmakta ısrarcı — session file'dan context ile temiz metin yanıtı deneniyor.`)
+              // Still failing on 2nd attempt → make a clean API call (with rich context from session files)
+              logger.warn('AGENT', `[${config.name}] Model insists on calling tools — trying clean text response with context from session files.`)
 
-              // Session dosyalarından zengin context oku (2000 char sınırı yerine)
+              // Read rich context from session files (instead of 2000 char limit)
               let contextSnippet = ''
               const sessionDir = path.resolve(__dirname, '../../.osint-sessions')
               const sessionFiles = [
@@ -286,38 +370,41 @@ export async function runAgentLoop(
                 try {
                   const content = await readFile(path.join(sessionDir, f), 'utf-8')
                   if (content.length > 100) {
-                    // Her session file'dan en fazla 3000 char al, toplamda max 8000
-                    const slice = content.length > 3000 ? content.slice(0, 3000) + '\n[...kısaltıldı]' : content
+                    // Take at most 3000 chars from each session file, max 8000 total
+                    const slice = content.length > 3000 ? content.slice(0, 3000) + '\n[...truncated]' : content
                     contextSnippet += `\n\n--- ${f} ---\n${slice}`
                     if (contextSnippet.length > 8000) break
                   }
-                } catch { /* dosya yoksa atla */ }
+                } catch { /* skip if file doesn't exist */ }
               }
 
-              // Session file boşsa history'den al
+              // If session files are empty, get context from history
               if (contextSnippet.length < 200) {
                 const toolResults = history
                   .filter(m => m.role === 'tool' && typeof m.content === 'string')
                   .map(m => (m.content as string))
                 contextSnippet = toolResults.join('\n---\n')
                 if (contextSnippet.length > 6000) {
-                  contextSnippet = contextSnippet.slice(0, 6000) + '\n[...kısaltıldı]'
+                  contextSnippet = contextSnippet.slice(0, 6000) + '\n[...truncated]'
                 }
               }
 
-              const lastUserMsg = [...history].reverse().find(m => m.role === 'user' && typeof m.content === 'string' && !(m.content as string).startsWith('ARAÇ ÇAĞRISI') && !(m.content as string).startsWith('JSON'))
-              const userQuestion = lastUserMsg && typeof lastUserMsg.content === 'string' ? lastUserMsg.content : 'Kullanıcı sorusu'
+              const lastUserMsg = [...history].reverse().find(m => m.role === 'user' && typeof m.content === 'string' && !(m.content as string).startsWith('TOOL_CALL_DISABLED') && !(m.content as string).startsWith('JSON'))
+              const userQuestion = lastUserMsg && typeof lastUserMsg.content === 'string' ? lastUserMsg.content : 'User question'
 
               try {
-                const cleanResponse = (await _client.chat.completions.create({
+                const cleanResponse = await createTrackedCompletion({
                   model: config.model ?? DEFAULT_MODEL,
                   messages: [
-                    { role: 'system', content: 'Sen OSINT araştırma asistanısın. Sana verilen araştırma verilerini analiz edip Markdown formatında özetle. Hiçbir araç çağırma — sadece düz metin yaz.' },
-                    { role: 'user', content: `Kullanıcı şunu sordu: "${userQuestion}"\n\nAşağıda araştırma verileri var. Bunları kullanarak detaylı bir Markdown raporu oluştur:\n\n${contextSnippet}` },
+                    { role: 'system', content: 'You are an OSINT research assistant. Analyze the provided research data and summarize it in Markdown format. Do not call any tools — only write plain text.' },
+                    { role: 'user', content: `The user asked: "${userQuestion}"\n\nBelow is the research data. Create a detailed Markdown report using this data:\n\n${contextSnippet}` },
                   ],
-                  // tools parametresi yok — model araç çağıramaz
+                  // no tools parameter — model cannot call tools
                   max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-                }) as ChatCompletion)
+                }, {
+                  reason: 'clean-text-recovery',
+                  phase: 'recovery',
+                })
                 const text = cleanResponse.choices?.[0]?.message?.content?.trim()
                 if (text) {
                   const cleaned = stripThinkingTokens(text)
@@ -326,23 +413,23 @@ export async function runAgentLoop(
                   }
                 }
               } catch (cleanErr) {
-                logger.error('AGENT', `[${config.name}] Temiz API çağrısı da başarısız: ${(cleanErr as Error).message}`)
+                logger.error('AGENT', `[${config.name}] Clean API call also failed: ${(cleanErr as Error).message}`)
               }
               return {
-                finalResponse: 'Model yanıt üretilemedi. Toplanan veriler session dosyasına kaydedildi — `.osint-sessions/` klasörüne bakabilirsin.',
+                finalResponse: 'Model could not generate a response. Collected data has been saved to session files — check the `.osint-sessions/` directory.',
                 toolCallCount,
                 toolsUsed,
                 history,
               }
             }
-            logger.warn('AGENT', `[${config.name}] JSON hatası + araç devre dışı — metin yanıt zorlanıyor (${forceTextRetries}/1).`)
-            // Bozuk history'yi düzelt: tool mesajı sonrası assistant placeholder ekle
+            logger.warn('AGENT', `[${config.name}] JSON error + tools disabled — forcing text response (${forceTextRetries}/1).`)
+            // Fix broken history: add assistant placeholder after tool message
             const lastMsgForce = history[history.length - 1];
             if (lastMsgForce && (lastMsgForce.role === 'tool' || lastMsgForce.role === 'user')) {
               if (lastMsgForce.role === 'tool') {
-                history.push({ role: 'assistant', content: 'Araç çağrısı başarısız, text yanıt veriliyor.' });
+                history.push({ role: 'assistant', content: 'Tool call failed, providing text response.' });
               }
-              history.push({ role: 'user', content: 'Araç çağırma. Topladığın tüm verileri doğrudan metin olarak sun.' });
+              history.push({ role: 'user', content: 'Do not call any tools. Present all collected data directly as text.' });
             }
             config = { ...config, tools: [] }
             continue
@@ -350,28 +437,28 @@ export async function runAgentLoop(
 
           correctionRetries++;
           totalCorrectionAttempts++;
-          logger.warn('AGENT', `[${config.name}] Model geçersiz JSON üretmişti, düzeltme isteniyor... (deneme ${correctionRetries}/3, toplam: ${totalCorrectionAttempts})`);
+          logger.warn('AGENT', `[${config.name}] Model produced invalid JSON, requesting correction... (attempt ${correctionRetries}/3, total: ${totalCorrectionAttempts})`);
 
-          // KRİTİK: Eğer history'nin son mesajı 'tool' ise, correction user mesajı öncesinde
-          // bir placeholder assistant mesajı ekle. Aksi halde:
-          //   tool → user  (GEÇERSİZ FORMAT — OpenRouter/model bozuk yanıt üretiyor)
-          //   tool → assistant → user  (DOĞRU FORMAT)
+          // CRITICAL: If the last message in history is 'tool', add a placeholder assistant message
+	          // before the correction user message. Otherwise:
+          // tool → user  (INVALID FORMAT — OpenRouter/model produces broken response)
+          //   tool → assistant → user  (CORRECT FORMAT)
           const lastMsg = history[history.length - 1];
           if (lastMsg && lastMsg.role === 'tool') {
             history.push({
               role: 'assistant',
-              content: 'Araç çağrısı geçersiz JSON üretti, düzeltiliyor.',
+              content: 'Tool call produced invalid JSON, correcting.',
             });
           }
 
-          // Global cap: 3 toplam denemeden sonra zorla metin yanıt al
+          // Global cap: after 3 total attempts, force text response
           if (totalCorrectionAttempts >= 3) {
-            logger.error('AGENT', `[${config.name}] JSON düzeltme 3 kez başarısız — araç çağrısı devre dışı bırakılıyor.`);
+            logger.error('AGENT', `[${config.name}] JSON correction failed 3 times — disabling tool calls.`);
             history.push({
               role: 'user',
               content:
-                'ARAÇ ÇAĞRISI DEVRE DIŞI. Topladığın tüm bilgileri kullanarak doğrudan Markdown metin olarak yanıt ver. ' +
-                'Herhangi bir araç çağırma — sadece metin yaz.',
+                'TOOL_CALL_DISABLED. Respond directly in Markdown text using all the information you have collected. ' +
+                'Do not call any tools — write text only.',
             });
             toolCallCount = maxToolCalls + 1;
             correctionRetries = 0;
@@ -383,22 +470,22 @@ export async function runAgentLoop(
             history.push({
               role: 'user',
               content:
-                'ARAÇ ÇAĞRISI BAŞARISIZ. Araç çağırmayı bırak ve topladığın verileri doğrudan Markdown metin olarak özetle. ' +
-                'Hiçbir araç çağırma — save_finding, generate_report dahil HIÇBIR ŞEY. Sadece düz metin yaz.',
+                'TOOL_CALL_DISABLED FAILED. Stop calling tools and summarize the collected data directly in Markdown text. ' +
+                'Do not call any tools — not save_finding, not generate_report, NOTHING. Write plain text only.',
             });
           } else {
             history.push({
               role: 'user',
-              content: 'Önceki araç çağrısında JSON formatı hatalıydı. ' +
-                'Tek bir araç çağır ve argümanları çok kısa tut. ' +
-                'Çok fazla araç çağırmaya çalışıyorsan VAZGEÇ ve sonuçları metin olarak yaz.',
+              content: 'The previous tool call had invalid JSON format. ' +
+                'Call a single tool and keep the arguments very short. ' +
+                'If you are trying to call too many tools, STOP and write the results as text.',
             });
           }
           continue;
         }
-        throw new Error(`Upstream API hatası: ${upstreamErr}`);
+        throw new Error(`Upstream API error: ${upstreamErr}`);
       }
-      throw new Error(`Geçersiz API yanıtı: choices yok. Yanıt: ${JSON.stringify(response)}`);
+      throw new Error(`Invalid API response: no choices. Response: ${JSON.stringify(response)}`);
     }
 
     const message = response.choices[0].message;
@@ -412,59 +499,62 @@ export async function runAgentLoop(
         ? message.refusal
         : '';
 
-      // Thinking model <think>...</think> içine her şeyi yazıp final cevabı boş bırakabilir.
-      // stripThinkingTokens() bunları siler → cleanContent = "".
-      // Çözüm: artan agresiflikte 3 retry:
-      //   1. Nazikçe raporla iste
-      //   2. Araçları kapat, sadece metin iste
-      //   3. Yeni bir temiz API çağrısı yap (system prompt + sadece son tool sonuçları)
+      // Thinking models may write everything inside <think>...</think> and leave the final response empty.
+      // stripThinkingTokens() removes those tags → cleanContent = "".
+      // Solution: 3 retries with increasing aggressiveness:
+      //   1. Politely request a report
+      //   2. Disable tools, request text only
+      //   3. Make a new clean API call (system prompt + only the last tool results)
       if (cleanContent.length === 0 && emptyRetries < 3) {
         emptyRetries++;
-        logger.warn('AGENT', `[${config.name}] Model boş yanıt döndürdü (deneme ${emptyRetries}/3)...`);
+        logger.warn('AGENT', `[${config.name}] Model returned empty response (attempt ${emptyRetries}/3)...`);
 
         if (emptyRetries === 1) {
           history.push({
             role: 'user',
-            content: 'ÖNEMLI: Yukarıdaki araç sonuçlarını kullanarak şimdi kapsamlı bir Markdown raporu yaz. ' +
-              'Cevabını DOĞRUDAN <think> etiketi DIŞINDA yaz. Düşünme bloğu değil, nihai rapor istiyorum.'
+            content: 'IMPORTANT: Using the tool results above, write a comprehensive Markdown report NOW. ' +
+              'Write your answer DIRECTLY OUTSIDE of any <think> tag. I want the final report, not a thinking block.'
           });
         } else if (emptyRetries === 2) {
-          // Araçları tamamen kapat, sadece metin yanıtı iste
+          // Disable tools completely, request text-only response
           config = { ...config, tools: [] };
           history.push({
             role: 'user',
-            content: 'Araç çağırmayı bırak. Yukarıda topladığın tüm bilgileri SADECE DÜZ METİN olarak özetle. ' +
-              'Markdown başlıkları, listeler kullan. <think> etiketleri kullanma — sadece final cevap yaz.'
+            content: 'Stop calling tools. Summarize ALL the information you have collected above as PLAIN TEXT ONLY. ' +
+              'Use Markdown headings and lists. Do NOT use <think> tags — write only the final answer.'
           });
         } else {
-          // 3. deneme: history'den tool sonuçlarını alıp temiz çağrı yap
+          // 3rd attempt: collect tool results from history and make a clean API call
           const toolResults = history
             .filter(m => m.role === 'tool' && typeof m.content === 'string')
             .map(m => m.content as string)
             .join('\n---\n')
             .slice(0, 8000);
           try {
-            const cleanResp = (await _client.chat.completions.create({
+            const cleanResp = await createTrackedCompletion({
               model: config.model ?? DEFAULT_MODEL,
               messages: [
-                { role: 'system', content: 'Araştırma verilerini Markdown formatında özetleyen bir asistansın. Sadece final raporu yaz, <think> kullanma.' },
-                { role: 'user', content: `Araştırma verileri:\n${toolResults}\n\nBu verileri kullanarak detaylı bir Markdown raporu oluştur.` },
+                { role: 'system', content: 'You are an assistant that summarizes research data in Markdown format. Write only the final report, do not use <think>.' },
+                { role: 'user', content: `Research data:\n${toolResults}\n\nCreate a detailed Markdown report using this data.` },
               ],
               max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
-            }) as ChatCompletion);
+            }, {
+              reason: 'empty-response-clean-recovery',
+              phase: 'recovery',
+            });
             const text = cleanResp.choices?.[0]?.message?.content?.trim() ?? '';
             const cleaned = stripThinkingTokens(text);
             if (cleaned.length > 50) {
               return { finalResponse: cleaned, toolCallCount, toolsUsed };
             }
-          } catch { /* temiz çağrı da başarısız → aşağıdaki fallback mesajını döndür */ }
+          } catch { /* clean call also failed → return fallback message below */ }
         }
         continue;
       }
 
       const finalText = cleanContent.length > 0
         ? cleanContent
-        : (refusalText || 'Araçlar çalıştı ama model boş yanıt döndürdü.');
+        : (refusalText || 'Tools completed but the model returned an empty response.');
 
       return {
         finalResponse: finalText,
@@ -477,24 +567,25 @@ export async function runAgentLoop(
     for (const toolCall of message.tool_calls) {
       if (toolCall.type !== 'function') continue;
       let result = '';
+      let followUpUserMessage: string | null = null;
       const toolName = toolCall.function.name;
       try {
         const args = JSON.parse(toolCall.function.arguments) as Record<string, string>;
-        // Normalize cache key: argümanları sıralayarak key üret (sıra farkı cache miss'i engeller)
+        // Normalize cache key: sort arguments to generate key (order differences don't cause cache misses)
         const sortedArgs = Object.keys(args).sort().reduce<Record<string, string>>((acc, k) => { acc[k] = args[k]; return acc; }, {});
         const cacheKey = `${toolName}:${JSON.stringify(sortedArgs)}`;
 
-        // Per-tool hard limit kontrolü
+        // Per-tool hard limit check
         perToolCount[toolName] = (perToolCount[toolName] ?? 0) + 1;
         const toolLimit = PER_TOOL_LIMITS[toolName];
         if (toolLimit && perToolCount[toolName] > toolLimit) {
-          logger.warn('AGENT', `[${config.name}] ${toolName} hard limiti aşıldı (${toolLimit}). Atlanıyor.`);
-          result = `[TOOL_LIMIT] ${toolName} bu oturumda ${toolLimit} kez çağrıldı — limit doldu. Elindeki verilerle devam et, rapor yaz.`;
+          logger.warn('AGENT', `[${config.name}] ${toolName} hard limit exceeded (${toolLimit}). Skipping.`);
+          result = `[TOOL_LIMIT] ${toolName} has been called ${toolLimit} times in this session — limit reached. Continue with existing data and write a report.`;
         } else if (callCache.has(cacheKey)) {
-          logger.warn('AGENT', `[${config.name}] Duplikat tool çağrısı engellendi: ${toolName} (aynı argümanlar)`);
-          result = `[DUPLICATE_CALL] Bu sorgu daha önce çağrıldı ve sonuç zaten history'de. Farklı bir sorgu dene ya da bir sonraki faza geç.\n\n[cached: ${(callCache.get(cacheKey) ?? '').slice(0, 500)}...]`;
+          logger.warn('AGENT', `[${config.name}] Duplicate tool call blocked: ${toolName} (same arguments)`);
+          result = `[DUPLICATE_CALL] This query was called before and the result is already in history. Try a different query or move to the next phase.\n\n[cached: ${(callCache.get(cacheKey) ?? '').slice(0, 500)}...]`;
         } else {
-          // Kısa bir arg özeti oluştur (log paneline yazar)
+          // Build a short arg summary (written to log panel)
           const argSummary = Object.entries(args)
             .slice(0, 2)
             .map(([k, v]) => `${k}=${String(v).slice(0, 40)}`)
@@ -502,14 +593,36 @@ export async function runAgentLoop(
           emitProgress(`  🔧 ${toolName}(${argSummary})`);
           result = await config.executeTool(toolName, args);
           callCache.set(cacheKey, result);
-          // TUI: kısa özet (ilk satır, 80 karakter)
+
+          // Stagnation detection: count new URLs in search results
+          if (toolName === 'search_web' || toolName === 'search_web_multi') {
+            const urlMatches = result.match(/https?:\/\/[^\s|\]]+/g) || [];
+            const newUrls = urlMatches.filter(u => !seenUrls.has(u));
+            newUrls.forEach(u => seenUrls.add(u));
+            if (newUrls.length <= 2) {
+              lowYieldStreak++;
+            } else {
+              lowYieldStreak = 0;
+            }
+            if (lowYieldStreak >= LOW_YIELD_THRESHOLD) {
+              logger.warn('AGENT', `[${config.name}] Stagnation detected: ${lowYieldStreak} consecutive low-yield searches. Forcing synthesis.`);
+              emitProgress(`⚠️ [${config.name}] Stagnation: ${lowYieldStreak} searches with no new results — forcing report synthesis.`);
+              followUpUserMessage =
+                '⚠️ STAGNATION DETECTED: Your recent searches are returning no new information. ' +
+                'STOP searching immediately. Synthesize a final report from the data you already have. ' +
+                'If you cannot fully answer the query, state what you found and what is missing.';
+              lowYieldStreak = 0; // Reset to prevent repeated injections
+            }
+          }
+
+          // TUI: short preview (first line, 80 chars)
           const resultPreview = result.split('\n')[0].slice(0, 80);
           emitProgress(`  ✓ ${toolName} → ${resultPreview}`);
-          // Web log: tam çıktı (kırpılmamış)
+          // Web log: full output (untruncated)
           emitToolDetail(toolName, result);
         }
       } catch (error) {
-        result = `Tool hatası (${toolName}): ${(error as Error).message}`;
+        result = `Tool error (${toolName}): ${(error as Error).message}`;
         emitProgress(`  ❌ ${toolName} → ${(error as Error).message.slice(0, 80)}`);
       }
       history.push({
@@ -517,6 +630,12 @@ export async function runAgentLoop(
         tool_call_id: toolCall.id,
         content: normalizeToolContent(result),
       });
+      if (followUpUserMessage) {
+        history.push({
+          role: 'user',
+          content: followUpUserMessage,
+        });
+      }
       toolsUsed[toolName] = (toolsUsed[toolName] ?? 0) + 1;
       toolCallCount++;
     }

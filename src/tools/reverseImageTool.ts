@@ -1,7 +1,7 @@
 /**
- * Tersine Görsel Arama Aracı (Reverse Image Search)
- * SerpAPI (Google Lens Motoru) kullanarak görselin internette ilk nerede ve ne zaman çıktığını bulur.
- * Dezenformasyon, fact-checking ve OSINT görsel takibi için kullanılır.
+ * Reverse Image Search Tool
+ * Uses SerpAPI (Google Lens) to find where and when an image first appeared online.
+ * Used for disinformation detection, fact-checking, and OSINT image tracking.
  */
 
 export interface ReverseImageResult {
@@ -24,7 +24,7 @@ export async function searchReverseImage(imageUrl: string): Promise<ReverseImage
       imageUrl,
       totalMatches: 0,
       bestMatches: [],
-      error: "SERPAPI_API_KEY bulunamadı. Lütfen .env dosyasına ekleyin.",
+      error: "SERPAPI_API_KEY not found. Please add it to .env.",
     };
   }
 
@@ -42,15 +42,15 @@ export async function searchReverseImage(imageUrl: string): Promise<ReverseImage
         imageUrl,
         totalMatches: 0,
         bestMatches: [],
-        error: `SerpApi Hatası: ${data.error}`,
+        error: `SerpApi error: ${data.error}`,
       };
     }
 
     const visualMatches = data.visual_matches || [];
     
-    // Gelen sonuçlardan sadece en tutarlı ilk 5 sonucu (fact-checking için yeterli) al
+    // Take only the top 5 most consistent results (sufficient for fact-checking)
     const mappedMatches = visualMatches.slice(0, 5).map((match: any) => ({
-      title: match.title || "Adsız Başlık",
+      title: match.title || "Untitled",
       link: match.link || "",
       source: match.source || "Bilinmeyen Kaynak",
       thumbnail: match.thumbnail
@@ -67,31 +67,31 @@ export async function searchReverseImage(imageUrl: string): Promise<ReverseImage
       imageUrl,
       totalMatches: 0,
       bestMatches: [],
-      error: `İstek başarısız oldu: ${(error as Error).message}`,
+      error: `Request failed: ${(error as Error).message}`,
     };
   }
 }
 
 export function formatReverseImageResult(result: ReverseImageResult): string {
   if (result.error) {
-    return `❌ Tersine Görsel Arama Hatası: ${result.error}`;
+    return `❌ Reverse Image Search Error: ${result.error}`;
   }
 
   if (result.totalMatches === 0) {
-    return `ℹ️ Google Lens bu görsel için internette geçmiş bir iz bulamadı. Orijinal/Özgün bir fotoğraf olabilir.`;
+    return `ℹ️ Google Lens found no prior trace of this image online. It may be an original/unique photo.`;
   }
 
   const lines = [
-    `🔍 Görsel Analiz (Google Lens) Tamamlandı!`,
-    `📸 Aranan Görsel: ${result.imageUrl}`,
-    `🧩 Toplam Eşleşen Kaynak Sayısı: ${result.totalMatches}`,
+    `🔍 Visual Analysis (Google Lens) Complete!`,
+    `📸 Searched Image: ${result.imageUrl}`,
+    `🧩 Total Matching Sources: ${result.totalMatches}`,
     `\n🚨 **En Eski / En Benzer Kaynaklar:**`
   ];
 
   result.bestMatches.forEach((match, index) => {
-    lines.push(`\n[${index + 1}] Başlık: ${match.title}`);
+    lines.push(`\n[${index + 1}] Title: ${match.title}`);
     lines.push(`    Kaynak Site: ${match.source}`);
-    lines.push(`    Bağlantı: ${match.link}`);
+    lines.push(`    Link: ${match.link}`);
   });
 
   lines.push(`\n🤖 **Ajan Yönergesi:** Yukarıdaki kaynak web sitelerine ve başlıklarına bak. Eğer fotoğraf kullanıcının iddia ettiği olaydan alakasız bir olayı (örneğin eski bir depremi, başka bir ülkedeki patlamayı) anlatıyorsa, bunun bir 'Dezenformasyon' (Yalan Haber) olduğunu tespit et.`);

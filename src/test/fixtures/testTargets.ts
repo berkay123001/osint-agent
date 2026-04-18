@@ -1,18 +1,18 @@
 /**
- * Test Hedefleri - OSINT Agent Test Senaryolari
- * 
- * Bu dosya agent'i test etmek icin kullanilabilecek gercek veya
- * gercekci test hedeflerini icerir.
- * 
- * NOT: "ethical" olarak isaretlenenler gercek kisilerdir ve
- * bilgileri zaten kamuya aciktir. Digerleri kurgusal/test amaclidir.
+ * Test Targets - OSINT Agent Test Scenarios
+ *
+ * This file contains real or realistic test targets that can be used
+ * to test the agent.
+ *
+ * NOTE: Those marked as "ethical" are real people whose
+ * information is already public. Others are fictional/for testing only.
  */
 
 export interface TestTarget {
   id: string
   description: string
   type: 'real_public' | 'fictional' | 'test_account'
-  ethical: boolean  // Gercek kisi mi? (Etik kurallar acisindan)
+  ethical: boolean  // Is this a real person? (from an ethical standpoint)
   data: {
     username?: string
     email?: string
@@ -24,13 +24,13 @@ export interface TestTarget {
 }
 
 /**
- * GUVENLI TEST HEDEFLERI
- * Bu hedefler test icin guvenlidir, bilgiler kamuya aciktir
+ * SAFE TEST TARGETS
+ * These targets are safe for testing; information is publicly available
  */
 export const SAFE_TEST_TARGETS: TestTarget[] = [
   {
     id: 'octocat',
-    description: 'GitHub\'in resmi maskot hesabi - En temel test',
+    description: 'GitHub official mascot account - Most basic test',
     type: 'real_public',
     ethical: true,
     difficulty: 'easy',
@@ -42,13 +42,13 @@ export const SAFE_TEST_TARGETS: TestTarget[] = [
         'GitHub profili: https://github.com/octocat',
         'Email: octocat@github.com (profile)',
         '8 public repo',
-        'GPG/SSH keys olabilir'
+        'GPG/SSH keys possible'
       ]
     }
   },
   {
     id: 'torvalds',
-    description: 'Linus Torvalds - Linux creator (cok aktif, cok veri)',
+    description: 'Linus Torvalds - Linux creator (very active, lots of data)',
     type: 'real_public',
     ethical: true,
     difficulty: 'easy',
@@ -60,13 +60,13 @@ export const SAFE_TEST_TARGETS: TestTarget[] = [
       expectedFindings: [
         'GitHub: https://github.com/torvalds',
         'Linux kernel commit emailleri',
-        'Cok sayida cross-reference'
+        'Many cross-references'
       ]
     }
   },
   {
     id: 'defunkt',
-    description: 'Chris Wanstrath - GitHub co-founder (aktif degil ama bilgiler var)',
+    description: 'Chris Wanstrath - GitHub co-founder (not active but data exists)',
     type: 'real_public',
     ethical: true,
     difficulty: 'medium',
@@ -83,13 +83,13 @@ export const SAFE_TEST_TARGETS: TestTarget[] = [
 ]
 
 /**
- * KURGUSAL TEST SENARYOLARI
- * Bu senaryolar tamamen kurgusaldir, givenlik acisindan tamamen guvenli
+ * FICTIONAL TEST SCENARIOS
+ * These scenarios are completely fictional, entirely safe from an ethical standpoint
  */
 export const FICTIONAL_SCENARIOS: TestTarget[] = [
   {
     id: 'scenario_1_simple',
-    description: 'Basit: Tek username, acik profil',
+    description: 'Simple: Single username, open profile',
     type: 'fictional',
     ethical: false,
     difficulty: 'easy',
@@ -99,15 +99,15 @@ export const FICTIONAL_SCENARIOS: TestTarget[] = [
       name: 'Demo User',
       platforms: ['GitHub', 'Twitter', 'LinkedIn'],
       expectedFindings: [
-        '3 platformda ayni username',
-        'Acik email adresi',
-        'Profil fotoğrafi cross-reference yapilabilir'
+        'Same username on 3 platforms',
+        'Open email address',
+        'Profile photo can be cross-referenced'
       ]
     }
   },
   {
     id: 'scenario_2_network',
-    description: 'Orta: Birden fazla baglantili hesap (network testi)',
+    description: 'Medium: Multiple linked accounts (network test)',
     type: 'fictional',
     ethical: false,
     difficulty: 'medium',
@@ -117,16 +117,16 @@ export const FICTIONAL_SCENARIOS: TestTarget[] = [
       name: 'Alpha Tester',
       platforms: ['GitHub', 'GitLab', 'Twitter', 'Reddit'],
       expectedFindings: [
-        'Ayni email ile 4 platform',
-        'Twitter bio\'da github linki',
-        'GitHub reposunda Twitter mention',
-        'Network graph testi icin ideal'
+        'Same email on 4 platforms',
+        'GitHub link in Twitter bio',
+        'Twitter mention in GitHub repo',
+        'Ideal for network graph testing'
       ]
     }
   },
   {
     id: 'scenario_3_hard',
-    description: 'Zor: Gizli/privat hesap, minimal iz',
+    description: 'Hard: Hidden/private account, minimal trace',
     type: 'fictional',
     ethical: false,
     difficulty: 'hard',
@@ -134,28 +134,28 @@ export const FICTIONAL_SCENARIOS: TestTarget[] = [
       username: 'ghost_user_x7',
       platforms: ['GitHub (private)', 'Twitter (protected)', 'Forum'],
       expectedFindings: [
-        'Cok az acik veri',
-        'Sadece eski commit emailleri',
-        'Wayback Machine arşivi'
+        'Very little open data',
+        'Only old commit emails',
+        'Wayback Machine archive'
       ]
     }
   }
 ]
 
 /**
- * GITHUB API TEST CASELERI
+ * GITHUB API TEST CASES
  */
 export const GITHUB_TEST_CASES = {
-  // Var olan kullanicilar
+  // Existing users
   existing: [
-    'octocat',      // GitHub maskot
+    'octocat',      // GitHub mascot
     'torvalds',     // Linus
     'defunkt',      // Chris Wanstrath
     'gaearon',      // Dan Abramov
-    'sindresorhus'  // Aktif open source developer
+    'sindresorhus'  // Active open source developer
   ],
   
-  // Olmayan kullanicilar
+  // Non-existent users
   nonexistent: [
     'this_user_does_not_exist_xyz',
     'nonexistent_user_12345_test'
@@ -163,8 +163,8 @@ export const GITHUB_TEST_CASES = {
 }
 
 /**
- * Neo4j Graph Test Datasi
- * Integration testler icin ornek graph
+ * Neo4j Graph Test Data
+ * Sample graph for integration tests
  */
 export const NEO4J_TEST_GRAPH = {
   nodes: [
@@ -185,35 +185,35 @@ export const NEO4J_TEST_GRAPH = {
 }
 
 /**
- * Agent Test Senaryoları
- * Tam akış testi için senaryolar
+ * Agent Test Scenarios
+ * Scenarios for full flow testing
  */
 export const AGENT_TEST_SCENARIOS = [
   {
-    name: 'Basit Username Arama',
+    name: 'Simple Username Search',
     steps: [
-      'Kullanıcı: "octocat hakkında bilgi bul"',
-      'Agent: Sherlock çalıştırır',
-      'Agent: GitHub API çalıştırır',
-      'Agent: Bilgileri graf\'a yazar',
-      'Agent: Özet rapor sunar'
+      'User: "find info about octocat"',
+      'Agent: runs Sherlock',
+      'Agent: runs GitHub API',
+      'Agent: writes info to graph',
+      'Agent: presents summary report'
     ]
   },
   {
-    name: 'Email Bazlı Araştırma',
+    name: 'Email-Based Research',
     steps: [
-      'Kullanıcı: "test@example.com kimde?"',
-      'Agent: holehe çalıştırır (mock)',
-      'Agent: Bulunan platformları raporlar'
+      'User: "who owns test@example.com?"',
+      'Agent: runs holehe (mock)',
+      'Agent: reports found platforms'
     ]
   },
   {
-    name: 'Network Analizi',
+    name: 'Network Analysis',
     steps: [
-      'Kullanıcı: "bu kullanıcıların bağlantısı nedir?"',
-      'Agent: Her iki kullanıcı için araştırma yapar',
-      'Agent: Ortak bağlantıları bulur (email, lokasyon vb)',
-      'Agent: Network graph\'ı görselleştirir'
+      'User: "what is the connection between these users?"',
+      'Agent: researches both users',
+      'Agent: finds shared connections (email, location, etc)',
+      'Agent: visualizes network graph'
     ]
   }
 ]

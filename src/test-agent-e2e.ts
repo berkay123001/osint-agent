@@ -1,6 +1,6 @@
 /**
- * Agent E2E test — LLM'in yeni tool'ları doğru çağırıp çağırmadığını test eder.
- * Her senaryo: kullanıcı mesajı → LLM tool-call → tool executor → sonuç doğrulama
+ * Agent E2E test — Verifies that the LLM correctly calls new tools.
+ * Each scenario: user message → LLM tool-call → tool executor → result validation
  */
 import 'dotenv/config'
 import OpenAI from 'openai'
@@ -75,12 +75,12 @@ async function testScenario(
   executor: (args: Record<string, string>) => Promise<string>
 ): Promise<boolean> {
   console.log(chalk.cyan.bold(`\n━━━ ${name} ━━━`))
-  console.log(chalk.gray(`Kullanıcı: "${userMessage}"`))
+  console.log(chalk.gray(`User: "${userMessage}"`))
 
   const response = await client.chat.completions.create({
     model: MODEL,
     messages: [
-      { role: 'system', content: 'Sen bir OSINT asistanısın. Gerektiğinde araçları kullan.' },
+      { role: 'system', content: 'You are an OSINT assistant. Use tools when needed.' },
       { role: 'user', content: userMessage },
     ],
     tools,
@@ -90,40 +90,40 @@ async function testScenario(
 
   const msg = response.choices[0].message
   if (!msg.tool_calls || msg.tool_calls.length === 0) {
-    console.log(chalk.red(`❌ LLM tool çağırmadı. Yanıt: ${msg.content?.slice(0, 100)}`))
+    console.log(chalk.red(`❌ LLM did not call a tool. Response: ${msg.content?.slice(0, 100)}`))
     return false
   }
 
   const tc = msg.tool_calls[0]
   if (tc.type !== 'function') {
-    console.log(chalk.red(`❌ Function tool bekleniyordu, gelen: ${tc.type}`))
+    console.log(chalk.red(`❌ Expected a function tool, received: ${tc.type}`))
     return false
   }
 
   const calledTool = tc.function.name
   const args = JSON.parse(tc.function.arguments) as Record<string, string>
-  console.log(chalk.yellow(`LLM çağırdı: ${calledTool}(${JSON.stringify(args)})`))
+  console.log(chalk.yellow(`LLM called: ${calledTool}(${JSON.stringify(args)})`))
 
   if (calledTool !== expectedTool) {
-    console.log(chalk.red(`❌ Beklenen: ${expectedTool}, Gelen: ${calledTool}`))
+    console.log(chalk.red(`❌ Expected: ${expectedTool}, Received: ${calledTool}`))
     return false
   }
 
-  // Tool'u çalıştır
+  // Run the tool
   const result = await executor(args)
   const preview = result.slice(0, 200)
-  console.log(chalk.gray(`Sonuç: ${preview}...`))
-  console.log(chalk.green(`✅ ${name} BAŞARILI`))
+  console.log(chalk.gray(`Result: ${preview}...`))
+  console.log(chalk.green(`✅ ${name} PASSED`))
   return true
 }
 
 async function main() {
   const results: boolean[] = []
 
-  // Senaryo 1: Metadata çıkarma
+  // Scenario 1: Metadata extraction
   results.push(await testScenario(
     'SENARYO 1: Metadata Extraction',
-    'Bu görselin metadata bilgilerini çıkar: https://raw.githubusercontent.com/exiftool/exiftool/master/t/images/ExifTool.jpg',
+    'Extract the metadata from this image: https://raw.githubusercontent.com/exiftool/exiftool/master/t/images/ExifTool.jpg',
     'extract_metadata',
     async (args) => {
       const r = await extractMetadataFromUrl(args.url)
@@ -131,10 +131,10 @@ async function main() {
     }
   ))
 
-  // Senaryo 2: GPG Key Parse
+  // Scenario 2: GPG Key Parse
   results.push(await testScenario(
     'SENARYO 2: GPG Key Parse',
-    'jessfraz kullanıcısının GPG key\'indeki gizli email adreslerini bul',
+    'Find the hidden emails in jessfraz\'s GPG key',
     'parse_gpg_key',
     async (args) => {
       const r = await parseGithubGpgKey(args.username)
@@ -142,10 +142,10 @@ async function main() {
     }
   ))
 
-  // Senaryo 3: Wayback Machine
+  // Scenario 3: Wayback Machine
   results.push(await testScenario(
     'SENARYO 3: Wayback Machine',
-    'twitter.com/jack sayfasının arşivlenmiş eski versiyonlarını bul',
+    'Find archived old versions of the twitter.com/jack page',
     'wayback_search',
     async (args) => {
       const r = await waybackSearch(args.url, 5)
@@ -153,21 +153,21 @@ async function main() {
     }
   ))
 
-  // Senaryo 4: Web Fetch
+  // Scenario 4: Web Fetch
   results.push(await testScenario(
     'SENARYO 4: Web Fetch',
-    'Şu sayfanın içeriğini çek ve göster: https://httpbin.org/headers',
+    'Fetch and show the content of this page: https://httpbin.org/headers',
     'web_fetch',
     async (args) => {
       const r = await webFetch(args.url)
-      return r.textContent || r.error || 'boş'
+      return r.textContent || r.error || 'empty'
     }
   ))
 
-  // Sonuç
+  // Results
   const passed = results.filter(Boolean).length
   console.log(chalk.cyan.bold(`\n${'━'.repeat(36)}`))
-  console.log(chalk.bold(`SONUÇ: ${passed}/${results.length} senaryo başarılı`))
+  console.log(chalk.bold(`RESULTS: ${passed}/${results.length} scenarios passed`))
   console.log(chalk.cyan.bold('━'.repeat(36)))
 
   await closeNeo4j()
@@ -175,6 +175,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error('Test hatası:', e)
+  console.error('Test error:', e)
   process.exit(1)
 })

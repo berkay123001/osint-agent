@@ -1,7 +1,7 @@
 /**
  * OSINT Graph Visualization Server
- * Neo4j verisini D3.js force-directed graph olarak tarayıcıda görüntüler.
- * Kullanım: npm run graph
+ * Visualizes Neo4j data as a D3.js force-directed graph in the browser.
+ * Usage: npm run graph
  */
 
 import 'dotenv/config'
@@ -33,12 +33,12 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
-  // Statik dosya sunumu — sadece public/ klasöründen
+  // Static file server — serve only from public/ directory
   const safePath = (req.url === '/' ? '/index.html' : req.url) ?? '/index.html'
   const cleanPath = path.normalize(safePath).replace(/^(\.\.[/\\])+/, '')
   const filePath = path.join(__dirname, 'public', cleanPath)
 
-  // Path traversal koruması
+  // Path traversal protection
   const publicDir = path.join(__dirname, 'public')
   if (!filePath.startsWith(publicDir)) {
     res.writeHead(403)
@@ -69,11 +69,11 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`\n🕸️  OSINT Graph Viewer: http://localhost:${PORT}`)
   console.log(`📊 API endpoint:       http://localhost:${PORT}/api/graph`)
-  console.log(`\nÇıkmak için Ctrl+C\n`)
+  console.log(`\nPress Ctrl+C to exit\n`)
 })
 
 process.on('SIGINT', async () => {
-  console.log('\nKapatılıyor...')
+  console.log('\nShutting down...')
   await closeNeo4j()
   server.close()
   process.exit(0)

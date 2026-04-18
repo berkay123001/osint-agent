@@ -88,7 +88,7 @@ async function waitForNeo4j(): Promise<void> {
     }
   }
 
-  throw new Error('Disposable Neo4j test container hazır olmadı.')
+  throw new Error('Disposable Neo4j test container did not become ready.')
 }
 
 async function runGraphSuite(): Promise<number> {
