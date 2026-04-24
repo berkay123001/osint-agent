@@ -46,6 +46,7 @@ type TelemetrySummary = {
   lastInputTokens: number | null;
   lastInputEstimated: boolean;
   lastContextWindow: number | null;
+  modelCounts: Record<string, number>;
 };
 
 function createEmptyTelemetrySummary(): TelemetrySummary {
@@ -62,6 +63,7 @@ function createEmptyTelemetrySummary(): TelemetrySummary {
     lastInputTokens: null,
     lastInputEstimated: false,
     lastContextWindow: null,
+    modelCounts: {},
   };
 }
 
@@ -81,6 +83,13 @@ function applyTelemetrySummary(telemetry: LLMTelemetryEvent): void {
     lastInputTokens: telemetry.promptTokens ?? telemetry.approxPromptTokens,
     lastInputEstimated: telemetry.promptTokens === undefined,
     lastContextWindow: telemetry.contextLimit ?? null,
+    modelCounts: (() => {
+      const model = telemetry.actualModel || telemetry.requestedModel;
+      if (!model) return telemetrySummarySnapshot.modelCounts;
+      const updated = { ...telemetrySummarySnapshot.modelCounts };
+      updated[model] = (updated[model] ?? 0) + 1;
+      return updated;
+    })(),
   };
 }
 
@@ -150,10 +159,14 @@ progressEmitter.on('progress', (msg: string) => {
   detectAgentCtx(msg);
   const entry: LogEntry = { ts, msg };
   if (currentAgentCtx) entry.agentCtx = currentAgentCtx;
-  // ✓ line → the next detail event will be attached to this line
+  // ✓ line → tool detail will be attached via 'detail' event
   if (msg.trimStart().startsWith('✓ ')) {
     pendingDetailKey = ts + msg.slice(0, 60);
-    entry.hasDetail = false; // detail not yet received
+    entry.hasDetail = false;
+  } else if (msg.trimStart().startsWith('🧠 [Strategy-')) {
+    // Strategy phase detail will be attached via 'strategy-detail' event
+    entry.hasDetail = false;
+    pendingDetailKey = null;
   } else {
     pendingDetailKey = null;
   }
@@ -190,6 +203,18 @@ progressEmitter.on('telemetry', (telemetry: LLMTelemetryEvent) => {
 
 progressEmitter.on('session-reset', () => {
   resetLogSession();
+});
+
+progressEmitter.on('strategy-detail', (content: string) => {
+  // Find the last strategy phase entry in the replay buffer
+  const last = [...logBuffer].reverse().find(e => e.msg.trimStart().startsWith('\ud83e\udde0 [Strategy-'));
+  if (!last) return;
+  last.detail = content;
+  last.hasDetail = true;
+  const data = `data: ${JSON.stringify({ type: 'patch', id: last.id, detail: content })}\n\n`;
+  for (const client of clients) {
+    client.write(data);
+  }
 });
 
 const HTML = `<!DOCTYPE html>
@@ -499,6 +524,36 @@ const HTML = `<!DOCTYPE html>
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
+  .model-pill {
+    display: inline-block;
+    background: rgba(88,166,255,0.12);
+    border: 1px solid rgba(88,166,255,0.25);
+    border-radius: 4px;
+    padding: 0 5px;
+    margin: 1px 2px 1px 0;
+    font-size: 10px;
+    color: var(--tool);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .model-pill:hover { background: rgba(88,166,255,0.22); }
+  .model-pill.selected { background: rgba(88,166,255,0.30); border-color: var(--tool); }
+  .model-pill b { color: var(--text); font-weight: 700; }
+
+  #model-stats-panel {
+    display: none;
+    grid-column: 1 / -1;
+    background: rgba(88,166,255,0.06);
+    border: 1px solid rgba(88,166,255,0.2);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: var(--text);
+    margin-top: 2px;
+    line-height: 1.8;
+  }
+
   @media (max-width: 1100px) {
     .metrics-bar { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
   }
@@ -559,9 +614,9 @@ const HTML = `<!DOCTYPE html>
     <div class="metric-value" id="metric-cost">$0.00000</div>
     <div class="metric-subvalue" id="metric-cost-note">known models only</div>
   </div>
-  <div class="metric-card">
-    <div class="metric-label">Last Model</div>
-    <div class="metric-value" id="metric-model" style="font-size:13px;">-</div>
+  <div class="metric-card" style="min-height:unset">
+    <div class="metric-label">Models Used <span id="metric-model-count" style="opacity:0.6"></span></div>
+    <div id="metric-models-list" style="min-height:20px;padding:2px 0"></div>
     <div class="metric-subvalue" id="metric-latency">-</div>
   </div>
   <div class="metric-card">
@@ -570,6 +625,8 @@ const HTML = `<!DOCTYPE html>
     <div class="metric-subvalue" id="metric-context-note">last call</div>
   </div>
 </div>
+
+<div id="model-stats-panel"></div>
 
 <div id="log-area">
   <div class="empty-state" id="empty-state">
@@ -590,7 +647,7 @@ const HTML = `<!DOCTYPE html>
   </div>
   <span style="margin-left:auto">
     Port: ${PORT} · 
-    <a href="http://localhost:3333" target="_blank" style="color:var(--tool);text-decoration:none">Graf Sunucusu →</a>
+    <a href="http://localhost:3333" target="_blank" style="color:var(--muted);text-decoration:none;cursor:default" title="Graf sunucusu: npm run graph">Graf Sunucusu (yakında) →</a>
   </span>
 </footer>
 
@@ -616,7 +673,6 @@ const HTML = `<!DOCTYPE html>
   const metricCompletion = document.getElementById('metric-completion');
   const metricCost = document.getElementById('metric-cost');
   const metricCostNote = document.getElementById('metric-cost-note');
-  const metricModel = document.getElementById('metric-model');
   const metricLatency = document.getElementById('metric-latency');
   const metricContext = document.getElementById('metric-context');
   const metricContextNote = document.getElementById('metric-context-note');
@@ -634,6 +690,7 @@ const HTML = `<!DOCTYPE html>
     lastInputTokens: null,
     lastInputEstimated: false,
     lastContextWindow: null,
+    modelCounts: {},
   };
 
   function categorize(msg, agentCtx) {
@@ -687,6 +744,87 @@ const HTML = `<!DOCTYPE html>
     return value.toFixed(value >= 10 ? 1 : 2) + '%';
   }
 
+  let selectedModel = null;
+
+  function computeModelStats(model) {
+    const stats = { calls: 0, errors: 0, promptTokens: 0, completionTokens: 0, costUsd: 0, latencyTotal: 0, latencyCount: 0, lastContextPct: null, lastContextWindow: null };
+    for (const entry of allLines) {
+      if (entry && entry.kind === 'telemetry' && entry.telemetry) {
+        const t = entry.telemetry;
+        const m = t.actualModel || t.requestedModel;
+        if (m !== model) continue;
+        stats.calls++;
+        if (t.status === 'error') stats.errors++;
+        stats.promptTokens += t.promptTokens || 0;
+        stats.completionTokens += t.completionTokens || 0;
+        if (typeof t.totalCostUsd === 'number') stats.costUsd += t.totalCostUsd;
+        if (typeof t.latencyMs === 'number') { stats.latencyTotal += t.latencyMs; stats.latencyCount++; }
+        if (typeof t.contextPct === 'number') stats.lastContextPct = t.contextPct;
+        if (typeof t.contextLimit === 'number') stats.lastContextWindow = t.contextLimit;
+      }
+    }
+    return stats;
+  }
+
+  function renderModelStats(model) {
+    const panel = document.getElementById('model-stats-panel');
+    if (!panel) return;
+    if (!model) { panel.style.display = 'none'; return; }
+    const s = computeModelStats(model);
+    const short = model.includes('/') ? model.split('/').slice(1).join('/') : model;
+    const avgLatency = s.latencyCount > 0 ? Math.round(s.latencyTotal / s.latencyCount) : null;
+    panel.style.display = 'block';
+    panel.innerHTML =
+      '<span style="color:var(--tool);font-weight:700">' + escapeHtml(short) + '</span>' +
+      ' &nbsp;•&nbsp; ' + s.calls + ' calls' +
+      (s.errors > 0 ? ' <span style="color:var(--error)">' + s.errors + ' err</span>' : '') +
+      ' &nbsp;•&nbsp; ' + formatInteger(s.promptTokens) + ' prompt' +
+      ' &nbsp;•&nbsp; ' + formatInteger(s.completionTokens) + ' completion' +
+      (s.costUsd > 0 ? ' &nbsp;•&nbsp; ' + formatCost(s.costUsd) : '') +
+      (avgLatency != null ? ' &nbsp;•&nbsp; ~' + formatInteger(avgLatency) + 'ms avg' : '') +
+      (s.lastContextPct != null ? ' &nbsp;•&nbsp; last ctx ' + formatContextPercent(s.lastContextPct) : '') +
+      (s.lastContextWindow != null && s.lastContextPct != null
+        ? ' <span style="color:var(--muted)">(' + formatInteger(Math.round(s.lastContextWindow * s.lastContextPct / 100)) + '/' + formatInteger(s.lastContextWindow) + ')</span>'
+        : '');
+  }
+
+  function toggleModelFilter(model, pillEl) {
+    document.querySelectorAll('.model-pill').forEach(function(p) { p.classList.remove('selected'); });
+    if (selectedModel === model) {
+      selectedModel = null;
+      renderModelStats(null);
+    } else {
+      selectedModel = model;
+      if (pillEl) pillEl.classList.add('selected');
+      renderModelStats(model);
+    }
+  }
+
+  function toggleModelFilterFromEl(el) {
+    toggleModelFilter(el.dataset.model, el);
+  }
+
+  function renderModelsList() {
+    const listEl = document.getElementById('metric-models-list');
+    const countEl = document.getElementById('metric-model-count');
+    if (!listEl) return;
+    const entries = Object.entries(telemetrySummary.modelCounts || {});
+    if (entries.length === 0) {
+      listEl.textContent = '-';
+      if (countEl) countEl.textContent = '';
+      return;
+    }
+    if (countEl) countEl.textContent = '(' + entries.length + ')';
+    listEl.innerHTML = entries
+      .sort((a, b) => b[1] - a[1])
+      .map(function([model, count]) {
+        var short = model.includes('/') ? model.split('/').slice(1).join('/') : model;
+        var isSelected = selectedModel === model ? ' selected' : '';
+        return '<span class="model-pill' + isSelected + '" title="' + escapeHtml(model) + '" data-model="' + escapeHtml(model) + '" onclick="toggleModelFilterFromEl(this)">' + escapeHtml(short) + ' <b>\u00d7' + count + '</b></span>';
+      })
+      .join('');
+  }
+
   function updateTelemetrySummary() {
     metricCalls.textContent = formatInteger(telemetrySummary.calls);
     metricErrors.textContent = formatInteger(telemetrySummary.errors) + ' errors';
@@ -696,7 +834,7 @@ const HTML = `<!DOCTYPE html>
     metricCostNote.textContent = telemetrySummary.estimatedCostCalls > 0
       ? formatInteger(telemetrySummary.estimatedCostCalls) + ' calls priced'
       : 'known models only';
-    metricModel.textContent = telemetrySummary.lastModel || '-';
+    renderModelsList();
     metricLatency.textContent = telemetrySummary.lastLatencyMs == null
       ? '-'
       : formatInteger(telemetrySummary.lastLatencyMs) + ' ms';
@@ -719,6 +857,7 @@ const HTML = `<!DOCTYPE html>
     telemetrySummary.lastInputTokens = snapshot?.lastInputTokens ?? null;
     telemetrySummary.lastInputEstimated = snapshot?.lastInputEstimated === true;
     telemetrySummary.lastContextWindow = snapshot?.lastContextWindow ?? null;
+    telemetrySummary.modelCounts = snapshot?.modelCounts || {};
     updateTelemetrySummary();
   }
 
@@ -735,6 +874,10 @@ const HTML = `<!DOCTYPE html>
       telemetrySummary.estimatedCostCalls += 1;
     }
     telemetrySummary.lastModel = telemetry.actualModel || telemetry.requestedModel || '-';
+    const usedModel = telemetry.actualModel || telemetry.requestedModel;
+    if (usedModel) {
+      telemetrySummary.modelCounts[usedModel] = (telemetrySummary.modelCounts[usedModel] || 0) + 1;
+    }
     telemetrySummary.lastLatencyMs = typeof telemetry.latencyMs === 'number' ? telemetry.latencyMs : null;
     telemetrySummary.lastContextPercent = typeof telemetry.contextPct === 'number'
       ? telemetry.contextPct
@@ -790,7 +933,7 @@ const HTML = `<!DOCTYPE html>
       '<span class="msg">' + highlightSearch(entry.msg) + '</span>' +
       (hasDetail
         ? '<button class="expand-btn" onclick="toggleDetail(this)">▶ detail</button>'
-        : (entry.hasDetail === false ? '<button class="expand-btn" style="opacity:0.4" disabled>⏳</button>' : ''));
+        : (entry.hasDetail === false ? '<button class="expand-btn" onclick="toggleDetail(this)" style="opacity:0.4" disabled>⏳</button>' : ''));
     wrap.appendChild(div);
 
     if (hasDetail) {
@@ -871,10 +1014,16 @@ const HTML = `<!DOCTYPE html>
     allLines[idx].detail = detail;
     allLines[idx].hasDetail = true;
     // Update DOM
-    const wrap = logArea.querySelector('[data-entry-id="' + entryId + '"]');
+    const wrap = logArea.querySelector('[data-entry-id="' + CSS.escape(String(entryId)) + '"]');
     if (!wrap) return;
     const btn = wrap.querySelector('.expand-btn');
-    if (btn) { btn.textContent = '▶ detay'; btn.disabled = false; btn.style.opacity = '1'; }
+    if (btn) {
+      btn.textContent = '▶ detail';
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      // Restore onclick in case button was created as disabled spinner (no onclick)
+      if (!btn.getAttribute('onclick')) btn.setAttribute('onclick', 'toggleDetail(this)');
+    }
     if (!wrap.querySelector('.tool-detail')) {
       const dd = document.createElement('div');
       dd.className = 'tool-detail';
@@ -937,6 +1086,7 @@ const HTML = `<!DOCTYPE html>
     telemetrySummary.lastInputTokens = null;
     telemetrySummary.lastInputEstimated = false;
     telemetrySummary.lastContextWindow = null;
+    telemetrySummary.modelCounts = {};
     updateTelemetrySummary();
     rebuildLog();
     lineCount.textContent = '0 lines';
@@ -1033,7 +1183,7 @@ let started = false;
 export function startLogServer(): void {
   if (started) return;
   started = true;
-  server.listen(PORT, '127.0.0.1', () => {
+  server.listen(PORT, () => {
     // Do not write to stdout — would break TUI. Notify via progressEmitter.
     progressEmitter.emit(
       'progress',

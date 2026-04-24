@@ -66,15 +66,25 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
-server.listen(PORT, () => {
-  console.log(`\n🕸️  OSINT Graph Viewer: http://localhost:${PORT}`)
-  console.log(`📊 API endpoint:       http://localhost:${PORT}/api/graph`)
-  console.log(`\nPress Ctrl+C to exit\n`)
-})
+let graphStarted = false;
 
-process.on('SIGINT', async () => {
-  console.log('\nShutting down...')
-  await closeNeo4j()
-  server.close()
-  process.exit(0)
-})
+export function startGraphServer(): void {
+  if (graphStarted) return;
+  graphStarted = true;
+  server.listen(PORT, '127.0.0.1', () => {
+    console.log(`🕸️  OSINT Graph Viewer: http://localhost:${PORT}`)
+    console.log(`📊 API endpoint:       http://localhost:${PORT}/api/graph`)
+  })
+  server.on('error', () => { /* skip if port busy */ })
+}
+
+// Standalone entrypoint: `npm run graph` or `osint --graph`
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  startGraphServer()
+  process.on('SIGINT', async () => {
+    console.log('\nShutting down...')
+    await closeNeo4j()
+    server.close()
+    process.exit(0)
+  })
+}

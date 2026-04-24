@@ -16,9 +16,62 @@ export interface AgentConfig {
 
 export type Message = OpenAI.Chat.ChatCompletionMessageParam;
 
+export interface PromptBudgetPolicy {
+  maxPromptChars: number;
+  maxMemoryChars: number;
+  maxRecentChars: number;
+  maxEpisodePreviewChars: number;
+  maxRecentUnits: number;
+}
+
+export interface ToolCallMemory {
+  toolName: string;
+  argsHash: string;
+  argsPreview: string;
+  resultPreview: string;
+  yieldedNewUrls: number;
+}
+
+export interface ToolEpisodeMemory {
+  id: string;
+  startIndex: number;
+  endIndex: number;
+  headline: string;
+  toolCalls: ToolCallMemory[];
+}
+
+export interface AgentWorkingMemory {
+  objective: string | null;
+  latestExternalUserMessage: string | null;
+  latestAssistantSummary: string | null;
+  phase: string | null;
+  nextActions: string[];
+}
+
+export interface AgentRuntimeState {
+  toolCallCount: number;
+  toolsUsed: Record<string, number>;
+  perToolCount: Record<string, number>;
+  duplicateToolCache: Record<string, string>;
+  seenUrls: string[];
+  lowYieldStreak: number;
+  toolsDisabled: boolean;
+}
+
+export interface AgentSessionSnapshot {
+  schemaVersion: 1;
+  agentName: string;
+  workingMemory: AgentWorkingMemory;
+  runtime: AgentRuntimeState;
+  episodes: ToolEpisodeMemory[];
+  processedMessageCount: number;
+  updatedAt: string;
+}
+
 export interface AgentResult {
   finalResponse: string;
   toolCallCount: number;
   toolsUsed: Record<string, number>; // tool_name -> how many times called
   history?: Message[];               // sub-agent conversation history (for AutoGen-style continuation)
+  session?: AgentSessionSnapshot;
 }

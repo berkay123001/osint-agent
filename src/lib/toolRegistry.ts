@@ -304,13 +304,14 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'search_academic_papers',
-      description: 'Searches for recent academic papers on arXiv. Use for research topics like "LLM RL training", "transformer architecture". Automatically saves results to the Neo4j graph database (Paper→Author, Paper→Topic).',
+      description: 'Searches academic papers via arXiv + Semantic Scholar. Supports DOI/venue-backed peer-reviewed filtering and automatically saves results to the Neo4j graph database (Paper→Author, Paper→Topic).',
       parameters: {
         type: 'object',
         properties: {
           query: { type: 'string', description: 'Research query (e.g. "reinforcement learning large language models 2024")' },
           maxResults: { type: 'string', description: 'How many papers to fetch? (default: 10, max: 50)' },
           sortBy: { type: 'string', description: '"submittedDate" (newest) or "relevance" (most relevant). Default: submittedDate.' },
+          peerReviewedOnly: { type: 'boolean', description: 'When true, prioritize DOI/venue-backed likely peer-reviewed papers and suppress arXiv-only preprints when possible.' },
         },
         required: ['query'],
       },
@@ -1242,7 +1243,9 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       const maxResults = parseInt(args.maxResults ?? '10') || 10
       const sortBy = (args.sortBy as 'relevance' | 'submittedDate' | 'lastUpdatedDate') ?? 'submittedDate'
       logger.info('TOOL', `🔬 Academic Search (arXiv + Semantic Scholar): ${args.query}`)
-      const searchResult = await searchAcademicPapers(args.query, maxResults, sortBy)
+      const searchResult = await searchAcademicPapers(args.query, maxResults, sortBy, {
+        peerReviewedOnly: String(args.peerReviewedOnly).toLowerCase() === 'true',
+      })
       const ssNote = (searchResult as AcademicSearchResult & { _ssNote?: string })._ssNote
       if (ssNote) logger.debug('TOOL', ssNote)
       result = formatAcademicResult(searchResult)

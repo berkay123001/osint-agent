@@ -23,8 +23,8 @@ export function emitProgress(message: string): void {
  * Sends the full tool output to the web log panel — the TUI does not see it.
  * toolName: tool name, output: raw output (untruncated)
  */
-export function emitToolDetail(toolName: string, output: string): void {
-  emitter.emit('detail', { toolName, output });
+export function emitToolDetail(toolName: string, output: string, toolCallId?: string): void {
+  emitter.emit('detail', { toolName, output, toolCallId });
 }
 
 export function emitTelemetry(event: LLMTelemetryEvent): void {
@@ -33,4 +33,13 @@ export function emitTelemetry(event: LLMTelemetryEvent): void {
 
 export function emitSessionReset(): void {
   emitter.emit('session-reset');
+}
+
+export function emitSessionGraphDirty(): void {
+  emitter.emit('session-graph-dirty');
+}
+
+/** Sends full strategy phase content (plan/review/synthesize) to the log panel detail view. */
+export function emitStrategyDetail(content: string): void {
+  emitter.emit('strategy-detail', content);
 }

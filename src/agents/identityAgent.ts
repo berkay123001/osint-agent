@@ -6,6 +6,7 @@ import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { emitProgress } from '../lib/progressEmitter.js';
+import { findUnexploredPivots, formatUnexploredPivots } from '../lib/pivotAnalyzer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -76,7 +77,7 @@ const IDENTITY_TOOLS = [
 
 export const identityAgentConfig: AgentConfig = {
   name: 'IdentityAgent',
-  model: 'qwen/qwen3.5-flash-02-23',
+  model: 'minimax/minimax-m2.5',
   tools: tools.filter((t: any) => t.type === 'function' && IDENTITY_TOOLS.includes(t.function.name)),
   executeTool: executeTool,
   maxToolCalls: 40,
@@ -165,17 +166,67 @@ export interface SubAgentResult {
   history: Message[];
 }
 
+/**
+ * Extract candidate usernames or known identifiers from the query string.
+ * Used to check the graph for existing pivot data before starting the agent.
+ * Heuristic: @mentions, quoted words, or the first word that looks like a username.
+ */
+function extractCandidatesFromQuery(query: string): string[] {
+  const candidates: string[] = [];
+  // @mentions
+  const atMatches = query.match(/@([\w.-]+)/g);
+  if (atMatches) candidates.push(...atMatches.map(m => m.slice(1)));
+  // Quoted tokens
+  const quoted = query.match(/["'`]([^"'`]{2,40})["'`]/g);
+  if (quoted) candidates.push(...quoted.map(m => m.slice(1, -1)));
+  // First bare word that looks like a username (alphanumeric, ., -, _)
+  const bare = query.match(/\b([\w][\w.-]{2,39})\b/);
+  if (bare && !candidates.includes(bare[1])) candidates.push(bare[1]);
+  return [...new Set(candidates)].slice(0, 5);
+}
+
+/**
+ * Load pivot context from Neo4j graph for already-known identifiers.
+ * Returns a formatted block if unexplored pivots exist, or null if graph is empty / all explored.
+ */
+async function loadPivotContext(query: string): Promise<string | null> {
+  const candidates = extractCandidatesFromQuery(query);
+  if (candidates.length === 0) return null;
+  try {
+    for (const candidate of candidates) {
+      const analysis = await findUnexploredPivots(candidate);
+      if (analysis.suggestions.length > 0) {
+        emitProgress(`🧭 Graph: ${analysis.suggestions.length} unexplored pivot(s) found for "${candidate}"`);
+        return formatUnexploredPivots(analysis);
+      }
+    }
+  } catch {
+    // Neo4j not available — silently skip pivot enrichment
+  }
+  return null;
+}
+
 export async function runIdentityAgent(query: string, context?: string, depth?: string, existingHistory?: Message[]): Promise<SubAgentResult> {
   const multiplier = DEPTH_MULTIPLIERS[depth ?? 'normal'] ?? 1;
   const maxToolCalls = Math.ceil((identityAgentConfig.maxToolCalls ?? 30) * multiplier);
   emitProgress(`🕵️‍♂️ IdentityAgent → "${query.length > 120 ? query.slice(0, 117) + '...' : query}" [depth: ${depth ?? 'normal'}, budget: ${maxToolCalls}]`);
+
+  // Fresh session only — don't run pivot lookup when continuing an existing history
+  let enrichedContext = context;
+  if (!existingHistory) {
+    const pivotBlock = await loadPivotContext(query);
+    if (pivotBlock) {
+      const pivotSection = `\n\n[GRAPH MEMORY — Previously discovered data about this target]\n${pivotBlock}\n[/GRAPH MEMORY]\n\nPrioritize the unexplored pivots listed above — they are the most valuable next steps.`;
+      enrichedContext = context ? context + pivotSection : pivotSection;
+    }
+  }
 
   // Continue with existing history if provided (AutoGen-style), otherwise start fresh
   const history: Message[] = existingHistory
     ? [...existingHistory]
     : [
         { role: 'system', content: identityAgentConfig.systemPrompt },
-        { role: 'user', content: context ? `Context:\n${context}\n\nTask:\n${query}` : query },
+        { role: 'user', content: enrichedContext ? `Context:\n${enrichedContext}\n\nTask:\n${query}` : query },
       ];
 
   const result = await runAgentLoop(history, { ...identityAgentConfig, maxToolCalls });

@@ -93,7 +93,7 @@ const ACADEMIC_TOOLS = [
 
 export const academicAgentConfig: AgentConfig = {
   name: 'AcademicAgent',
-  model: 'qwen/qwen3.5-flash-02-23',
+  model: 'minimax/minimax-m2.5',
   maxToolCalls: 30,
   tools: tools.filter((t: any) => t.type === 'function' && ACADEMIC_TOOLS.includes(t.function.name)),
   executeTool: executeTool,
@@ -222,6 +222,31 @@ How has the field changed since 2020?
 // depth → maxToolCalls multiplier: quick=0.5x, normal=1x, deep=1.75x
 const DEPTH_MULTIPLIERS: Record<string, number> = { quick: 0.5, normal: 1, deep: 1.75 };
 
+function isPeerReviewedLiteratureTask(input: string): boolean {
+  return /(peer[- ]reviewed|doi|literature review|authoritative sources?)/i.test(input);
+}
+
+function isMultiAreaLiteratureTask(input: string): boolean {
+  return /(for each area|research areas?|^\s*\d+\.|\n\d+\.)/im.test(input);
+}
+
+function buildAcademicUserMessage(query: string, context?: string): string {
+  const combined = [context, query].filter(Boolean).join('\n\n');
+  const parts: string[] = [];
+
+  if (context) {
+    parts.push(`Context:\n${context}`);
+  }
+
+  if (isPeerReviewedLiteratureTask(combined) || isMultiAreaLiteratureTask(combined)) {
+    parts.push(`Execution Constraints:\n- Decompose the task area-by-area before synthesizing.\n- Use targeted search_academic_papers calls with peerReviewedOnly=true for uncovered areas until the phase budget or tool budget is exhausted.\n- Prefer DOI/venue-backed results; do not rely on arXiv-only preprints unless you explicitly state that no peer-reviewed source was found.\n- If a niche area lacks enough peer-reviewed papers, use search_web to fetch authoritative supplementary sources and label them clearly as non-peer-reviewed.\n- Prioritize still-uncovered areas before refining already-covered ones, then write the report.`);
+  }
+
+  parts.push(`Research Task:\n${query}`);
+
+  return parts.join('\n\n');
+}
+
 export async function runAcademicAgent(query: string, context?: string, depth?: string, existingHistory?: Message[]): Promise<SubAgentResult> {
   const multiplier = DEPTH_MULTIPLIERS[depth ?? 'normal'] ?? 1;
   const maxToolCalls = Math.ceil((academicAgentConfig.maxToolCalls ?? 30) * multiplier);
@@ -231,7 +256,7 @@ export async function runAcademicAgent(query: string, context?: string, depth?: 
     ? [...existingHistory]
     : [
         { role: 'system', content: academicAgentConfig.systemPrompt },
-        { role: 'user', content: context ? `Context:\n${context}\n\nResearch Task:\n${query}` : query },
+        { role: 'user', content: buildAcademicUserMessage(query, context) },
       ];
 
   const result = await runAgentLoop(history, { ...academicAgentConfig, maxToolCalls });

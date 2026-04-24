@@ -79,7 +79,7 @@ const MEDIA_TOOLS = [
 
 export const mediaAgentConfig: AgentConfig = {
   name: 'MediaAgent',
-  model: 'qwen/qwen3.5-flash-02-23',
+  model: 'minimax/minimax-m2.5',
   maxToolCalls: 25,          // Slow down context growth — raw HTML/Markdown outputs can be very long
   maxEmptyRetries: 3,        // Qwen thinking can end and return empty after long tool chains
   tools: tools.filter((t: any) => t.type === 'function' && MEDIA_TOOLS.includes(t.function.name)),

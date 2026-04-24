@@ -28,13 +28,15 @@ const state = {
   messages: [],       // {role, content}
   feedCount: 0,
   toolCount: 0,
-  graphLoaded: false,
+  activeTab: 'feed',
+  sessionGraphLoaded: false,
+  sessionGraphDirty: true,
   telemetry: createEmptyTelemetrySummary(),
 };
 
 /* ── DOM refs (cached after DOMContentLoaded) ──────── */
 let $messages, $welcome, $input, $sendBtn, $typing, $typingText;
-let $feedArea, $toolsArea, $graphSvg, $graphInfo;
+let $feedArea, $toolsArea, $sessionGraphSvg, $sessionGraphInfo;
 let $msgCount, $feedBadge, $toolsBadge, $toasts;
 let $connStatus;
 let $telemetryCalls, $telemetryErrors, $telemetryPrompt, $telemetryCompletion;
@@ -59,11 +61,22 @@ let historyLoadPromise = null;
 let historyLoadGeneration = 0;
 let historyLoadSessionId = null;
 let messageVersion = 0;
+let sessionGraphLoadPromise = null;
+let sessionGraphRefreshTimer = null;
+let sessionGraphLoadGeneration = 0;
+let sessionGraphDirtyVersion = 0;
 
 function invalidateHistoryLoad() {
   historyLoadGeneration += 1;
   historyLoadPromise = null;
   historyLoadSessionId = null;
+}
+
+function invalidateSessionGraphLoad() {
+  sessionGraphLoadGeneration += 1;
+  sessionGraphDirtyVersion += 1;
+  sessionGraphLoadPromise = null;
+  clearTimeout(sessionGraphRefreshTimer);
 }
 
 function bumpMessageVersion() {
@@ -99,6 +112,7 @@ function handleSSE(data) {
     case 'init':
       if (currentSessionId !== null && currentSessionId !== data.sessionId) {
         invalidateHistoryLoad();
+        sessionNodePositionCache.clear();
         resetUI();
       }
       currentSessionId = data.sessionId || null;
@@ -106,6 +120,7 @@ function handleSSE(data) {
       if (data.telemetry) updateTelemetryUI(data.telemetry);
       updateProcessingUI();
       resetIntelPanels();
+      markSessionGraphDirty();
       for (const replayEvent of data.replayEvents || []) {
         handleSSE(replayEvent);
       }
@@ -114,14 +129,14 @@ function handleSSE(data) {
 
     case 'user_message':
       addMessage('user', data.content);
+      markSessionGraphDirty();
       break;
 
     case 'response':
       addMessage('assistant', data.content);
       state.processing = false;
       updateProcessingUI();
-      if (!state.graphLoaded) loadGraph();
-      else setTimeout(loadGraph, 500);
+      markSessionGraphDirty();
       break;
 
     case 'status':
@@ -136,6 +151,10 @@ function handleSSE(data) {
 
     case 'detail':
       addToolCard(data.toolName, data.output);
+      break;
+
+    case 'session_graph_dirty':
+      markSessionGraphDirty();
       break;
 
     case 'telemetry':
@@ -157,8 +176,17 @@ function handleSSE(data) {
     case 'reset':
       currentSessionId = data.sessionId || null;
       invalidateHistoryLoad();
+      sessionNodePositionCache.clear();
       resetUI();
       break;
+  }
+}
+
+function markSessionGraphDirty() {
+  state.sessionGraphDirty = true;
+  sessionGraphDirtyVersion += 1;
+  if (state.activeTab === 'session-map') {
+    scheduleSessionGraphRefresh();
   }
 }
 
@@ -385,7 +413,9 @@ function updateAgentStatus(msg) {
 }
 
 /* ═══ D3 Knowledge Graph ═══════════════════════════ */
-let simulation = null;
+let sessionSimulation = null;
+// Persistent position cache — survives re-renders so nodes don't reset on every dirty refresh
+const sessionNodePositionCache = new Map(); // nodeId -> {x, y}
 
 const nodeColors = {
   Person:     '#00d4ff',
@@ -399,116 +429,287 @@ const nodeColors = {
   default:    '#8899b8',
 };
 
-async function loadGraph() {
-  try {
-    const resp = await fetch(`/api/graph${tokenParam()}`);
-    if (!resp.ok) return;
-    const data = await resp.json();
-    if (!data.nodes || data.nodes.length === 0) {
-      $graphInfo.textContent = 'Graph empty';
-      return;
-    }
-    renderGraph(data.nodes, data.edges || data.links || []);
-    state.graphLoaded = true;
-  } catch { /* silent */ }
+const sessionNodeColors = {
+  session: '#7b2dff',
+  query: '#00d4ff',
+  agent: '#7df9ff',
+  tool: '#ffc857',
+  topic: '#8cff98',
+  username: '#4da6ff',
+  email: '#ff8c42',
+  person: '#f7f7ff',
+  location: '#7be0ad',
+  organization: '#c084fc',
+  website: '#ff6b9a',
+  platform: '#63b3ed',
+  domain: '#ff6b9a',
+  default: '#8899b8',
+};
+
+function getSessionNodeColor(node) {
+  return sessionNodeColors[node.subtype] || sessionNodeColors[node.kind] || sessionNodeColors.default;
 }
 
-function renderGraph(nodes, edges) {
-  const container = document.getElementById('graph-container');
-  const width = container.clientWidth || 400;
-  const height = container.clientHeight || 400;
+function getSessionNodeRadius(node) {
+  if (node.kind === 'session') return 18;
+  if (node.kind === 'query') return 12;
+  if (node.kind === 'agent') return 10;
+  if (node.kind === 'topic') return 11;
+  if (node.subtype === 'person') return 10;
+  if (node.kind === 'tool') return 9;
+  return 7;
+}
 
-  // Clear previous
-  const svg = d3.select('#graph-svg');
-  svg.selectAll('*').remove();
+function getSessionOrbitRadius(node, orbitScale = 1) {
+  if (node.kind === 'session') return 0;
+  if (node.kind === 'query') return 88 * orbitScale;
+  if (node.kind === 'topic') return 132 * orbitScale;
+  if (node.kind === 'agent') return 170 * orbitScale;
+  if (node.kind === 'tool') return 230 * orbitScale;
+  return 292 * orbitScale;
+}
+
+function clearSessionGraph() {
+  if (sessionSimulation) {
+    // Save positions before destroying the simulation
+    sessionSimulation.nodes().forEach(n => {
+      if (n.id && isFinite(n.x) && isFinite(n.y)) {
+        sessionNodePositionCache.set(n.id, { x: n.x, y: n.y });
+      }
+    });
+    sessionSimulation.stop();
+    sessionSimulation = null;
+  }
+  d3.select('#session-graph-svg').selectAll('*').remove();
+  if ($sessionGraphInfo) $sessionGraphInfo.textContent = '';
+}
+
+function renderSessionGraph(nodes, edges) {
+  const container = document.getElementById('session-graph-container');
+  const width = container?.clientWidth || 400;
+  const height = container?.clientHeight || 400;
+  const maxOrbitRadius = Math.max(132, Math.min(width, height) / 2 - 36);
+  const orbitScale = Math.min(1, maxOrbitRadius / 292);
+  const svg = d3.select('#session-graph-svg');
+
+  clearSessionGraph();
   svg.attr('viewBox', `0 0 ${width} ${height}`);
 
-  $graphInfo.textContent = `${nodes.length} nodes · ${edges.length} edges`;
+  if (!nodes || nodes.length === 0) {
+    $sessionGraphInfo.textContent = 'Session map will appear as evidence accumulates';
+    svg.append('text')
+      .attr('class', 'session-graph-empty')
+      .attr('x', width / 2)
+      .attr('y', height / 2)
+      .attr('text-anchor', 'middle')
+      .text('No session evidence yet');
+    return;
+  }
 
-  // Build D3 graph data
-  const nodeById = new Map(nodes.map(n => [n.id, { ...n }]));
-  const links = edges
-    .filter(e => nodeById.has(e.source) && nodeById.has(e.target))
-    .map(e => ({ source: e.source, target: e.target, type: e.type }));
+  $sessionGraphInfo.textContent = `${nodes.length} nodes · ${edges.length} edges`;
 
-  const gNodes = Array.from(nodeById.values());
+  const graphNodes = nodes.map(node => ({ ...node }));
+  const nodeById = new Map(graphNodes.map(node => [node.id, node]));
 
-  simulation = d3.forceSimulation(gNodes)
-    .force('link', d3.forceLink(links).id(d => d.id).distance(80))
-    .force('charge', d3.forceManyBody().strength(-200))
-    .force('center', d3.forceCenter(width / 2, height / 2))
-    .force('collision', d3.forceCollide(20));
+  // Restore saved positions — existing nodes keep their position, new nodes animate in
+  let recycledCount = 0;
+  for (const node of graphNodes) {
+    const saved = sessionNodePositionCache.get(node.id);
+    if (saved) {
+      node.x = saved.x;
+      node.y = saved.y;
+      recycledCount++;
+    }
+  }
+  const initialAlpha = recycledCount === graphNodes.length ? 0.08 : recycledCount > graphNodes.length * 0.6 ? 0.2 : 0.5;
 
-  // Defs for glow filter
+  const graphEdges = edges
+    .filter(edge => nodeById.has(edge.source) && nodeById.has(edge.target))
+    .map(edge => ({ ...edge }));
+
+  const rootNode = graphNodes.find(node => node.kind === 'session');
+  if (rootNode) {
+    rootNode.fx = width / 2;
+    rootNode.fy = height / 2;
+  }
+
   const defs = svg.append('defs');
-  const filter = defs.append('filter').attr('id', 'glow');
+  const filter = defs.append('filter').attr('id', 'session-glow');
   filter.append('feGaussianBlur').attr('stdDeviation', '3').attr('result', 'coloredBlur');
   const feMerge = filter.append('feMerge');
   feMerge.append('feMergeNode').attr('in', 'coloredBlur');
   feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
 
   const g = svg.append('g');
-
-  // Zoom
-  svg.call(d3.zoom()
-    .scaleExtent([0.3, 4])
-    .on('zoom', (e) => g.attr('transform', e.transform)));
-
-  // Links
-  const link = g.append('g').selectAll('line')
-    .data(links).join('line')
-    .attr('class', 'link-line');
-
-  // Link labels
-  const linkLabel = g.append('g').selectAll('text')
-    .data(links).join('text')
-    .attr('font-size', 7)
-    .attr('fill', 'rgba(136,153,184,0.5)')
-    .attr('text-anchor', 'middle')
-    .attr('font-family', 'var(--font-mono)')
-    .text(d => d.type || '');
-
-  // Nodes
-  const node = g.append('g').selectAll('circle')
-    .data(gNodes).join('circle')
-    .attr('class', 'node-circle')
-    .attr('r', d => d.label === 'Person' ? 12 : 8)
-    .attr('fill', d => nodeColors[d.label] || nodeColors.default)
-    .attr('filter', 'url(#glow)')
-    .attr('opacity', 0.85)
-    .call(d3.drag()
-      .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-      .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
-      .on('end', (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
-    );
-
-  // Node labels
-  const label = g.append('g').selectAll('text')
-    .data(gNodes).join('text')
-    .attr('class', 'node-label')
-    .attr('dy', d => (d.label === 'Person' ? 20 : 16))
-    .attr('text-anchor', 'middle')
-    .text(d => (d.id || '').slice(0, 20));
-
-  // Title tooltips
-  node.append('title').text(d => `[${d.label}] ${d.id}`);
-
-  simulation.on('tick', () => {
-    link
-      .attr('x1', d => d.source.x)
-      .attr('y1', d => d.source.y)
-      .attr('x2', d => d.target.x)
-      .attr('y2', d => d.target.y);
-    linkLabel
-      .attr('x', d => (d.source.x + d.target.x) / 2)
-      .attr('y', d => (d.source.y + d.target.y) / 2);
-    node
-      .attr('cx', d => d.x)
-      .attr('cy', d => d.y);
-    label
-      .attr('x', d => d.x)
-      .attr('y', d => d.y);
+  const rings = g.append('g').attr('class', 'session-rings');
+  [88, 170, 230, 292].forEach(radius => {
+    rings.append('circle')
+      .attr('class', 'session-ring')
+      .attr('cx', width / 2)
+      .attr('cy', height / 2)
+      .attr('r', radius * orbitScale);
   });
+
+  svg.call(d3.zoom()
+    .scaleExtent([0.5, 2.6])
+    .on('zoom', (event) => g.attr('transform', event.transform)));
+
+  sessionSimulation = d3.forceSimulation(graphNodes)
+    .alpha(initialAlpha)
+    .alphaDecay(initialAlpha < 0.15 ? 0.05 : 0.028)
+    .force('link', d3.forceLink(graphEdges).id(d => d.id).distance(link => {
+      const sourceKind = link.source.kind || 'entity';
+      const targetKind = link.target.kind || 'entity';
+      if (sourceKind === 'session' || targetKind === 'session') return 88;
+      if (sourceKind === 'tool' || targetKind === 'tool') return 72;
+      return 64;
+    }).strength(0.6))
+    .force('charge', d3.forceManyBody().strength(node => node.kind === 'session' ? -120 : -180))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('collision', d3.forceCollide(node => getSessionNodeRadius(node) + 12))
+    .force('orbit', d3.forceRadial(node => getSessionOrbitRadius(node, orbitScale), width / 2, height / 2).strength(node => node.kind === 'session' ? 1 : 0.16));
+
+  const link = g.append('g')
+    .attr('class', 'session-link-layer')
+    .selectAll('line')
+    .data(graphEdges, edge => edge.id)
+    .join('line')
+    .attr('class', 'session-link-line')
+    .attr('opacity', 0)
+    .attr('stroke-width', edge => Math.min(3.2, 0.8 + edge.weight * 0.45));
+
+  link.transition().duration(420).attr('opacity', 1);
+
+  const linkLabel = g.append('g')
+    .attr('class', 'session-link-label-layer')
+    .selectAll('text')
+    .data(graphEdges.filter(edge => edge.weight > 1 || edge.relation === 'QUESTION'), edge => edge.id)
+    .join('text')
+    .attr('class', 'session-link-label')
+    .text(edge => edge.relation.replaceAll('_', ' '));
+
+  const nodeGroups = g.append('g')
+    .attr('class', 'session-node-layer')
+    .selectAll('g')
+    .data(graphNodes, node => node.id)
+    .join(enter => {
+      const group = enter.append('g').attr('class', 'session-node-group');
+      group.append('circle')
+        .attr('class', node => `session-node ${node.active ? 'active' : ''}`)
+        .attr('r', 0)
+        .attr('fill', node => getSessionNodeColor(node))
+        .attr('filter', 'url(#session-glow)')
+        .attr('opacity', node => node.kind === 'session' ? 0.96 : 0.88)
+        .transition()
+        .duration(520)
+        .ease(d3.easeCubicOut)
+        .attr('r', node => getSessionNodeRadius(node));
+
+      group.append('text')
+        .attr('class', 'session-node-label')
+        .attr('text-anchor', 'middle')
+        .attr('dy', node => getSessionNodeRadius(node) + 15)
+        .attr('opacity', 0)
+        .text(node => node.label.length > 24 ? `${node.label.slice(0, 21)}...` : node.label)
+        .transition()
+        .delay(120)
+        .duration(360)
+        .attr('opacity', 1);
+
+      group.append('title').text(node => `${node.label} (${node.kind}${node.subtype ? `/${node.subtype}` : ''})`);
+      return group;
+    });
+
+  nodeGroups.call(d3.drag()
+    .on('start', (event, node) => {
+      if (!event.active) sessionSimulation.alphaTarget(0.24).restart();
+      node.fx = node.x;
+      node.fy = node.y;
+    })
+    .on('drag', (event, node) => {
+      node.fx = event.x;
+      node.fy = event.y;
+    })
+    .on('end', (event, node) => {
+      if (!event.active) sessionSimulation.alphaTarget(0);
+      if (node.kind !== 'session') {
+        node.fx = null;
+        node.fy = null;
+      }
+    }));
+
+  sessionSimulation.on('tick', () => {
+    link
+      .attr('x1', edge => edge.source.x)
+      .attr('y1', edge => edge.source.y)
+      .attr('x2', edge => edge.target.x)
+      .attr('y2', edge => edge.target.y);
+
+    linkLabel
+      .attr('x', edge => (edge.source.x + edge.target.x) / 2)
+      .attr('y', edge => (edge.source.y + edge.target.y) / 2);
+
+    nodeGroups.attr('transform', node => `translate(${node.x}, ${node.y})`);
+  });
+}
+
+function scheduleSessionGraphRefresh(delay = 220) {
+  if (state.activeTab !== 'session-map') return;
+  clearTimeout(sessionGraphRefreshTimer);
+  sessionGraphRefreshTimer = setTimeout(() => {
+    loadSessionGraph();
+  }, delay);
+}
+
+async function loadSessionGraph(force = false) {
+  if (force) {
+    state.sessionGraphDirty = true;
+    invalidateSessionGraphLoad();
+  }
+  if (!force && state.activeTab !== 'session-map') return;
+  if (!force && !state.sessionGraphDirty && state.sessionGraphLoaded) return;
+  if (sessionGraphLoadPromise) return sessionGraphLoadPromise;
+
+  const requestSessionId = currentSessionId;
+  const requestGeneration = sessionGraphLoadGeneration;
+  const requestDirtyVersion = sessionGraphDirtyVersion;
+
+  const requestPromise = (async () => {
+    try {
+      const resp = await fetch(`/api/session-graph${tokenParam()}`, { cache: 'no-store' });
+      if (!resp.ok) throw new Error('Session graph request failed');
+      const data = await resp.json();
+      if (requestGeneration !== sessionGraphLoadGeneration || requestSessionId !== currentSessionId) return;
+      renderSessionGraph(data.nodes || [], data.edges || []);
+      state.sessionGraphLoaded = true;
+      state.sessionGraphDirty = sessionGraphDirtyVersion !== requestDirtyVersion;
+      if (state.sessionGraphDirty && state.activeTab === 'session-map') {
+        scheduleSessionGraphRefresh();
+      }
+    } catch {
+      if (requestGeneration === sessionGraphLoadGeneration && requestSessionId === currentSessionId && $sessionGraphInfo) {
+        if (state.sessionGraphLoaded) {
+          $sessionGraphInfo.textContent = 'Session map unavailable; showing last result';
+        } else {
+          clearSessionGraph();
+          $sessionGraphInfo.textContent = 'Session map unavailable';
+          state.sessionGraphLoaded = false;
+        }
+        state.sessionGraphDirty = true;
+        if (state.activeTab === 'session-map') {
+          scheduleSessionGraphRefresh(1200);
+        }
+      }
+    } finally {
+      if (sessionGraphLoadPromise === requestPromise) {
+        sessionGraphLoadPromise = null;
+      }
+    }
+  })();
+
+  sessionGraphLoadPromise = requestPromise;
+
+  return sessionGraphLoadPromise;
 }
 
 /* ═══ Background Animation ═════════════════════════ */
@@ -654,13 +855,18 @@ function scrollToBottom() {
 }
 
 function switchTab(name, btn) {
+  if (name !== 'session-map') {
+    state.sessionGraphDirty = true;
+    invalidateSessionGraphLoad();
+  }
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   btn.classList.add('active');
+  state.activeTab = name;
   const content = document.getElementById(`content-${name}`);
   if (content) content.classList.add('active');
 
-  if (name === 'graph' && !state.graphLoaded) loadGraph();
+  if (name === 'session-map' && (!state.sessionGraphLoaded || state.sessionGraphDirty)) loadSessionGraph();
 }
 
 async function resetSession() {
@@ -679,16 +885,23 @@ async function resetSession() {
 
 function resetUI() {
   state.messages = [];
-  state.graphLoaded = false;
+  state.sessionGraphLoaded = false;
+  state.sessionGraphDirty = true;
+  state.activeTab = 'feed';
   state.processing = false;
   state.telemetry = createEmptyTelemetrySummary();
   bumpMessageVersion();
+  invalidateSessionGraphLoad();
 
   $messages.innerHTML = '';
   resetIntelPanels();
   $msgCount.textContent = '';
-  d3.select('#graph-svg').selectAll('*').remove();
-  $graphInfo.textContent = '';
+  clearSessionGraph();
+
+  document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+  document.getElementById('tab-feed')?.classList.add('active');
+  document.getElementById('content-feed')?.classList.add('active');
 
   // Restore welcome
   if (!$welcome) {
@@ -726,9 +939,9 @@ async function loadHistory(force = false) {
 
   historyLoadSessionId = requestSessionId;
 
-  historyLoadPromise = (async () => {
+  const requestPromise = (async () => {
   try {
-    const resp = await fetch(`/api/history${tokenParam()}`);
+    const resp = await fetch(`/api/history${tokenParam()}`, { cache: 'no-store' });
     if (!resp.ok) return;
     const msgs = await resp.json();
     if (requestGeneration !== historyLoadGeneration || requestSessionId !== currentSessionId || requestMessageVersion !== messageVersion) return;
@@ -755,9 +968,13 @@ async function loadHistory(force = false) {
     scrollToBottom();
   } catch { /* ignore */ }
   finally {
-    historyLoadPromise = null;
+    if (historyLoadPromise === requestPromise) {
+      historyLoadPromise = null;
+    }
   }
   })();
+
+  historyLoadPromise = requestPromise;
 
   return historyLoadPromise;
 }
@@ -773,8 +990,8 @@ document.addEventListener('DOMContentLoaded', () => {
   $typingText = document.querySelector('.typing-text');
   $feedArea   = document.getElementById('feed-area');
   $toolsArea  = document.getElementById('tools-area');
-  $graphSvg   = document.getElementById('graph-svg');
-  $graphInfo  = document.getElementById('graph-info');
+  $sessionGraphSvg = document.getElementById('session-graph-svg');
+  $sessionGraphInfo = document.getElementById('session-graph-info');
   $msgCount   = document.getElementById('msg-count');
   $feedBadge  = document.getElementById('feed-badge');
   $toolsBadge = document.getElementById('tools-badge');

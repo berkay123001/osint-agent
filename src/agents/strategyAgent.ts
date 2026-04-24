@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import type { ChatCompletion } from 'openai/resources/chat/completions';
 import { logger } from '../lib/logger.js';
-import { emitProgress, emitTelemetry } from '../lib/progressEmitter.js';
+import { emitProgress, emitTelemetry, emitStrategyDetail } from '../lib/progressEmitter.js';
 import { buildLLMTelemetryEvent, persistLLMTelemetryEvent } from '../lib/llmTelemetry.js';
 import { appendFile, mkdir } from 'fs/promises';
 import path from 'path';
@@ -18,7 +18,15 @@ const client = new OpenAI({
   baseURL: 'https://openrouter.ai/api/v1',
 });
 
-const STRATEGY_MODEL = 'deepseek/deepseek-v3.2-speciale';
+const STRATEGY_MODEL = 'qwen/qwen3.6-plus';
+
+const STRATEGY_FALLBACKS = [
+  'deepseek/deepseek-v3.2',
+  'minimax/minimax-m2.5',
+];
+
+const MAX_RETRIES = 2;
+const BASE_DELAY_MS = 2000;
 
 /**
  * Strategy Agent — session-aware operation.
@@ -36,76 +44,55 @@ const STRATEGY_MODEL = 'deepseek/deepseek-v3.2-speciale';
 
 const SYSTEM_PROMPT = `You are an OSINT Strategy Specialist. You have three roles:
 
-1. **Planning**: Write a detailed plan for the sub-agent based on the research objective.
-2. **Review**: Evaluate sub-agent results for quality and sufficiency upon completion.
+1. **Planning**: Write a focused research plan for the sub-agent.
+2. **Review**: Evaluate sub-agent results and provide advisory notes (you do NOT block/reject — just flag issues for synthesis).
 3. **Synthesis**: Transform raw research output into a professional, clean, reliable report.
 
 At each phase, remember what you said in PREVIOUS phases — you are continuing, not starting fresh.
 
 # PLANNING RULES
-1. Analyze the objective — knowns vs gaps
-2. Determine which tools to use in what order
-3. Username variation strategy
-4. Expected pitfalls — empty profiles, wrong person matches, login screens
-5. Verification criteria
-6. Prioritization — reach the most valuable information first
+Keep plans SHORT — max 8 bullet points. Focus on:
+1. Key information gaps to fill
+2. Tool usage order and priority
+3. Expected pitfalls and how to avoid them
+4. Verification criteria
 
-**ADDITIONAL PLANNING FOR ACADEMIC TASKS:**
-- Require full-text reading instructions for top 3-5 papers (not just abstracts)
-- If GitHub repos are requested: mandate README fetching for each repo
-- Query strategy: specific and targeted searches — generic queries produce noise
-- Require detailed analysis of at least 1 paper from each group
+# REVIEW RULES — ADVISORY ONLY
+Review is NOT a gate — it provides quality notes for the Synthesis phase.
+Never trigger a retry. Just flag issues clearly.
 
-**NOISE PREVENTION:**
-- Flag probability of irrelevant content in search results (e.g., "Bing Image Creator" type irrelevant results)
-- Suggest specific site filters: site:arxiv.org, site:openreview.net, site:github.com
+Evaluate based on agent type (see below) and output:
+- "RESULT CLEAN" if no significant issues found
+- List specific issues with severity: [MINOR] (fixable in synthesis) or [MAJOR] (significant data quality concern)
 
-Keep it short and clear, bullet points.
+## Identity Agent Review:
+- [MAJOR] Fabricated profiles not found by tools (hallucination)
+- [MAJOR] Different person presented as same person without evidence
+- [MINOR] Incomplete profile data (missing bio, follower counts)
+- [MINOR] Unverified employment/education claims
 
-# REVIEW RULES
-TWO-STAGE EVALUATION:
+## Academic Agent Review:
+- [MAJOR] Fabricated papers, DOIs, or metrics not in tool output
+- [MAJOR] Wrong paper attributed to wrong researcher
+- [MINOR] Incomplete author list (et al. is acceptable)
+- [MINOR] arXiv preprint instead of peer-reviewed (note it, don't reject)
+- [MINOR] Missing full-text analysis (flag as "abstract only")
 
-**STAGE 1 — Quality Control:**
-1. Is there information in the report not present in tool output? (hallucination)
-2. Do numbers match tool output?
-3. Are found profiles genuinely the target person's?
-4. Were inaccessible profiles presented as "examined"?
-5. Are there evidence-less connections?
+## Media Agent Review:
+- [MAJOR] Image verification claims without tool evidence
+- [MAJOR] Fabricated EXIF data or reverse image results
+- [MINOR] Incomplete source verification
+- [MINOR] Low-confidence claim presented as verified
 
-**STAGE 2 — Sufficiency:**
-- Were the platforms I suggested in my plan scanned?
-- Were username variations tried?
-- Was cross-verification performed?
-- Were target-specific details verified?
+# SYNTHESIS RULES
+1. Source-check every concrete claim — if not in tool output, DELETE or flag with ⚠️
+2. Remove duplicate findings
+3. Clean up formatting — use tables, sections, summary
+4. If review flagged [MINOR] issues, fix them here
+5. If review flagged [MAJOR] issues, add clear warnings in the report
+6. Keep all verified findings — do NOT delete valid data
 
-**ADDITIONAL ACADEMIC CHECKS:**
-- Was full text reading performed, or extracted only from abstracts?
-- Were GitHub repo READMEs fetched, or just names/lists presented?
-- Are metrics like star counts from tool output, or estimated?
-- Are results truncated? (sections ending with "no results")
-- Are there noise/irrelevant results? (unrelated domains, wrong topic)
-- Is author info complete for every paper?
-
-**OUTPUT FORMAT:**
-- Clean and sufficient → "RESULT CLEAN — approved" + 2-3 sentence summary
-- Problematic but fixable → [ISSUE_DESCRIPTION] + CORRECTION SUGGESTIONS
-- Serious hallucination → "SERIOUS_ISSUE" + issue list + corrections
-
-# REPORT SYNTHESIS RULES
-1. Source-check EVERY concrete claim — if not in tool output, DELETE
-2. Different people → SEPARATE sections
-3. Unverified → ⚠️, verified → ✅
-4. Login/inaccessible profiles → DELETE
-5. Deduplicate
-
-**ACADEMIC SYNTHESIS RULES:**
-- Mark information derived only from abstracts with "⚠️ Abstract only — full text not verified"
-- For GitHub repos, write CONCRETE features from README, NOT generic descriptions
-- DELETE noise/irrelevant results — do not include in report
-- Mark truncated results as "incomplete", do not present as complete
-- Match every technical claim to tool output — if no match, DELETE
-
-Format: Clean Markdown, tables, source references, summary section`;
+Format: Clean Markdown with source references.`;
 
 const AGENT_DESCRIPTIONS: Record<string, string> = {
   identity: 'Identity OSINT — username/email/profile research. Tools: search_person, run_sherlock, run_maigret, nitter_profile, scrape_profile, verify_profiles, web_fetch, cross_reference, run_github_osint, check_email_registrations, check_breaches, verify_claim',
@@ -135,6 +122,7 @@ export class StrategySession {
     const preview = lines.slice(0, 5).join('\n  ');
     const suffix = lines.length > 5 ? `\n  ... (+${lines.length - 5} more lines)` : '';
     emitProgress(`🧠 [Strategy-${phase}] ${timestamp}\n  ${preview}${suffix}`);
+    emitStrategyDetail(content);
 
     // File log — full content
     this.logEntries.push(`## ${phase} (${timestamp})\n\n${content}\n\n---\n`);
@@ -188,7 +176,7 @@ export class StrategySession {
 
     this.history.push({
       role: 'user',
-      content: `[REVIEW PHASE]\nSub-agent completed. Here are the research results:\n\n${result.slice(0, 15000)}`,
+      content: `[REVIEW PHASE]\nSub-agent completed. Here are the research results:\n\n${result.slice(0, 25000)}`,
     });
 
     try {
@@ -217,7 +205,7 @@ export class StrategySession {
     const contextParts: string[] = [
       `[SYNTHESIS PHASE]`,
       `Sub-agent raw result:`,
-      result.slice(0, 12000),
+      result.slice(0, 20000),
     ];
     if (reviewFeedback) {
       contextParts.push(`\nYour own review notes (from above):`, reviewFeedback.slice(0, 3000));
@@ -247,54 +235,73 @@ export class StrategySession {
 
   /**
    * Shared LLM call — always sends the session history.
+   * Retries on 429 with exponential backoff, falls back to alternate models.
    */
   private async callLLM(phase: 'plan' | 'review' | 'synthesize'): Promise<string | undefined> {
     const startedAt = Date.now();
     const attempt = ++this.completionAttempt;
-    try {
-      const response = (await client.chat.completions.create({
-        model: STRATEGY_MODEL,
-        messages: this.history,
-        max_tokens: 10000,
-      })) as ChatCompletion;
+    const modelsToTry = [STRATEGY_MODEL, ...STRATEGY_FALLBACKS];
 
-      const telemetry = buildLLMTelemetryEvent({
-        agent: 'StrategyAgent',
-        phase,
-        reason: phase,
-        attempt,
-        requestedModel: STRATEGY_MODEL,
-        actualModel: response.model,
-        responseId: response.id,
-        status: 'success',
-        latencyMs: Date.now() - startedAt,
-        messages: this.history as Message[],
-        usage: response.usage as any,
-      });
-      emitTelemetry(telemetry);
-      void persistLLMTelemetryEvent(telemetry).catch((error) => {
-        emitProgress(`⚠️ [Strategy-${phase}] Telemetry persist failed: ${(error as Error).message}`);
-      });
+    for (const model of modelsToTry) {
+      for (let retry = 0; retry < MAX_RETRIES; retry++) {
+        try {
+          const response = (await client.chat.completions.create({
+            model,
+            messages: this.history,
+            max_tokens: 10000,
+          })) as ChatCompletion;
 
-      return response.choices?.[0]?.message?.content?.trim();
-    } catch (error) {
-      const telemetry = buildLLMTelemetryEvent({
-        agent: 'StrategyAgent',
-        phase,
-        reason: phase,
-        attempt,
-        requestedModel: STRATEGY_MODEL,
-        status: 'error',
-        latencyMs: Date.now() - startedAt,
-        messages: this.history as Message[],
-        errorMessage: error instanceof Error ? error.message : String(error),
-      });
-      emitTelemetry(telemetry);
-      void persistLLMTelemetryEvent(telemetry).catch((persistError) => {
-        emitProgress(`⚠️ [Strategy-${phase}] Telemetry persist failed: ${(persistError as Error).message}`);
-      });
-      throw error;
+          const telemetry = buildLLMTelemetryEvent({
+            agent: 'StrategyAgent',
+            phase,
+            reason: phase,
+            attempt,
+            requestedModel: STRATEGY_MODEL,
+            actualModel: response.model,
+            responseId: response.id,
+            status: 'success',
+            latencyMs: Date.now() - startedAt,
+            messages: this.history as Message[],
+            usage: response.usage as any,
+          });
+          emitTelemetry(telemetry);
+          void persistLLMTelemetryEvent(telemetry).catch((error) => {
+            emitProgress(`⚠️ [Strategy-${phase}] Telemetry persist failed: ${(error as Error).message}`);
+          });
+
+          if (model !== STRATEGY_MODEL) {
+            emitProgress(`🧠 [Strategy-${phase}] Fell back to ${model}`);
+          }
+
+          return response.choices?.[0]?.message?.content?.trim();
+        } catch (error) {
+          const is429 = error instanceof Error && /429|rate.?limit/i.test(error.message);
+          if (!is429 || retry >= MAX_RETRIES - 1) break;
+
+          const delay = BASE_DELAY_MS * Math.pow(2, retry);
+          emitProgress(`🧠 [Strategy-${phase}] 429 rate limit on ${model}, retry ${retry + 1}/${MAX_RETRIES} in ${delay}ms`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
     }
+
+    // All models exhausted — emit error telemetry and throw
+    const telemetry = buildLLMTelemetryEvent({
+      agent: 'StrategyAgent',
+      phase,
+      reason: phase,
+      attempt,
+      requestedModel: STRATEGY_MODEL,
+      status: 'error',
+      latencyMs: Date.now() - startedAt,
+      messages: this.history as Message[],
+      errorMessage: `All models exhausted (429): ${modelsToTry.join(', ')}`,
+    });
+    emitTelemetry(telemetry);
+    void persistLLMTelemetryEvent(telemetry).catch((persistError) => {
+      emitProgress(`⚠️ [Strategy-${phase}] Telemetry persist failed: ${(persistError as Error).message}`);
+    });
+    throw new Error(`Strategy Agent: all models returned 429`);
   }
 
   /**

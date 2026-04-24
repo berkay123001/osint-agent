@@ -1,9 +1,16 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import type { Message } from '../agents/types.js';
+import type { TranscriptViewport } from './transcriptViewport.js';
 
 interface Props {
-  messages: Message[];
+  viewport: TranscriptViewport;
+  maxLineWidth: number;
+}
+
+function clipSingleLine(text: string, maxLineWidth: number): string {
+  if (text.length <= maxLineWidth) return text;
+  if (maxLineWidth <= 1) return '…';
+  return `${text.slice(0, Math.max(0, maxLineWidth - 1))}…`;
 }
 
 // ─── Inline markdown parser ──────────────────────────────────────────────────
@@ -241,13 +248,8 @@ function renderContent(text: string): React.ReactElement {
 
 // ─── MessageList ─────────────────────────────────────────────────────────────
 
-export function MessageList({ messages }: Props): React.ReactElement {
-  const visible = messages.filter(
-    (m) =>
-      (m.role === 'user' || m.role === 'assistant') &&
-      typeof m.content === 'string' &&
-      m.content.trim().length > 0,
-  );
+function MessageListInner({ viewport, maxLineWidth }: Props): React.ReactElement {
+  const visible = viewport.items;
 
   if (visible.length === 0) return <></>;
 
@@ -255,8 +257,16 @@ export function MessageList({ messages }: Props): React.ReactElement {
 
   return (
     <Box flexDirection="column">
+      {(viewport.hiddenOlderMessageCount > 0 || viewport.hiddenLinesAbove > 0) && (
+        <Text dimColor color="cyan">
+          {viewport.hiddenOlderMessageCount > 0
+            ? clipSingleLine(`↑ ${viewport.hiddenOlderMessageCount} older message${viewport.hiddenOlderMessageCount === 1 ? '' : 's'} available — press ↑ to scroll`, maxLineWidth)
+            : clipSingleLine(`↑ ${viewport.hiddenLinesAbove} more line${viewport.hiddenLinesAbove === 1 ? '' : 's'} above — press ↑ to scroll`, maxLineWidth)
+          }
+        </Text>
+      )}
       {visible.map((msg, i) => {
-        const content = (msg.content as string).trim();
+        const content = msg.content.trim();
         const isUser = msg.role === 'user';
 
         // Multi-line user message → compact paste format
@@ -265,15 +275,17 @@ export function MessageList({ messages }: Props): React.ReactElement {
           const lines = content.split('\n');
           const firstLine = (lines.find(l => l.trim().length > 0) || lines[0]).trim();
           const preview = firstLine.slice(0, 80);
-          const extraLines = lines.length - 1;
+          const extraLines = Math.max(0, msg.originalLineCount - 1);
           const needsEllipsis = firstLine.length > 80 || extraLines > 0;
+          const summaryLine = clipSingleLine(
+            `[paste #${pasteCounter} "${preview}${needsEllipsis ? '…' : ''}" +${extraLines} lines]`,
+            maxLineWidth,
+          );
 
           return (
             <Box key={i} flexDirection="column" marginTop={i > 0 ? 1 : 0}>
               <Text bold color="cyan">You</Text>
-              <Text dimColor>
-                [paste #{pasteCounter} &quot;{preview}{needsEllipsis ? '…' : ''}&quot; +{extraLines} lines]
-              </Text>
+              <Text dimColor>{summaryLine}</Text>
             </Box>
           );
         }
@@ -287,6 +299,16 @@ export function MessageList({ messages }: Props): React.ReactElement {
           </Box>
         );
       })}
+      {(viewport.hiddenNewerMessageCount > 0 || viewport.hiddenLinesBelow > 0) && (
+        <Text dimColor color="cyan">
+          {viewport.hiddenNewerMessageCount > 0
+            ? clipSingleLine(`↓ ${viewport.hiddenNewerMessageCount} newer message${viewport.hiddenNewerMessageCount === 1 ? '' : 's'} available — press ↓ to return`, maxLineWidth)
+            : clipSingleLine(`↓ ${viewport.hiddenLinesBelow} more line${viewport.hiddenLinesBelow === 1 ? '' : 's'} below — press ↓ to scroll`, maxLineWidth)
+          }
+        </Text>
+      )}
     </Box>
   );
 }
+
+export const MessageList = React.memo(MessageListInner);

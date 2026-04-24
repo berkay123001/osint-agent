@@ -75,6 +75,11 @@ const MODEL_METADATA: Record<string, ModelTelemetryMeta> = {
   'minimax/minimax-m2.1': {
     contextLimit: 196608,
   },
+  'qwen/qwen3.6-plus': {
+    contextLimit: 1_000_000,
+    inputUsdPerMillion: 0.325,
+    outputUsdPerMillion: 1.95,
+  },
 }
 
 function resolveModelMeta(modelName: string): ModelTelemetryMeta | undefined {

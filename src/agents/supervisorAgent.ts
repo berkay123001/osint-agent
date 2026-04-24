@@ -182,36 +182,12 @@ async function executeSubAgentWithStrategy(
     args.query, (args.context || '') + planContext, args.depth,
   );
 
-  // --- PHASE 3: REVIEW + optional CONTINUE (AutoGen-style) ---
+  // --- PHASE 3: REVIEW (advisory — notes go to synthesis, no retry) ---
   let finalResult = result;
   let reviewFeedback = '';
   if (result.length > 200) {
-    const { approved, feedback } = await strategy.review(result);
+    const { feedback } = await strategy.review(result);
     reviewFeedback = feedback;
-
-    if (!approved && feedback && !feedback.includes('SERIOUS_ISSUE')) {
-      // Do NOT restart the sub-agent — inject feedback into the same history
-      emitProgress(`🔄 Strategy feedback being injected into ${agentLabel} history (continuing)...`);
-
-      agentHistory.push({
-        role: 'user',
-        content:
-          `[STRATEGY REVIEW — Correction Required]\n\n` +
-          `Review result:\n${feedback.slice(0, 4000)}\n\n` +
-          `Fix the issues above. Run missing tools, correct incorrect information. ` +
-          `Remember the results of tools you already called — do not call them again.`,
-      });
-
-      // Continue with the same history — sub-agent remembers previous tool results
-      const { response: continuedResult } = await agentFn(
-        args.query, undefined, args.depth, agentHistory,
-      );
-
-      if (continuedResult.length > 200) {
-        finalResult = continuedResult;
-        logger.info('AGENT', `[Strategy] ${agentLabel} 2nd round (continue) completed (${(continuedResult.length / 1024).toFixed(1)}KB)`);
-      }
-    }
   }
 
   // --- PHASE 4: SYNTHESIZE (Strategy remembers plan + review) ---
@@ -291,7 +267,7 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
 
 export const supervisorAgentConfig: AgentConfig = {
   name: 'Supervisor',
-  model: 'minimax/minimax-m2.7',
+  model: 'qwen/qwen3.6-plus',
   maxTokens: 32768, // Large sub-agent reports + thinking tokens need a generous budget
   maxToolCalls: 90, // Complex multi-agent tasks: 3+ sub-agent delegations × retries + report + graph ops
   tools: supervisorMetaTools,
@@ -439,12 +415,15 @@ function formatAgentOutput(text: string): string {
     .join('\n');
 }
 
-export async function runSupervisor(history: Message[]): Promise<void> {
+export async function runSupervisor(history: Message[]): Promise<{ finalResponse: string; history: Message[] } | undefined> {
   try {
     const result = await runAgentLoop(history, supervisorAgentConfig);
     const formatted = formatAgentOutput(result.finalResponse);
     logger.info('AGENT', `\n🤖 Supervisor:\n${formatted}\n`);
-    return;
+    return {
+      finalResponse: result.finalResponse,
+      history: result.history ?? history,
+    };
   } catch (error) {
     logger.error('AGENT', `Supervisor Error: ${error instanceof Error ? error.message : String(error)}`);
   }

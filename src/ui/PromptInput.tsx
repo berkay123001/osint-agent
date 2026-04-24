@@ -1,7 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Box, Text, useInput, useStdin } from 'ink';
 import TextInput from 'ink-text-input';
-import Spinner from 'ink-spinner';
 
 interface PasteChunk {
   id: number;
@@ -14,7 +13,7 @@ interface Props {
   isProcessing: boolean;
 }
 
-export function PromptInput({ onSubmit, isProcessing }: Props): React.ReactElement {
+function PromptInputInner({ onSubmit, isProcessing }: Props): React.ReactElement {
   const [value, setValue] = useState('');
   const [pendingPastes, setPendingPastes] = useState<PasteChunk[]>([]);
   const { stdin } = useStdin();
@@ -123,10 +122,18 @@ export function PromptInput({ onSubmit, isProcessing }: Props): React.ReactEleme
     }
   }, [value, onSubmit, pendingPastes.length]);
 
+  const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  const [spinnerFrame, setSpinnerFrame] = useState(0);
+  useEffect(() => {
+    if (!isProcessing) return;
+    const timer = setInterval(() => setSpinnerFrame(f => (f + 1) % spinnerFrames.length), 500);
+    return () => clearInterval(timer);
+  }, [isProcessing]);
+
   if (isProcessing) {
     return (
       <Box gap={1}>
-        <Text color="cyan"><Spinner type="dots" /></Text>
+        <Text color="cyan">{spinnerFrames[spinnerFrame]}</Text>
         <Text dimColor>Thinking...</Text>
       </Box>
     );
@@ -174,3 +181,5 @@ export function PromptInput({ onSubmit, isProcessing }: Props): React.ReactEleme
     </Box>
   );
 }
+
+export const PromptInput = React.memo(PromptInputInner);

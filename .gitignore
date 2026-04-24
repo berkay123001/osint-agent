@@ -28,6 +28,20 @@ patch_chat*.ts
 patch_driver.ts
 run_manual_graph_test.ts
 
+# Kişisel araç talimatları (AI araçlarına özel, repoya girmemeli)
+CLAUDE.md
+GEMINI.md
+
+# Kişisel notlar
+onemli2.md
+
+# Python sanal ortam
+.venv/
+
+# Geçici log dosyaları
+*.log
+.pids
+
 # Log & output dosyaları
 *.log
 *.txt.bak

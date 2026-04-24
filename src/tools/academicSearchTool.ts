@@ -155,6 +155,12 @@ export interface AcademicPaper {
   pdfUrl: string
   htmlUrl: string
   totalCitations?: number
+  doi?: string
+  venue?: string
+  year?: number
+  citationCount?: number
+  isOpenAccess?: boolean
+  source?: 'arxiv' | 'semantic-scholar'
 }
 
 export interface AcademicSearchResult {
@@ -162,6 +168,128 @@ export interface AcademicSearchResult {
   query: string
   totalFound: number
   error?: string
+}
+
+export interface AcademicSearchOptions {
+  peerReviewedOnly?: boolean
+}
+
+function normalizeAcademicTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function getAcademicPaperKey(paper: AcademicPaper): string {
+  if (paper.doi) return `doi:${paper.doi.toLowerCase()}`
+  if (paper.arxivId) return `arxiv:${paper.arxivId.toLowerCase()}`
+  return `title:${normalizeAcademicTitle(paper.title)}`
+}
+
+function isLikelyPeerReviewedPaper(paper: AcademicPaper): boolean {
+  if (!paper.venue) return false
+  if (/(arxiv|corr|preprint|working paper|biorxiv|medrxiv|ssrn)/i.test(paper.venue)) return false
+  if (paper.doi) return true
+  return /(journal|transactions|proceedings|conference|symposium|review|letters|workshop)/i.test(paper.venue)
+}
+
+function getAcademicPaperScore(paper: AcademicPaper): number {
+  let score = 0
+
+  if (paper.doi) score += 100
+  if (paper.venue) score += isLikelyPeerReviewedPaper(paper) ? 45 : 10
+  if (paper.source === 'semantic-scholar') score += 15
+  if (paper.citationCount) score += Math.min(25, Math.floor(paper.citationCount / 20))
+  if (paper.year) score += Math.min(10, Math.max(0, paper.year - 2015))
+  if (paper.arxivId && !paper.doi && !paper.venue) score -= 40
+
+  return score
+}
+
+function mergeAcademicPaperVariants(existing: AcademicPaper, incoming: AcademicPaper): AcademicPaper {
+  const preferred = getAcademicPaperScore(incoming) > getAcademicPaperScore(existing) ? incoming : existing
+  const fallback = preferred === incoming ? existing : incoming
+  const authors = preferred.authors.length >= fallback.authors.length ? preferred.authors : fallback.authors
+  const categories = preferred.categories.length >= fallback.categories.length ? preferred.categories : fallback.categories
+  const abstract = preferred.abstract.length >= fallback.abstract.length ? preferred.abstract : fallback.abstract
+
+  return {
+    ...fallback,
+    ...preferred,
+    authors,
+    categories,
+    abstract,
+    arxivId: preferred.arxivId || fallback.arxivId,
+    doi: preferred.doi || fallback.doi,
+    venue: preferred.venue || fallback.venue,
+    pdfUrl: preferred.pdfUrl || fallback.pdfUrl,
+    htmlUrl: preferred.htmlUrl || fallback.htmlUrl,
+    publishedDate: preferred.publishedDate || fallback.publishedDate,
+    updatedDate: preferred.updatedDate || fallback.updatedDate,
+    year: preferred.year ?? fallback.year,
+    citationCount: preferred.citationCount ?? fallback.citationCount,
+    totalCitations: preferred.totalCitations ?? fallback.totalCitations,
+    isOpenAccess: preferred.isOpenAccess ?? fallback.isOpenAccess,
+    source: preferred.source ?? fallback.source,
+  }
+}
+
+function dedupeAcademicPapers(papers: AcademicPaper[]): AcademicPaper[] {
+  const deduped = new Map<string, AcademicPaper>()
+
+  for (const paper of papers) {
+    const key = getAcademicPaperKey(paper)
+    const existing = deduped.get(key)
+
+    if (!existing) {
+      deduped.set(key, paper)
+      continue
+    }
+
+    deduped.set(key, mergeAcademicPaperVariants(existing, paper))
+  }
+
+  return [...deduped.values()]
+}
+
+function rankAcademicPapers(papers: AcademicPaper[]): AcademicPaper[] {
+  return [...papers].sort((left, right) => {
+    const scoreDelta = getAcademicPaperScore(right) - getAcademicPaperScore(left)
+    if (scoreDelta !== 0) return scoreDelta
+    return normalizeAcademicTitle(left.title).localeCompare(normalizeAcademicTitle(right.title))
+  })
+}
+
+function getPaperSortDateValue(paper: AcademicPaper, sortBy: 'relevance' | 'submittedDate' | 'lastUpdatedDate'): number {
+  const candidate = sortBy === 'lastUpdatedDate'
+    ? (paper.updatedDate || paper.publishedDate)
+    : paper.publishedDate
+  const parsed = Date.parse(candidate || '')
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
+function sortAcademicPapers(
+  papers: AcademicPaper[],
+  sortBy: 'relevance' | 'submittedDate' | 'lastUpdatedDate',
+  peerReviewedOnly: boolean,
+): AcademicPaper[] {
+  return [...papers].sort((left, right) => {
+    if (peerReviewedOnly) {
+      const peerReviewedDelta = Number(isLikelyPeerReviewedPaper(right)) - Number(isLikelyPeerReviewedPaper(left))
+      if (peerReviewedDelta !== 0) return peerReviewedDelta
+    }
+
+    if (sortBy !== 'relevance') {
+      const dateDelta = getPaperSortDateValue(right, sortBy) - getPaperSortDateValue(left, sortBy)
+      if (dateDelta !== 0) return dateDelta
+    }
+
+    const scoreDelta = getAcademicPaperScore(right) - getAcademicPaperScore(left)
+    if (scoreDelta !== 0) return scoreDelta
+
+    return normalizeAcademicTitle(left.title).localeCompare(normalizeAcademicTitle(right.title))
+  })
 }
 
 // arXiv Atom XML'inden entry bloklarını çıkar
@@ -199,7 +327,7 @@ function parseArxivXml(xml: string): AcademicPaper[] {
     const htmlUrl = `https://arxiv.org/abs/${arxivId}`
 
     if (arxivId) {
-      entries.push({ arxivId, title, authors, abstract, publishedDate: published, updatedDate: updated, categories, pdfUrl, htmlUrl })
+      entries.push({ arxivId, title, authors, abstract, publishedDate: published, updatedDate: updated, categories, pdfUrl, htmlUrl, source: 'arxiv' })
     }
   }
 
@@ -210,6 +338,7 @@ export async function searchAcademicPapers(
   query: string,
   maxResults = 10,
   sortBy: 'relevance' | 'submittedDate' | 'lastUpdatedDate' = 'submittedDate',
+  options: AcademicSearchOptions = {},
 ): Promise<AcademicSearchResult> {
   // arXiv ve Semantic Scholar'u paralel çalıştır
   const [arxivResult, ssResult] = await Promise.allSettled([
@@ -222,24 +351,31 @@ export async function searchAcademicPapers(
   const arxivError = arxivResult.status === 'fulfilled' ? arxivResult.value.error : (arxivResult.reason as Error)?.message;
 
   const ssPapers = ssResult.status === 'fulfilled' ? ssResult.value : [];
-
-  // SS sonuçlarını AcademicPaper formatına çevir; arXiv'de olmayanları ekle
-  const arxivIds = new Set(arxivPapers.map(p => p.arxivId));
-  const ssUnique: AcademicPaper[] = ssPapers
-    .filter(p => !p.arxivId || !arxivIds.has(p.arxivId))
-    .map(p => p as AcademicPaper);
-
-  const combined = [...arxivPapers, ...ssUnique];
+  const combined = sortAcademicPapers(dedupeAcademicPapers([
+    ...ssPapers,
+    ...arxivPapers,
+  ]), sortBy, options.peerReviewedOnly === true);
+  const peerReviewedPapers = combined.filter(isLikelyPeerReviewedPaper);
+  const papers = options.peerReviewedOnly
+    ? (peerReviewedPapers.length > 0
+        ? peerReviewedPapers
+        : combined.filter(p => p.source === 'semantic-scholar'))
+    : combined;
   const ssNote = ssPapers.length > 0
     ? `\n📖 Semantic Scholar: ${ssPapers.length} ek sonuç (DOI + venue bilgisi içerir)`
     : '';
+  const filterNote = options.peerReviewedOnly
+    ? (peerReviewedPapers.length > 0
+        ? `\n✅ Peer-reviewed filter active: likely peer-reviewed DOI/venue-backed papers prioritized.`
+        : `\n⚠️ Peer-reviewed filter active: no likely peer-reviewed DOI/venue-backed matches found, showing best Semantic Scholar candidates.`)
+    : '';
 
   return {
-    papers: combined,
+    papers: papers.slice(0, maxResults),
     query,
     totalFound: arxivTotal + ssPapers.length,
-    error: combined.length === 0 ? (arxivError ?? 'Sonuç bulunamadı') : undefined,
-    _ssNote: ssNote,
+    error: papers.length === 0 ? (arxivError ?? 'Sonuç bulunamadı') : undefined,
+    _ssNote: ssNote + filterNote,
   } as AcademicSearchResult & { _ssNote?: string };
 }
 
@@ -340,6 +476,7 @@ async function _searchSemanticScholar(query: string, limit: number): Promise<SSP
         htmlUrl: arxivId ? `https://arxiv.org/abs/${arxivId}` : (doi ? `https://doi.org/${doi}` : ''),
         totalCitations: p.citationCount ?? 0,
         isOpenAccess: p.isOpenAccess ?? false,
+        source: 'semantic-scholar',
       };
     });
     return papers;
@@ -359,12 +496,13 @@ export function formatAcademicResult(result: AcademicSearchResult & { _ssNote?: 
   ]
 
   for (const [i, p] of result.papers.entries()) {
-    const sp = p as SSPaper;
     lines.push(`### ${i + 1}. ${p.title}`)
     lines.push(`   📅 Yayın: ${p.publishedDate} | 🆔 arXiv: ${p.arxivId || '(arXiv yok)'}`)
-    if (sp.doi) lines.push(`   🔑 DOI: https://doi.org/${sp.doi}  ← peer-reviewed`)
-    if (sp.venue) lines.push(`   🏛️  Venue: ${sp.venue}`)
-    if (sp.citationCount !== undefined && sp.citationCount > 0) lines.push(`   📊 Atıf: ${sp.citationCount}`)
+    if (p.source) lines.push(`   🧭 Source: ${p.source}`)
+    if (p.doi) lines.push(`   🔑 DOI: https://doi.org/${p.doi}  ← DOI-backed`)
+    if (isLikelyPeerReviewedPaper(p)) lines.push('   ✅ Likely peer-reviewed source')
+    if (p.venue) lines.push(`   🏛️  Venue: ${p.venue}`)
+    if (p.citationCount !== undefined && p.citationCount > 0) lines.push(`   📊 Atıf: ${p.citationCount}`)
     lines.push(`   👥 Yazarlar: ${p.authors.slice(0, 5).join(', ')}${p.authors.length > 5 ? ` +${p.authors.length - 5}` : ''}`)
     lines.push(`   🏷️  Kategoriler: ${p.categories.slice(0, 3).join(', ') || '—'}`)
     lines.push(`   📝 Özet: ${p.abstract.slice(0, 800)}${p.abstract.length > 800 ? '...' : ''}`)
@@ -372,8 +510,8 @@ export function formatAcademicResult(result: AcademicSearchResult & { _ssNote?: 
       lines.push(`   🔗 Abstract: https://arxiv.org/abs/${p.arxivId}`)
       lines.push(`   📄 HTML: https://ar5iv.labs.arxiv.org/html/${p.arxivId}`)
       lines.push(`   📥 PDF: ${p.pdfUrl}`)
-    } else if (sp.doi) {
-      lines.push(`   🔗 DOI Link: https://doi.org/${sp.doi}`)
+    } else if (p.doi) {
+      lines.push(`   🔗 DOI Link: https://doi.org/${p.doi}`)
     }
     lines.push('')
   }
@@ -396,10 +534,32 @@ export async function writeAcademicPapersToGraph(
 
   for (const paper of papers) {
     try {
+      const identity = paper.arxivId
+        ? {
+            mergeClause: 'MERGE (p:Paper {arxivId: $arxivId})',
+            matchClause: 'MATCH (p:Paper {arxivId: $arxivId})',
+            params: { arxivId: paper.arxivId },
+          }
+        : paper.doi
+          ? {
+              mergeClause: 'MERGE (p:Paper {doi: $doi})',
+              matchClause: 'MATCH (p:Paper {doi: $doi})',
+              params: { doi: paper.doi },
+            }
+          : {
+              mergeClause: 'MERGE (p:Paper {paperKey: $paperKey})',
+              matchClause: 'MATCH (p:Paper {paperKey: $paperKey})',
+              params: { paperKey: getAcademicPaperKey(paper) },
+            }
+
       // Paper node'u oluştur veya güncelle
       await neo4jWrite(
-        `MERGE (p:Paper {arxivId: $arxivId})
+        `${identity.mergeClause}
          SET p.title = $title,
+             p.paperKey = $paperKey,
+             p.arxivId = CASE WHEN $arxivId <> '' THEN $arxivId ELSE p.arxivId END,
+             p.doi = CASE WHEN $doi <> '' THEN $doi ELSE p.doi END,
+             p.venue = CASE WHEN $venue <> '' THEN $venue ELSE p.venue END,
              p.publishedDate = $publishedDate,
              p.pdfUrl = $pdfUrl,
              p.abstract = $abstract,
@@ -407,7 +567,11 @@ export async function writeAcademicPapersToGraph(
              p.searchQuery = $searchQuery,
              p.updatedAt = datetime()`,
         {
+          ...identity.params,
+          paperKey: getAcademicPaperKey(paper),
           arxivId: paper.arxivId,
+          doi: paper.doi ?? '',
+          venue: paper.venue ?? '',
           title: paper.title,
           publishedDate: paper.publishedDate,
           pdfUrl: paper.pdfUrl,
@@ -423,9 +587,9 @@ export async function writeAcademicPapersToGraph(
         await neo4jWrite(
           `MERGE (a:Person {name: $name})
            WITH a
-           MATCH (p:Paper {arxivId: $arxivId})
+           ${identity.matchClause}
            MERGE (p)-[:AUTHORED_BY]->(a)`,
-          { name: author, arxivId: paper.arxivId },
+          { name: author, ...identity.params },
         )
         authorsLinked++
       }
@@ -435,9 +599,9 @@ export async function writeAcademicPapersToGraph(
         await neo4jWrite(
           `MERGE (t:Topic {name: $cat})
            WITH t
-           MATCH (p:Paper {arxivId: $arxivId})
+           ${identity.matchClause}
            MERGE (p)-[:ABOUT]->(t)`,
-          { cat, arxivId: paper.arxivId },
+          { cat, ...identity.params },
         )
       }
     } catch {
@@ -446,4 +610,9 @@ export async function writeAcademicPapersToGraph(
   }
 
   return { papersCreated, authorsLinked }
+}
+
+export function resetAcademicSearchToolStateForTests(): void {
+  lastArxivCall = 0
+  lastSemanticCall = 0
 }

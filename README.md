@@ -16,6 +16,8 @@ A multi-agent OSINT system designed for investigating individuals, usernames, em
 
 ---
 
+> **Academic Notice:** This project is part of an ongoing academic paper. Please do not reproduce the architecture or results without citation.
+
 > **Legal Notice:** This tool is intended solely for ethical OSINT research, journalism, and cybersecurity studies. It only collects data from public sources. The user bears full responsibility for its use.
 
 ---

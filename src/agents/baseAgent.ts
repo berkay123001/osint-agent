@@ -1,8 +1,10 @@
 import OpenAI from 'openai';
 import type { ChatCompletion } from 'openai/resources/chat/completions';
-import { sanitizeHistoryForProvider, normalizeAssistantMessage, normalizeToolContent } from '../lib/chatHistory.js';
+import { normalizeAssistantMessage, normalizeToolContent } from '../lib/chatHistory.js';
+import { buildProviderMessages as buildDurableProviderMessages } from '../lib/providerContextBuilder.js';
+import { buildToolCacheKey, rebuildAgentSession } from '../lib/agentSession.js';
 import { logger } from '../lib/logger.js';
-import { emitProgress, emitTelemetry, emitToolDetail } from '../lib/progressEmitter.js';
+import { emitProgress, emitSessionGraphDirty, emitTelemetry, emitToolDetail } from '../lib/progressEmitter.js';
 import { buildLLMTelemetryEvent, persistLLMTelemetryEvent } from '../lib/llmTelemetry.js';
 import { readFile } from 'fs/promises';
 import path from 'path';
@@ -13,15 +15,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const DEFAULT_MODEL = 'kwaipilot/kat-coder-pro-v2';
-const SUPERVISOR_MODEL = 'minimax/minimax-m2.7';
+const SUPERVISOR_MODEL = 'qwen/qwen3.6-plus';
 export { DEFAULT_MODEL, SUPERVISOR_MODEL };
 
 // Fallback models — tried sequentially on content filter (PII) or rate limit errors
 const FALLBACK_MODELS = [
-  'kwaipilot/kat-coder-pro-v2',
+  'minimax/minimax-m2.5',
   'google/gemini-2.0-flash-001',
   'deepseek/deepseek-chat-v3-0324',
-  'qwen/qwen3-235b-a22b:free',
 ];
 
 const DEFAULT_MAX_TOOL_CALLS = 30;
@@ -48,16 +49,22 @@ export async function runAgentLoop(
 ): Promise<AgentResult> {
   const _client = _clientOverride ?? client;
   const _delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, _retryDelayMs ?? ms));
+  let session = rebuildAgentSession(config.name, history);
   let toolCallCount = 0;
+  let toolCallCountFloor = 0;
   let emptyRetries = 0;
   let correctionRetries = 0;
   let totalCorrectionAttempts = 0; // Global cap — prevents infinite loops
   let forceTextRetries = 0; // Text forcing retry counter
   let toolsDisabledMessageSent = false; // Summary request sent only once when tool budget is exhausted
-  const toolsUsed: Record<string, number> = {};
+  let toolsUsed: Record<string, number> = {};
+  const pushHistory = (message: Message): void => {
+    history.push(message);
+    emitSessionGraphDirty();
+  };
   const maxToolCalls = config.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
   // Tool call deduplication: return from cache if the same tool+args combination was called before
-  const callCache = new Map<string, string>();
+  let callCache = new Map<string, string>();
   // Per-tool hard limit: prevents a single tool from consuming the entire budget
   const PER_TOOL_LIMITS: Record<string, number> = {
     search_academic_papers: 8,
@@ -65,12 +72,32 @@ export async function runAgentLoop(
     search_web_multi: 8,
     search_researcher_papers: 8,
   };
-  const perToolCount: Record<string, number> = {};
+  let perToolCount: Record<string, number> = {};
   // Stagnation detection: track consecutive low-yield calls
   let lowYieldStreak = 0;
   const LOW_YIELD_THRESHOLD = 5; // After this many consecutive low-yield calls, force synthesis
-  const seenUrls = new Set<string>(); // Track unique URLs found across all search results
+  let seenUrls = new Set<string>(); // Track unique URLs found across all search results
   let completionAttempt = 0;
+
+  function refreshRuntimeState(): void {
+    session = rebuildAgentSession(config.name, history);
+    toolCallCount = Math.max(toolCallCountFloor, session.runtime.toolCallCount);
+    toolsUsed = { ...session.runtime.toolsUsed };
+    callCache = new Map(Object.entries(session.runtime.duplicateToolCache));
+    perToolCount = { ...session.runtime.perToolCount };
+    lowYieldStreak = session.runtime.lowYieldStreak;
+    seenUrls = new Set(session.runtime.seenUrls);
+  }
+
+  function buildRequestMessages(modelName: string): Message[] {
+    const prepared = buildDurableProviderMessages(history, {
+      agentName: config.name,
+      modelName,
+      session,
+    });
+    session = prepared.session;
+    return prepared.messages;
+  }
 
   async function createTrackedCompletion(
     request: {
@@ -129,13 +156,15 @@ export async function runAgentLoop(
   }
 
   while (true) {
-    const toolsDisabled = toolCallCount >= maxToolCalls;
+    refreshRuntimeState();
+    const toolsDisabledByBudget = toolCallCount >= maxToolCalls;
+    const toolsDisabled = toolsDisabledByBudget || session.runtime.toolsDisabled;
     const toolChoice: 'auto' | 'none' = toolsDisabled ? 'none' : 'auto';
-    if (toolsDisabled && !toolsDisabledMessageSent) {
+    if (toolsDisabledByBudget && !toolsDisabledMessageSent) {
       toolsDisabledMessageSent = true;
       logger.warn('AGENT', `[${config.name}] Maximum tool calls exceeded, requesting final report...`);
       // Explicit guidance to prevent the model from losing context and returning a greeting
-      history.push({
+      pushHistory({
         role: 'user',
         content:
           'ALL TOOLS COMPLETED. Using the results from the tools executed above, ' +
@@ -158,7 +187,7 @@ export async function runAgentLoop(
     try {
       response = await createTrackedCompletion({
         model: config.model ?? DEFAULT_MODEL,
-        messages: sanitizeHistoryForProvider(history),
+        messages: buildRequestMessages(config.model ?? DEFAULT_MODEL),
         tools: config.tools.length > 0 ? config.tools : undefined,
         tool_choice: config.tools.length > 0 ? toolChoice : undefined,
         max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
@@ -176,7 +205,7 @@ export async function runAgentLoop(
         try {
           response = await createTrackedCompletion({
             model: fallbackModel,
-            messages: sanitizeHistoryForProvider(history),
+            messages: buildRequestMessages(fallbackModel),
             tools: config.tools.length > 0 ? config.tools : undefined,
             tool_choice: config.tools.length > 0 ? toolChoice : undefined,
             max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
@@ -203,7 +232,7 @@ export async function runAgentLoop(
         try {
           response = await createTrackedCompletion({
             model: currentModel,
-            messages: sanitizeHistoryForProvider(history),
+            messages: buildRequestMessages(currentModel),
             tools: config.tools.length > 0 ? config.tools : undefined,
             tool_choice: config.tools.length > 0 ? toolChoice : undefined,
             max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
@@ -221,7 +250,7 @@ export async function runAgentLoop(
               try {
                 response = await createTrackedCompletion({
                   model: fbModel,
-                  messages: sanitizeHistoryForProvider(history),
+                  messages: buildRequestMessages(fbModel),
                   tools: config.tools.length > 0 ? config.tools : undefined,
                   tool_choice: config.tools.length > 0 ? toolChoice : undefined,
                   max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
@@ -249,7 +278,7 @@ export async function runAgentLoop(
         await _delay(3000);
         response = await createTrackedCompletion({
           model: currentModel,
-          messages: sanitizeHistoryForProvider(history),
+          messages: buildRequestMessages(currentModel),
           tools: config.tools.length > 0 ? config.tools : undefined,
           tool_choice: config.tools.length > 0 ? toolChoice : undefined,
           max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
@@ -280,7 +309,7 @@ export async function runAgentLoop(
             try {
               response = await createTrackedCompletion({
                 model: fbModel,
-                messages: sanitizeHistoryForProvider(history),
+                messages: buildRequestMessages(fbModel),
                 tools: config.tools.length > 0 ? config.tools : undefined,
                 tool_choice: config.tools.length > 0 ? toolChoice : undefined,
                 max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
@@ -305,7 +334,7 @@ export async function runAgentLoop(
           logger.warn('AGENT', `[${config.name}] Alibaba DataInspection → trying ${fallbackModel} fallback...`);
           response = await createTrackedCompletion({
             model: fallbackModel,
-            messages: sanitizeHistoryForProvider(history),
+            messages: buildRequestMessages(fallbackModel),
             tools: config.tools.length > 0 ? config.tools : undefined,
             tool_choice: config.tools.length > 0 ? toolChoice : undefined,
             max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
@@ -329,7 +358,7 @@ export async function runAgentLoop(
             try {
               response = await createTrackedCompletion({
                 model: fbModel,
-                messages: sanitizeHistoryForProvider(history),
+                messages: buildRequestMessages(fbModel),
                 tools: config.tools.length > 0 ? config.tools : undefined,
                 tool_choice: config.tools.length > 0 ? toolChoice : undefined,
                 max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
@@ -409,16 +438,20 @@ export async function runAgentLoop(
                 if (text) {
                   const cleaned = stripThinkingTokens(text)
                   if (cleaned.length > 50) {
-                    return { finalResponse: cleaned, toolCallCount, toolsUsed }
+                    pushHistory({ role: 'assistant', content: cleaned });
+                    return { finalResponse: cleaned, toolCallCount, toolsUsed, session: rebuildAgentSession(config.name, history) }
                   }
                 }
               } catch (cleanErr) {
                 logger.error('AGENT', `[${config.name}] Clean API call also failed: ${(cleanErr as Error).message}`)
               }
+              const fallbackResponse = 'Model could not generate a response. Collected data has been saved to session files — check the `.osint-sessions/` directory.';
+              pushHistory({ role: 'assistant', content: fallbackResponse });
               return {
-                finalResponse: 'Model could not generate a response. Collected data has been saved to session files — check the `.osint-sessions/` directory.',
+                finalResponse: fallbackResponse,
                 toolCallCount,
                 toolsUsed,
+                session: rebuildAgentSession(config.name, history),
                 history,
               }
             }
@@ -427,9 +460,9 @@ export async function runAgentLoop(
             const lastMsgForce = history[history.length - 1];
             if (lastMsgForce && (lastMsgForce.role === 'tool' || lastMsgForce.role === 'user')) {
               if (lastMsgForce.role === 'tool') {
-                history.push({ role: 'assistant', content: 'Tool call failed, providing text response.' });
+                pushHistory({ role: 'assistant', content: 'Tool call failed, providing text response.' });
               }
-              history.push({ role: 'user', content: 'Do not call any tools. Present all collected data directly as text.' });
+              pushHistory({ role: 'user', content: 'Do not call any tools. Present all collected data directly as text.' });
             }
             config = { ...config, tools: [] }
             continue
@@ -445,7 +478,7 @@ export async function runAgentLoop(
           //   tool → assistant → user  (CORRECT FORMAT)
           const lastMsg = history[history.length - 1];
           if (lastMsg && lastMsg.role === 'tool') {
-            history.push({
+            pushHistory({
               role: 'assistant',
               content: 'Tool call produced invalid JSON, correcting.',
             });
@@ -454,27 +487,27 @@ export async function runAgentLoop(
           // Global cap: after 3 total attempts, force text response
           if (totalCorrectionAttempts >= 3) {
             logger.error('AGENT', `[${config.name}] JSON correction failed 3 times — disabling tool calls.`);
-            history.push({
+            pushHistory({
               role: 'user',
               content:
                 'TOOL_CALL_DISABLED. Respond directly in Markdown text using all the information you have collected. ' +
                 'Do not call any tools — write text only.',
             });
-            toolCallCount = maxToolCalls + 1;
+            toolCallCountFloor = maxToolCalls + 1;
             correctionRetries = 0;
             continue;
           }
 
           if (correctionRetries >= 2) {
             correctionRetries = 0;
-            history.push({
+            pushHistory({
               role: 'user',
               content:
                 'TOOL_CALL_DISABLED FAILED. Stop calling tools and summarize the collected data directly in Markdown text. ' +
                 'Do not call any tools — not save_finding, not generate_report, NOTHING. Write plain text only.',
             });
           } else {
-            history.push({
+            pushHistory({
               role: 'user',
               content: 'The previous tool call had invalid JSON format. ' +
                 'Call a single tool and keep the arguments very short. ' +
@@ -489,7 +522,31 @@ export async function runAgentLoop(
     }
 
     const message = response.choices[0].message;
-    history.push(normalizeAssistantMessage(message));
+
+    // Sanitize tool_calls with invalid JSON arguments BEFORE pushing to history.
+    // A broken function.arguments in an assistant message causes Alibaba to reject
+    // every subsequent API call with InvalidParameter (502). By replacing bad args
+    // with a sentinel object here we keep the history structurally valid so the
+    // next request succeeds and the model receives a clear error result.
+    const sanitizedToolCalls = message.tool_calls?.map(tc => {
+      if (tc.type !== 'function') return tc;
+      try {
+        JSON.parse(tc.function.arguments);
+        return tc; // valid JSON — no change
+      } catch {
+        logger.warn('AGENT',
+          `[${config.name}] Tool call '${tc.function.name}' has malformed JSON args (likely content too long) — sanitizing`);
+        return {
+          ...tc,
+          function: { ...tc.function, arguments: JSON.stringify({ _sanitized: true }) },
+        };
+      }
+    });
+
+    const messageForHistory = sanitizedToolCalls
+      ? ({ ...message, tool_calls: sanitizedToolCalls } as typeof message)
+      : message;
+    pushHistory(normalizeAssistantMessage(messageForHistory));
 
     if (!message.tool_calls || message.tool_calls.length === 0) {
       const rawContent = typeof message.content === 'string' ? message.content : '';
@@ -510,7 +567,7 @@ export async function runAgentLoop(
         logger.warn('AGENT', `[${config.name}] Model returned empty response (attempt ${emptyRetries}/3)...`);
 
         if (emptyRetries === 1) {
-          history.push({
+          pushHistory({
             role: 'user',
             content: 'IMPORTANT: Using the tool results above, write a comprehensive Markdown report NOW. ' +
               'Write your answer DIRECTLY OUTSIDE of any <think> tag. I want the final report, not a thinking block.'
@@ -518,7 +575,7 @@ export async function runAgentLoop(
         } else if (emptyRetries === 2) {
           // Disable tools completely, request text-only response
           config = { ...config, tools: [] };
-          history.push({
+          pushHistory({
             role: 'user',
             content: 'Stop calling tools. Summarize ALL the information you have collected above as PLAIN TEXT ONLY. ' +
               'Use Markdown headings and lists. Do NOT use <think> tags — write only the final answer.'
@@ -545,7 +602,8 @@ export async function runAgentLoop(
             const text = cleanResp.choices?.[0]?.message?.content?.trim() ?? '';
             const cleaned = stripThinkingTokens(text);
             if (cleaned.length > 50) {
-              return { finalResponse: cleaned, toolCallCount, toolsUsed };
+              pushHistory({ role: 'assistant', content: cleaned });
+              return { finalResponse: cleaned, toolCallCount, toolsUsed, session: rebuildAgentSession(config.name, history) };
             }
           } catch { /* clean call also failed → return fallback message below */ }
         }
@@ -560,20 +618,40 @@ export async function runAgentLoop(
         finalResponse: finalText,
         toolCallCount,
         toolsUsed,
+        session: rebuildAgentSession(config.name, history),
         history,
       };
     }
 
-    for (const toolCall of message.tool_calls) {
+    const pendingFollowUpUserMessages: string[] = [];
+    for (const toolCall of (sanitizedToolCalls ?? message.tool_calls ?? [])) {
       if (toolCall.type !== 'function') continue;
       let result = '';
       let followUpUserMessage: string | null = null;
       const toolName = toolCall.function.name;
       try {
         const args = JSON.parse(toolCall.function.arguments) as Record<string, string>;
-        // Normalize cache key: sort arguments to generate key (order differences don't cause cache misses)
-        const sortedArgs = Object.keys(args).sort().reduce<Record<string, string>>((acc, k) => { acc[k] = args[k]; return acc; }, {});
-        const cacheKey = `${toolName}:${JSON.stringify(sortedArgs)}`;
+
+        // Detect calls that were sanitized due to invalid JSON arguments.
+        // Give the model a clear error instead of trying to execute with empty/wrong args.
+        if ('_sanitized' in args) {
+          result = `[TOOL_ARGS_INVALID] The arguments for '${toolName}' contained invalid JSON ` +
+            `(the content was too long or had unescaped special characters). ` +
+            `Do NOT call obsidian tools with large content. ` +
+            `Write the report text directly in your response instead of saving it to Obsidian.`;
+          emitProgress(`  ❌ ${toolName} → Args had invalid JSON (too long/unescaped) — skipped`);
+          pushHistory({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: result,
+          });
+          toolsUsed[toolName] = (toolsUsed[toolName] ?? 0) + 1;
+          toolCallCount++;
+          toolCallCountFloor = toolCallCount;
+          continue;
+        }
+
+        const cacheKey = buildToolCacheKey(toolName, args);
 
         // Per-tool hard limit check
         perToolCount[toolName] = (perToolCount[toolName] ?? 0) + 1;
@@ -619,25 +697,34 @@ export async function runAgentLoop(
           const resultPreview = result.split('\n')[0].slice(0, 80);
           emitProgress(`  ✓ ${toolName} → ${resultPreview}`);
           // Web log: full output (untruncated)
-          emitToolDetail(toolName, result);
+          emitToolDetail(toolName, result, toolCall.id);
         }
       } catch (error) {
         result = `Tool error (${toolName}): ${(error as Error).message}`;
         emitProgress(`  ❌ ${toolName} → ${(error as Error).message.slice(0, 80)}`);
       }
-      history.push({
+      pushHistory({
         role: 'tool',
         tool_call_id: toolCall.id,
-        content: normalizeToolContent(result),
+        content: typeof result === 'string' && result.trim().length > 0
+          ? result
+          : normalizeToolContent(result),
       });
       if (followUpUserMessage) {
-        history.push({
-          role: 'user',
-          content: followUpUserMessage,
-        });
+        if (!pendingFollowUpUserMessages.includes(followUpUserMessage)) {
+          pendingFollowUpUserMessages.push(followUpUserMessage);
+        }
       }
       toolsUsed[toolName] = (toolsUsed[toolName] ?? 0) + 1;
       toolCallCount++;
+      toolCallCountFloor = toolCallCount;
+    }
+
+    for (const pendingMessage of pendingFollowUpUserMessages) {
+      pushHistory({
+        role: 'user',
+        content: pendingMessage,
+      });
     }
   }
 }

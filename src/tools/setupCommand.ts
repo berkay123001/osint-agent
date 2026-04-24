@@ -23,12 +23,26 @@ const PROJECT_ROOT = join(__dirname, '..', '..')
 
 // ── Yardimci fonksiyonlar ────────────────────────────────────────────────────
 
-function run(cmd: string): string | null {
+function run(cmd: string, opts: { env?: NodeJS.ProcessEnv } = {}): string | null {
   try {
-    return execSync(cmd, { encoding: 'utf-8', timeout: 15000 }).trim()
+    return execSync(cmd, { encoding: 'utf-8', timeout: 15000, env: { ...process.env, ...opts.env } }).trim()
   } catch {
     return null
   }
+}
+
+// Docker Desktop ve sistem daemon soket yollarını dene
+function dockerRun(cmd: string): string | null {
+  // Önce standart sistem socketi dene
+  const sysResult = run(cmd, { env: { DOCKER_HOST: 'unix:///var/run/docker.sock' } })
+  if (sysResult !== null) return sysResult
+  // Sonra docker desktop dene (varsa)
+  return run(cmd)
+}
+
+function checkDockerDaemon(): boolean {
+  return run('docker info --format "{{.ServerVersion}}" 2>/dev/null', { env: { DOCKER_HOST: 'unix:///var/run/docker.sock' } }) !== null
+    || run('docker info --format "{{.ServerVersion}}" 2>/dev/null') !== null
 }
 
 function question(query: string): Promise<string> {
@@ -66,14 +80,20 @@ function fail(msg: string) {
 async function checkDocker(): Promise<boolean> {
   step(1, 'Docker kontrol ediliyor...')
   const ver = run('docker --version')
-  if (ver) {
-    ok(ver)
-    return true
+  if (!ver) {
+    fail('Docker bulunamadi')
+    console.log(chalk.dim('      Kurulum: https://docs.docker.com/get-docker/'))
+    console.log(chalk.dim('      Docker olmadan SearXNG ve Firecrawl devre disi kalir.'))
+    return false
   }
-  fail('Docker bulunamadi')
-  console.log(chalk.dim('      Kurulum: https://docs.docker.com/get-docker/'))
-  console.log(chalk.dim('      Docker olmadan SearXNG ve Firecrawl devre disi kalir.'))
-  return false
+  ok(ver)
+  if (!checkDockerDaemon()) {
+    warn('Docker daemon calismiyor — servisler baslatilamaz')
+    console.log(chalk.dim('      Baslatmak icin: sudo systemctl start docker'))
+    console.log(chalk.dim('      veya Docker Desktop uygulamasini acin'))
+    return false
+  }
+  return true
 }
 
 async function checkDockerServices(): Promise<void> {
@@ -84,7 +104,7 @@ async function checkDockerServices(): Promise<void> {
     ok('SearXNG calisiyor (localhost:8888)')
   } else {
     console.log(chalk.dim('   SearXNG baslatiliyor...'))
-    const composeResult = run('docker compose up -d searxng')
+    const composeResult = dockerRun('docker compose up -d searxng')
     if (composeResult !== null) {
       // servisin ayaga kalkmasini bekle
       let tries = 0
@@ -136,12 +156,12 @@ async function checkNeo4j(): Promise<void> {
   warn('Neo4j baglanilamadi')
 
   if (password) {
-    fail('Kimlik bilgileri hatali — .env dosyasindaki NEO4J_USER ve NEO4J_PASSWORD kontrol edin')
-    return
+    warn('Mevcut kimlik bilgileriyle baglanilamadi — .env dosyasini kontrol edin')
+    console.log(chalk.dim(`      NEO4J_URI=${uri}  NEO4J_USER=${user}`))
   }
 
-  // Docker ile baslatma onerisi
-  const ans = await question(chalk.bold.yellow('   Neo4j Docker ile baslatilsin mi? [Y/n] '))
+  // Docker ile baslatma onerisi (password olsa da Docker seçeneği sun)
+  const ans = await question(chalk.bold.yellow('   Neo4j Docker ile (yeniden) baslatilsin mi? [Y/n] '))
   if (ans.toLowerCase() === 'n') {
     console.log(chalk.dim('      Manuel kurulum: docker run -d -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/test1234 neo4j:latest'))
     return
@@ -150,7 +170,7 @@ async function checkNeo4j(): Promise<void> {
   const neo4jPassword = await question(chalk.bold.yellow('   Neo4j sifre belirleyin [test1234]: ')) || 'test1234'
 
   console.log(chalk.dim('   Neo4j baslatiliyor...'))
-  const result = run(
+  const result = dockerRun(
     `docker run -d --name osint-neo4j -p 7474:7474 -p 7687:7687 ` +
     `-e NEO4J_AUTH=neo4j/${neo4jPassword} ` +
     `neo4j:latest`
@@ -215,12 +235,14 @@ async function checkPython(): Promise<void> {
     ok('scrapling kurulu')
   } else {
     console.log(chalk.dim('   scrapling kuruluyor...'))
-    const pipResult = run(`${pythonPath} -m pip install scrapling -q`)
-    if (pipResult !== null) {
+    const pipResult = run(`${pythonPath} -m pip install scrapling 2>&1`)
+    const scraplingCheck = run(`${pythonPath} -c "import scrapling"`)
+    if (scraplingCheck !== null) {
       ok('scrapling kuruldu')
     } else {
-      warn('scrapling kurulamadi — elle: pip install scrapling')
-    }
+      warn('scrapling kurulamadi — stealth tarama kisitli calisacak')
+      console.log(chalk.dim('      Elle kurmak icin: pip install scrapling'))
+      if (pipResult) console.log(chalk.dim(`      Hata: ${pipResult.split('\n').slice(-3).join(' ')}`))    }
   }
 }
 

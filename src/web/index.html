@@ -139,8 +139,8 @@
             <span class="tab-icon">📡</span> Live Feed
             <span class="tab-badge" id="feed-badge"></span>
           </button>
-          <button class="tab" onclick="switchTab('graph', this)" id="tab-graph">
-            <span class="tab-icon">🕸️</span> Knowledge Graph
+          <button class="tab" onclick="switchTab('session-map', this)" id="tab-session-map">
+            <span class="tab-icon">🧭</span> Session Map
           </button>
           <button class="tab" onclick="switchTab('tools', this)" id="tab-tools">
             <span class="tab-icon">🔧</span> Tools
@@ -158,14 +158,14 @@
           </div>
         </div>
 
-        <!-- Graph tab -->
-        <div class="tab-content" id="content-graph">
+        <!-- Session map tab -->
+        <div class="tab-content" id="content-session-map">
           <div class="graph-controls">
-            <button class="mini-btn" onclick="loadGraph()">🔄 Refresh</button>
-            <span class="graph-info" id="graph-info"></span>
+            <button class="mini-btn" onclick="loadSessionGraph(true)">🔄 Refresh</button>
+            <span class="graph-info" id="session-graph-info"></span>
           </div>
-          <div id="graph-container">
-            <svg id="graph-svg"></svg>
+          <div id="session-graph-container" class="session-graph-container">
+            <svg id="session-graph-svg"></svg>
           </div>
         </div>
 

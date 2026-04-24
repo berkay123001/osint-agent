@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 
 const COMMANDS = [
-  { label: '/compact',  value: '/compact',  desc: 'Trim old messages' },
+  { label: '/compact',  value: '/compact',  desc: 'Explain durable memory mode' },
   { label: '/delete',   value: '/delete',   desc: 'Delete archived sessions' },
   { label: '/history',  value: '/history',  desc: 'Message stats' },
   { label: '/log',      value: '/log',      desc: 'Toggle activity log' },

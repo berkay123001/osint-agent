@@ -56,6 +56,66 @@ function makeSuccessResponse(content: string) {
   };
 }
 
+function makeToolCallResponse(toolName: string, args: Record<string, unknown>) {
+  return {
+    choices: [
+      {
+        message: {
+          role: 'assistant' as const,
+          content: null,
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function' as const,
+              function: {
+                name: toolName,
+                arguments: JSON.stringify(args),
+              },
+            },
+          ],
+          refusal: null,
+        },
+        finish_reason: 'tool_calls',
+        index: 0,
+        logprobs: null,
+      },
+    ],
+    id: 'test-id-tool',
+    model: 'test-model',
+    object: 'chat.completion' as const,
+    created: 0,
+  };
+}
+
+function makeToolBatchResponse(toolCalls: Array<{ id: string; toolName: string; args: Record<string, unknown> }>) {
+  return {
+    choices: [
+      {
+        message: {
+          role: 'assistant' as const,
+          content: null,
+          tool_calls: toolCalls.map(toolCall => ({
+            id: toolCall.id,
+            type: 'function' as const,
+            function: {
+              name: toolCall.toolName,
+              arguments: JSON.stringify(toolCall.args),
+            },
+          })),
+          refusal: null,
+        },
+        finish_reason: 'tool_calls',
+        index: 0,
+        logprobs: null,
+      },
+    ],
+    id: 'test-id-tool-batch',
+    model: 'test-model',
+    object: 'chat.completion' as const,
+    created: 0,
+  };
+}
+
 /**
  * Creates a mock OpenAI client that responds according to a sequence of handlers.
  * Each `create()` call invokes the next handler in the sequence.
@@ -166,4 +226,211 @@ test('unknown error — throws', async () => {
     () => runAgentLoop(freshHistory(), makeConfig(), client, 0),
     /ECONNREFUSED/,
   );
+});
+
+test('continuation rebuilds duplicate tool suppression from history', async () => {
+  let executeToolCalls = 0;
+  const config = makeConfig({
+    tools: [
+      {
+        type: 'function',
+        function: {
+          name: 'search_web',
+          description: 'Searches the web',
+          parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+        },
+      },
+    ] as any,
+    executeTool: async () => {
+      executeToolCalls++;
+      return 'https://example.com/one\nhttps://example.com/two';
+    },
+    maxToolCalls: 5,
+  });
+
+  const firstClient = makeMockClient([
+    () => makeToolCallResponse('search_web', { query: 'sample target', maxResults: 5 }),
+    () => makeSuccessResponse('first pass done'),
+  ]);
+
+  const firstHistory = freshHistory();
+  const firstResult = await runAgentLoop(firstHistory, config, firstClient, 0);
+
+  assert.equal(firstResult.finalResponse, 'first pass done');
+  assert.equal(executeToolCalls, 1);
+
+  const secondClient = makeMockClient([
+    () => makeToolCallResponse('search_web', { query: 'sample target', maxResults: 5 }),
+    () => makeSuccessResponse('second pass done'),
+  ]);
+
+  const secondResult = await runAgentLoop(firstHistory, config, secondClient, 0);
+
+  assert.equal(secondResult.finalResponse, 'second pass done');
+  assert.equal(executeToolCalls, 1);
+  const duplicateToolMessage = secondResult.history?.find(
+    message => message.role === 'tool' && typeof message.content === 'string' && message.content.includes('[DUPLICATE_CALL]')
+  );
+  assert.ok(duplicateToolMessage);
+});
+
+test('continuation duplicate suppression canonicalizes nested tool arguments', async () => {
+  let executeToolCalls = 0;
+  const config = makeConfig({
+    tools: [
+      {
+        type: 'function',
+        function: {
+          name: 'add_custom_node',
+          description: 'Adds a custom node',
+          parameters: {
+            type: 'object',
+            properties: {
+              label: { type: 'string' },
+              properties: { type: 'object' },
+            },
+            required: ['label', 'properties'],
+          },
+        },
+      },
+    ] as any,
+    executeTool: async () => {
+      executeToolCalls++;
+      return 'node created';
+    },
+    maxToolCalls: 5,
+  });
+
+  const firstClient = makeMockClient([
+    () => makeToolCallResponse('add_custom_node', { label: 'Profile', properties: { b: '2', a: '1' } }),
+    () => makeSuccessResponse('first pass done'),
+  ]);
+
+  const firstHistory = freshHistory();
+  await runAgentLoop(firstHistory, config, firstClient, 0);
+
+  const secondClient = makeMockClient([
+    () => makeToolCallResponse('add_custom_node', { label: 'Profile', properties: { a: '1', b: '2' } }),
+    () => makeSuccessResponse('second pass done'),
+  ]);
+
+  const secondResult = await runAgentLoop(firstHistory, config, secondClient, 0);
+
+  assert.equal(executeToolCalls, 1);
+  const duplicateToolMessage = secondResult.history?.find(
+    message => message.role === 'tool' && typeof message.content === 'string' && message.content.includes('[DUPLICATE_CALL]')
+  );
+  assert.ok(duplicateToolMessage);
+});
+
+test('stagnation control prompt is appended after the full tool batch', async () => {
+  const primedHistory: Message[] = [{ role: 'user', content: 'hello' }];
+  for (let index = 0; index < 4; index++) {
+    primedHistory.push({
+      role: 'assistant',
+      content: '',
+      tool_calls: [
+        {
+          id: `primed_call_${index + 1}`,
+          type: 'function',
+          function: {
+            name: 'search_web',
+            arguments: JSON.stringify({ query: `seed-${index}` }),
+          },
+        },
+      ],
+    } as any);
+    primedHistory.push({
+      role: 'tool',
+      tool_call_id: `primed_call_${index + 1}`,
+      content: 'https://example.com/one\nhttps://example.com/two',
+    } as any);
+  }
+
+  const config = makeConfig({
+    tools: [
+      {
+        type: 'function',
+        function: {
+          name: 'search_web',
+          description: 'Searches the web',
+          parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'web_fetch',
+          description: 'Fetches a page',
+          parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
+        },
+      },
+    ] as any,
+    executeTool: async (toolName) => {
+      if (toolName === 'search_web') return 'https://example.com/one\nhttps://example.com/two';
+      return 'Fetched page body';
+    },
+    maxToolCalls: 5,
+  });
+
+  const client = makeMockClient([
+    () => makeToolBatchResponse([
+      { id: 'call_1', toolName: 'search_web', args: { query: 'sample target' } },
+      { id: 'call_2', toolName: 'web_fetch', args: { url: 'https://example.com/one' } },
+    ]),
+    () => makeSuccessResponse('done'),
+  ]);
+
+  const result = await runAgentLoop(primedHistory, config, client, 0);
+  const builtHistory = result.history ?? [];
+  const assistantIndexes = builtHistory
+    .map((message, index) => ({ message, index }))
+    .filter(entry => entry.message.role === 'assistant' && Boolean((entry.message as any).tool_calls?.length))
+    .map(entry => entry.index);
+  const assistantIndex = assistantIndexes[assistantIndexes.length - 1];
+  const toolIndexes = builtHistory
+    .map((message, index) => ({ message, index }))
+    .filter(entry => entry.index > assistantIndex && entry.message.role === 'tool')
+    .map(entry => entry.index);
+  const stagnationIndex = builtHistory.findIndex(
+    (message, index) => index > assistantIndex && message.role === 'user' && typeof message.content === 'string' && message.content.includes('STAGNATION DETECTED')
+  );
+
+  assert.ok(assistantIndex >= 0);
+  assert.equal(toolIndexes.length, 2);
+  assert.ok(toolIndexes.every(index => index > assistantIndex));
+  assert.ok(stagnationIndex > Math.max(...toolIndexes));
+});
+
+test('continuation keeps tools disabled after a TOOL_CALL_DISABLED recovery prompt', async () => {
+  let seenToolChoice: 'auto' | 'none' | undefined;
+  const client = {
+    chat: {
+      completions: {
+        create: async (request: { tool_choice?: 'auto' | 'none' }) => {
+          seenToolChoice = request.tool_choice;
+          return makeSuccessResponse('text-only continuation');
+        },
+      },
+    },
+  } as unknown as OpenAI;
+
+  const result = await runAgentLoop([
+    { role: 'user', content: 'hello' },
+    { role: 'user', content: 'TOOL_CALL_DISABLED. Respond directly in Markdown text using all the information you have collected. Do not call any tools — write text only.' },
+  ], makeConfig({
+    tools: [
+      {
+        type: 'function',
+        function: {
+          name: 'search_web',
+          description: 'Searches the web',
+          parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+        },
+      },
+    ] as any,
+  }), client, 0);
+
+  assert.equal(seenToolChoice, 'none');
+  assert.equal(result.finalResponse, 'text-only continuation');
 });
