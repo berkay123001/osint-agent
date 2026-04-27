@@ -4,6 +4,7 @@ import { runIdentityAgent } from './identityAgent.js';
 import { runMediaAgent } from './mediaAgent.js';
 import { runAcademicAgent } from './academicAgent.js';
 import { StrategySession } from './strategyAgent.js';
+import { executeStrategyFlow } from './strategyOrchestrator.js';
 import { tools, executeTool, setReportContentBuffer } from '../lib/toolRegistry.js';
 import type OpenAI from 'openai';
 import { logger } from '../lib/logger.js';
@@ -157,8 +158,8 @@ type SubAgentFn = (query: string, context?: string, depth?: string, existingHist
  * 1. Strategy creates a plan
  * 2. Sub-agent works with the plan → returns history
  * 3. Strategy reviews (remembers its own plan)
- * 4. If not approved → Strategy feedback is injected into sub-agent history
- *    Sub-agent CONTINUES WITH THE SAME history (does not restart!)
+ * 4. If review requests one bounded correction → feedback is injected into sub-agent history
+ *    and the sub-agent CONTINUES WITH THE SAME history (does not restart!)
  * 5. Strategy synthesizes a professional report
  *
  * Max 1 re-execution round (API cost control).
@@ -170,35 +171,16 @@ async function executeSubAgentWithStrategy(
   agentLabel: string,
   sessionTitle: string,
 ): Promise<string> {
-  // Create a new Strategy session for each sub-agent delegation
   const strategy = new StrategySession(agentType, args.query);
-
-  // --- PHASE 1: PLAN (written to Strategy history) ---
-  const plan = await strategy.plan(args.context);
-  const planContext = plan ? `\n\n[STRATEGY PLAN — Research according to this plan]:\n${plan}` : '';
-
-  // --- PHASE 2: EXECUTE (get sub-agent history) ---
-  const { response: result, history: agentHistory } = await agentFn(
-    args.query, (args.context || '') + planContext, args.depth,
-  );
-
-  // --- PHASE 3: REVIEW (advisory — notes go to synthesis, no retry) ---
-  let finalResult = result;
-  let reviewFeedback = '';
-  if (result.length > 200) {
-    const { feedback } = await strategy.review(result);
-    reviewFeedback = feedback;
-  }
-
-  // --- PHASE 4: SYNTHESIZE (Strategy remembers plan + review) ---
-  let finalReport = finalResult;
-  if (finalResult.length > 500) {
-    finalReport = await strategy.synthesize(finalResult, reviewFeedback);
-  }
-
-  // Strategy log'u her durumda dosyaya yaz
-  await strategy.flushLog();
-  logger.info('AGENT', `[Strategy] Session ${strategy.getHistorySize()} mesaj`);
+  const flow = await executeStrategyFlow({
+    agentType,
+    args,
+    agentFn,
+    strategy,
+    agentLabel,
+  });
+  const finalReport = flow.finalReport;
+  logger.info('AGENT', `[Strategy] Session ${flow.strategyHistorySize} mesaj`);
 
   // --- Kaydet ---
   setReportContentBuffer(finalReport);

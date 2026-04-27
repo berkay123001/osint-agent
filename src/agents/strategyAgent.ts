@@ -13,20 +13,57 @@ const __dirname = path.dirname(__filename);
 const SESSION_DIR = path.resolve(__dirname, '../../.osint-sessions');
 const STRATEGY_LOG_FILE = path.join(SESSION_DIR, 'strategy-log.md');
 
-const client = new OpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  baseURL: 'https://openrouter.ai/api/v1',
-});
+let client: OpenAI | null = null;
+
+function getClient(): OpenAI {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error('Strategy Agent requires OPENROUTER_API_KEY');
+  }
+
+  if (!client) {
+    client = new OpenAI({
+      apiKey,
+      baseURL: 'https://openrouter.ai/api/v1',
+    });
+  }
+
+  return client;
+}
 
 const STRATEGY_MODEL = 'qwen/qwen3.6-plus';
 
 const STRATEGY_FALLBACKS = [
+  'qwen/qwen3.6-plus',
   'deepseek/deepseek-v3.2',
-  'minimax/minimax-m2.5',
 ];
 
 const MAX_RETRIES = 2;
 const BASE_DELAY_MS = 2000;
+
+export type StrategyAgentType = 'identity' | 'media' | 'academic';
+export type StrategyReviewDecision =
+  | 'accept'
+  | 'accept_with_warnings'
+  | 'revise_same_history'
+  | 'finalize_with_limitations';
+export type StrategyReviewSeverity = 'major' | 'minor';
+export type StrategyReviewFixMode = 'synthesis' | 'same_history_revision' | 'warn_only';
+
+export interface StrategyReviewIssue {
+  severity: StrategyReviewSeverity;
+  code: string;
+  fixMode: StrategyReviewFixMode;
+  note: string;
+}
+
+export interface StrategyReviewResult {
+  approved: boolean;
+  feedback: string;
+  decision: StrategyReviewDecision;
+  summary: string;
+  issues: StrategyReviewIssue[];
+}
 
 /**
  * Strategy Agent — session-aware operation.
@@ -42,10 +79,10 @@ const BASE_DELAY_MS = 2000;
  * - Strategy: tactical planning, sub-agent oversight, report synthesis
  */
 
-const SYSTEM_PROMPT = `You are an OSINT Strategy Specialist. You have three roles:
+const BASE_SYSTEM_PROMPT = `You are an OSINT Strategy Specialist. You have three roles:
 
 1. **Planning**: Write a focused research plan for the sub-agent.
-2. **Review**: Evaluate sub-agent results and provide advisory notes (you do NOT block/reject — just flag issues for synthesis).
+2. **Review**: Evaluate sub-agent results and decide whether the result should be accepted, revised once with the SAME history, or finalized with explicit limitations.
 3. **Synthesis**: Transform raw research output into a professional, clean, reliable report.
 
 At each phase, remember what you said in PREVIOUS phases — you are continuing, not starting fresh.
@@ -57,32 +94,26 @@ Keep plans SHORT — max 8 bullet points. Focus on:
 3. Expected pitfalls and how to avoid them
 4. Verification criteria
 
-# REVIEW RULES — ADVISORY ONLY
-Review is NOT a gate — it provides quality notes for the Synthesis phase.
-Never trigger a retry. Just flag issues clearly.
+# REVIEW RULES
+When you are in REVIEW phase, output a machine-readable decision block FIRST using this exact format:
 
-Evaluate based on agent type (see below) and output:
-- "RESULT CLEAN" if no significant issues found
-- List specific issues with severity: [MINOR] (fixable in synthesis) or [MAJOR] (significant data quality concern)
+[REVIEW_DECISION]
+decision: ACCEPT | ACCEPT_WITH_WARNINGS | REVISE_SAME_HISTORY | FINALIZE_WITH_LIMITATIONS
+summary: one-sentence reason
+issue: severity=MAJOR|MINOR | code=snake_case_code | fix_mode=synthesis|same_history_revision|warn_only | note=short actionable note
+[/REVIEW_DECISION]
 
-## Identity Agent Review:
-- [MAJOR] Fabricated profiles not found by tools (hallucination)
-- [MAJOR] Different person presented as same person without evidence
-- [MINOR] Incomplete profile data (missing bio, follower counts)
-- [MINOR] Unverified employment/education claims
+Decision meanings:
+- ACCEPT: no meaningful issues, synthesis may simply polish formatting.
+- ACCEPT_WITH_WARNINGS: only minor issues remain, fix in synthesis or keep explicit caution text.
+- REVISE_SAME_HISTORY: one bounded correction pass is justified using the SAME sub-agent history and at most a narrow missing check.
+- FINALIZE_WITH_LIMITATIONS: evidence is too thin, contradictory, or broad for a safe correction pass; do not request generic more research.
 
-## Academic Agent Review:
-- [MAJOR] Fabricated papers, DOIs, or metrics not in tool output
-- [MAJOR] Wrong paper attributed to wrong researcher
-- [MINOR] Incomplete author list (et al. is acceptable)
-- [MINOR] arXiv preprint instead of peer-reviewed (note it, don't reject)
-- [MINOR] Missing full-text analysis (flag as "abstract only")
-
-## Media Agent Review:
-- [MAJOR] Image verification claims without tool evidence
-- [MAJOR] Fabricated EXIF data or reverse image results
-- [MINOR] Incomplete source verification
-- [MINOR] Low-confidence claim presented as verified
+Hard constraints:
+- Never request a fresh restart.
+- Never ask for open-ended "research more" loops.
+- Only choose REVISE_SAME_HISTORY when the missing or incorrect part is concrete, bounded, and actionable.
+- If evidence is insufficient and the gap is not concrete, choose FINALIZE_WITH_LIMITATIONS.
 
 # SYNTHESIS RULES
 1. Source-check every concrete claim — if not in tool output, DELETE or flag with ⚠️
@@ -94,7 +125,139 @@ Evaluate based on agent type (see below) and output:
 
 Format: Clean Markdown with source references.`;
 
-const AGENT_DESCRIPTIONS: Record<string, string> = {
+const REVIEW_RUBRICS: Record<StrategyAgentType, string> = {
+  identity: `# ACTIVE REVIEW RUBRIC — Identity Agent Review
+- [MAJOR] Fabricated profiles not found by tools (hallucination)
+- [MAJOR] Different person presented as same person without evidence
+- [MAJOR] Unsupported cross-platform linkage that needs one bounded verification step
+- [MINOR] Incomplete profile data (missing bio, follower counts)
+- [MINOR] Unverified employment or education claims`,
+  academic: `# ACTIVE REVIEW RUBRIC — Academic Agent Review
+- [MAJOR] Fabricated papers, DOIs, or metrics not in tool output
+- [MAJOR] Wrong paper attributed to wrong researcher
+- [MAJOR] Unsupported citation claim that needs one bounded correction pass
+- [MINOR] Incomplete author list (et al. is acceptable)
+- [MINOR] arXiv preprint instead of peer-reviewed (note it, do not reject)
+- [MINOR] Missing full-text analysis (flag as abstract only)`,
+  media: `# ACTIVE REVIEW RUBRIC — Media Agent Review
+- [MAJOR] Image verification claims without tool evidence
+- [MAJOR] Fabricated EXIF data or reverse image results
+- [MAJOR] Confident verdict without enough directly cited source evidence
+- [MINOR] Incomplete source verification
+- [MINOR] Low-confidence claim presented too strongly`,
+};
+
+const DECISION_NORMALIZATION: Record<string, StrategyReviewDecision> = {
+  accept: 'accept',
+  accept_with_warnings: 'accept_with_warnings',
+  revise_same_history: 'revise_same_history',
+  finalize_with_limitations: 'finalize_with_limitations',
+  result_clean: 'accept',
+};
+
+export function buildStrategySystemPrompt(agentType: StrategyAgentType): string {
+  return `${BASE_SYSTEM_PROMPT}\n\n${REVIEW_RUBRICS[agentType]}`;
+}
+
+export function getStrategyModelsToTry(): string[] {
+  return [...new Set([STRATEGY_MODEL, ...STRATEGY_FALLBACKS])];
+}
+
+function normalizeReviewDecision(rawValue?: string, feedback?: string, issues: StrategyReviewIssue[] = []): StrategyReviewDecision {
+  const normalized = rawValue
+    ?.trim()
+    .toLowerCase()
+    .replace(/[^a-z_]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (normalized && DECISION_NORMALIZATION[normalized]) {
+    return DECISION_NORMALIZATION[normalized];
+  }
+
+  const fullText = feedback ?? '';
+  const hasMajor = issues.some((issue) => issue.severity === 'major') || /\[major\]/i.test(fullText);
+  const hasMinor = issues.some((issue) => issue.severity === 'minor') || /\[minor\]/i.test(fullText);
+
+  if (/result clean|\bapproved\b/i.test(fullText)) return 'accept';
+  if (/finalize with explicit limitations|finalize with limitations|insufficient evidence|evidence is too thin|too thin to trust|not enough evidence/i.test(fullText)) {
+    return 'finalize_with_limitations';
+  }
+  if (/same-history correction|same history correction|bounded same-history correction|bounded correction pass|missing verification step|unsupported linkage/i.test(fullText)) {
+    return 'revise_same_history';
+  }
+  if (hasMajor && /same history|bounded correction|missing verification|run missing tools|rewrite the report|unsupported/i.test(fullText)) {
+    return 'revise_same_history';
+  }
+  if (hasMajor) return 'finalize_with_limitations';
+  if (hasMinor) return 'accept_with_warnings';
+  if (/warning|caution|limitation/i.test(fullText)) return 'accept_with_warnings';
+  return fullText.trim().length > 0 ? 'accept_with_warnings' : 'accept';
+}
+
+function parseIssueLine(line: string, index: number): StrategyReviewIssue {
+  const raw = line.replace(/^issue:\s*/i, '').trim();
+  const parts = raw.split('|').map((part) => part.trim()).filter(Boolean);
+  const fields = new Map<string, string>();
+  for (const part of parts) {
+    const separatorIndex = part.indexOf('=');
+    if (separatorIndex === -1) continue;
+    const key = part.slice(0, separatorIndex).trim().toLowerCase();
+    const value = part.slice(separatorIndex + 1).trim();
+    fields.set(key, value);
+  }
+
+  const severityValue = fields.get('severity')?.toLowerCase();
+  const fixModeValue = fields.get('fix_mode')?.toLowerCase();
+  return {
+    severity: severityValue === 'major' ? 'major' : 'minor',
+    code: fields.get('code') || `issue_${index + 1}`,
+    fixMode: fixModeValue === 'same_history_revision'
+      ? 'same_history_revision'
+      : fixModeValue === 'warn_only'
+        ? 'warn_only'
+        : 'synthesis',
+    note: fields.get('note') || raw,
+  };
+}
+
+function parseBracketIssues(feedback: string): StrategyReviewIssue[] {
+  const issueLines = feedback
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^\[(major|minor)\]/i.test(line));
+
+  return issueLines.map((line, index) => {
+    const severity = /^\[major\]/i.test(line) ? 'major' : 'minor';
+    const note = line.replace(/^\[(major|minor)\]\s*/i, '').trim();
+    return {
+      severity,
+      code: `${severity}_issue_${index + 1}`,
+      fixMode: severity === 'major' ? 'same_history_revision' : 'synthesis',
+      note,
+    } satisfies StrategyReviewIssue;
+  });
+}
+
+export function parseStrategyReviewResult(feedback: string): Omit<StrategyReviewResult, 'feedback' | 'approved'> {
+  const blockMatch = feedback.match(/\[REVIEW_DECISION\]([\s\S]*?)(?:\[\/REVIEW_DECISION\]|$)/i);
+  const block = blockMatch?.[1] ?? '';
+  const lines = block.split('\n').map((line) => line.trim()).filter(Boolean);
+
+  const rawDecision = lines.find((line) => /^decision\s*:/i.test(line))?.replace(/^decision\s*:/i, '').trim();
+  const summary = lines.find((line) => /^summary\s*:/i.test(line))?.replace(/^summary\s*:/i, '').trim() || '';
+  const structuredIssues = lines
+    .filter((line) => /^issue\s*:/i.test(line))
+    .map((line, index) => parseIssueLine(line, index));
+  const issues = structuredIssues.length > 0 ? structuredIssues : parseBracketIssues(feedback);
+  const decision = normalizeReviewDecision(rawDecision, feedback, issues);
+
+  return {
+    decision,
+    summary: summary || feedback.split('\n').map((line) => line.trim()).find(Boolean) || 'No review summary provided.',
+    issues,
+  };
+}
+
+const AGENT_DESCRIPTIONS: Record<StrategyAgentType, string> = {
   identity: 'Identity OSINT — username/email/profile research. Tools: search_person, run_sherlock, run_maigret, nitter_profile, scrape_profile, verify_profiles, web_fetch, cross_reference, run_github_osint, check_email_registrations, check_breaches, verify_claim',
   media: 'Media verification — image/news/fact-check. Tools: reverse_image_search, extract_metadata, compare_images_phash, fact_check_to_graph, web_fetch, scrape_profile, verify_claim',
   academic: 'Academic research — papers/authors/plagiarism. Tools: search_academic_papers, search_researcher_papers, check_plagiarism, web_fetch, scrape_profile, wayback_search, query_graph',
@@ -102,15 +265,15 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
 
 export class StrategySession {
   private history: OpenAI.Chat.ChatCompletionMessageParam[] = [];
-  private agentType: 'identity' | 'media' | 'academic';
+  private agentType: StrategyAgentType;
   private query: string;
   private logEntries: string[] = [];
   private completionAttempt = 0;
 
-  constructor(agentType: 'identity' | 'media' | 'academic', query: string) {
+  constructor(agentType: StrategyAgentType, query: string) {
     this.agentType = agentType;
     this.query = query;
-    this.history.push({ role: 'system', content: SYSTEM_PROMPT });
+    this.history.push({ role: 'system', content: buildStrategySystemPrompt(agentType) });
     this.logEntries.push(`# Strategy Agent Session\n**Agent:** ${agentType}\n**Task:** ${query}\n**Start:** ${new Date().toISOString()}\n\n---\n`);
   }
 
@@ -171,7 +334,7 @@ export class StrategySession {
    * PHASE 2: Review results after sub-agent completes.
    * Remembers its own plan from history — no need to pass it as a parameter again.
    */
-  async review(result: string): Promise<{ approved: boolean; feedback: string }> {
+  async review(result: string): Promise<StrategyReviewResult> {
     emitProgress(`🧠 Strategy Agent reviewing (${this.agentType})...`);
 
     this.history.push({
@@ -182,16 +345,35 @@ export class StrategySession {
     try {
       const response = await this.callLLM('review');
       const review = response ?? '';
-      const approved = review.includes('RESULT CLEAN') || review.toLowerCase().includes('approved');
+      const parsed = parseStrategyReviewResult(review);
+      const approved = parsed.decision === 'accept' || parsed.decision === 'accept_with_warnings';
 
       this.history.push({ role: 'assistant', content: review });
       this.logPhase(approved ? 'REVIEW ✅' : 'REVIEW ❌', review);
       await this.flushLog();
 
-      return { approved, feedback: review };
+      return {
+        approved,
+        feedback: review,
+        decision: parsed.decision,
+        summary: parsed.summary,
+        issues: parsed.issues,
+      };
     } catch (err) {
       logger.warn('AGENT', `[Strategy-Review] Error: ${(err as Error).message}`);
-      return { approved: true, feedback: '' };
+      const fallbackFeedback = [
+        '[REVIEW_DECISION]',
+        'decision: ACCEPT_WITH_WARNINGS',
+        'summary: Review failed; falling back to synthesis without a correction pass.',
+        '[/REVIEW_DECISION]',
+      ].join('\n');
+      return {
+        approved: true,
+        feedback: fallbackFeedback,
+        decision: 'accept_with_warnings',
+        summary: 'Review failed; falling back to synthesis without a correction pass.',
+        issues: [],
+      };
     }
   }
 
@@ -240,12 +422,12 @@ export class StrategySession {
   private async callLLM(phase: 'plan' | 'review' | 'synthesize'): Promise<string | undefined> {
     const startedAt = Date.now();
     const attempt = ++this.completionAttempt;
-    const modelsToTry = [STRATEGY_MODEL, ...STRATEGY_FALLBACKS];
+    const modelsToTry = getStrategyModelsToTry();
 
     for (const model of modelsToTry) {
       for (let retry = 0; retry < MAX_RETRIES; retry++) {
         try {
-          const response = (await client.chat.completions.create({
+          const response = (await getClient().chat.completions.create({
             model,
             messages: this.history,
             max_tokens: 10000,
@@ -322,7 +504,7 @@ export class StrategySession {
  * Stateless version — no session memory.
  */
 export async function createStrategyPlan(
-  agentType: 'identity' | 'media' | 'academic',
+  agentType: StrategyAgentType,
   query: string,
   context?: string,
 ): Promise<string> {
@@ -339,9 +521,9 @@ export async function reviewStrategyResult(
   query: string,
   result: string,
   plan?: string,
-): Promise<{ approved: boolean; feedback: string }> {
+): Promise<StrategyReviewResult> {
   const session = new StrategySession(
-    agentType as 'identity' | 'media' | 'academic',
+    agentType as StrategyAgentType,
     query,
   );
   // Inject plan into history so review remembers it
@@ -362,7 +544,7 @@ export async function synthesizeReport(
   reviewFeedback?: string,
 ): Promise<string> {
   const session = new StrategySession(
-    agentType as 'identity' | 'media' | 'academic',
+    agentType as StrategyAgentType,
     query,
   );
   return session.synthesize(result, reviewFeedback);
