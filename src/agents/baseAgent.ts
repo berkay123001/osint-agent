@@ -41,6 +41,19 @@ function stripThinkingTokens(text: string): string {
   return text.replace(/<think[\s\S]*?<\/think>/gi, '').trim();
 }
 
+function isInternalControlPrompt(content: string): boolean {
+  return content.startsWith('ALL TOOLS COMPLETED')
+    || content.startsWith('TOOL_CALL_DISABLED')
+    || content.startsWith('The previous tool call had invalid JSON format.')
+    || content.startsWith('Do not call any tools. Present all collected data directly as text.')
+    || content.startsWith('IMPORTANT: Using the tool results above, write a comprehensive Markdown report NOW.')
+    || content.startsWith('Stop calling tools. Summarize ALL the information you have collected above as PLAIN TEXT ONLY.')
+    || content.startsWith('[STRATEGY REVIEW — Correction Required]')
+    || content.startsWith('[STRATEGY REVIEW — Final Report Required]')
+    || content.startsWith('⚠️ STAGNATION DETECTED')
+    || content.startsWith('⚠️ TOOL DIVERSITY REQUIREMENT');
+}
+
 export async function runAgentLoop(
   history: Message[],
   config: AgentConfig,
@@ -97,6 +110,195 @@ export async function runAgentLoop(
     });
     session = prepared.session;
     return prepared.messages;
+  }
+
+  function isSuccessfulVerificationResult(toolName: string, result: string): boolean {
+    const normalized = result
+      .trim()
+      .toLocaleLowerCase('tr-TR')
+      .replace(/ı/g, 'i')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '');
+    const emptyVerificationPatterns = [
+      /\bno (profiles?|results?|matches?|identifiers?|evidence|data|findings?)\b/,
+      /\bnothing found\b/,
+      /\bcould not verify\b/,
+      /\bnot found\b/,
+      /\b0 profiles?\b/,
+      /\b0 matches?\b/,
+      /\bsign in to continue\b/,
+      /\blogin required\b/,
+      /\bcreate an account\b/,
+      /\bagree & join\b/,
+      /\bsign up\b/,
+      /\byetersiz kanit\b/,
+      /\bdogrulanamadi\b/,
+      /\bhicbir dogrulanmis tanimlayici bulunamadi\b/,
+      /\bgrafta dogrulanacak profil yok\b/,
+      /\berror\b/,
+      /\bfailed\b/,
+      /\bfailure\b/,
+      /\btimeout\b/,
+      /\btimed out\b/,
+      /\bunavailable\b/,
+      /\bunreachable\b/,
+      /\bconnection refused\b/,
+      /\brate limit\b/,
+      /\bbaglanti kurulamadi\b/,
+      /\blogin wall\b/,
+      /\bforbidden\b/,
+      /\bdenied\b/,
+      /\bcaptcha\b/,
+    ];
+    const explicitPositivePatternsByTool: Partial<Record<string, RegExp[]>> = {
+      cross_reference: [
+        /\bverified\b/,
+        /\bconfirmed\b/,
+        /\bindependent evidence\b/,
+        /\bcorroborated\b/,
+        /\bmatch(?:ed)?\b/,
+        /\bsame (?:email|avatar|organization|location)\b/,
+        /\bcapraz dogrulama sonuclari\b/,
+        /\bdogrulanmis tanimlayicilar\b/,
+      ],
+      verify_claim: [
+        /\bverified\b/,
+        /\bconfirmed\b/,
+        /\bsupported\b/,
+        /\bdogrulandi\b/,
+        /\bonaylandi\b/,
+        /\btrue\b/,
+        /\biddia dogrulama\b[\s\S]{0,40}\bguven:\s*(yuksek|orta|dusuk)\b/,
+      ],
+    };
+
+    const explicitPositivePatterns = explicitPositivePatternsByTool[toolName];
+
+    if (toolName === 'verify_profiles') {
+      const verifiedCountMatch = normalized.match(/(?:\bsonuc\b:?\s*)?(\d+)\s+(?:dogrulandi|verified)\b/);
+      if (verifiedCountMatch) {
+        return Number.parseInt(verifiedCountMatch[1], 10) > 0;
+      }
+
+      const explicitPositiveVerificationPatterns = [
+        /^\s*[✅✔]/m,
+        /\bverified\b/,
+        /\bdogrulandi\b/,
+        /\bconfirmed\b/,
+        /\bmatch\b/,
+      ];
+
+      return isUsableRecoveryToolResult(result)
+        && !emptyVerificationPatterns.some(pattern => pattern.test(normalized))
+        && explicitPositiveVerificationPatterns.some(pattern => pattern.test(normalized));
+    }
+
+    return isUsableRecoveryToolResult(result)
+      && !emptyVerificationPatterns.some(pattern => pattern.test(normalized))
+      && (!explicitPositivePatterns || explicitPositivePatterns.some(pattern => pattern.test(normalized)));
+  }
+
+  function normalizeToolMessageContent(content: unknown): string {
+    return typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content.map((part: { text?: string }) => part.text ?? '').join('')
+        : '';
+  }
+
+  function collectRecoveryToolEvidenceBlocks(): string[] {
+    const toolMetadataById = new Map<string, { name: string; args: string }>();
+    const evidenceBlocks: string[] = [];
+
+    for (const message of history) {
+      const assistantMessage = message as { role: string; tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }> };
+      if (assistantMessage.role === 'assistant' && assistantMessage.tool_calls) {
+        for (const toolCall of assistantMessage.tool_calls) {
+          if (toolCall.type === 'function') {
+            toolMetadataById.set(toolCall.id, {
+              name: toolCall.function.name,
+              args: toolCall.function.arguments,
+            });
+          }
+        }
+        continue;
+      }
+
+      const toolMessage = message as { role: string; tool_call_id?: string; content?: unknown };
+      if (toolMessage.role !== 'tool') {
+        continue;
+      }
+
+      const result = normalizeToolMessageContent(toolMessage.content);
+      if (!isUsableRecoveryToolResult(result)) {
+        continue;
+      }
+
+      const metadata = toolMessage.tool_call_id ? toolMetadataById.get(toolMessage.tool_call_id) : undefined;
+      if (!metadata) {
+        evidenceBlocks.push(result);
+        continue;
+      }
+
+      evidenceBlocks.push(
+        `Tool: ${metadata.name}\nArgs: ${metadata.args.slice(0, 400)}\nResult:\n${result}`
+      );
+    }
+
+    return evidenceBlocks;
+  }
+
+  function isUsableRecoveryToolResult(result: string): boolean {
+    const normalized = result.trim().toLowerCase();
+
+    if (normalized.length === 0) {
+      return false;
+    }
+
+    if (result.startsWith('Tool error (')
+      || result.startsWith('[TOOL_LIMIT]')
+      || result.startsWith('[DUPLICATE_CALL]')
+      || result.startsWith('[TOOL_ARGS_INVALID]')
+      || normalized === 'tool produced no output.') {
+      return false;
+    }
+
+    return true;
+  }
+
+  function countSuccessfulVerificationCalls(verificationTools: string[]): number {
+    const toolNameById = new Map<string, string>();
+    let successfulVerificationCount = 0;
+
+    for (const message of history) {
+      const assistantMessage = message as { role: string; tool_calls?: Array<{ id: string; type: string; function: { name: string } }> };
+      if (assistantMessage.role === 'assistant' && assistantMessage.tool_calls) {
+        for (const toolCall of assistantMessage.tool_calls) {
+          if (toolCall.type === 'function') {
+            toolNameById.set(toolCall.id, toolCall.function.name);
+          }
+        }
+        continue;
+      }
+
+      const toolMessage = message as { role: string; tool_call_id?: string; content?: unknown };
+      if (toolMessage.role !== 'tool' || !toolMessage.tool_call_id) {
+        continue;
+      }
+
+      const toolName = toolNameById.get(toolMessage.tool_call_id);
+      if (!toolName || !verificationTools.includes(toolName)) {
+        continue;
+      }
+
+      const content = normalizeToolMessageContent(toolMessage.content);
+
+      if (isSuccessfulVerificationResult(toolName, content)) {
+        successfulVerificationCount++;
+      }
+    }
+
+    return successfulVerificationCount;
   }
 
   async function createTrackedCompletion(
@@ -346,6 +548,74 @@ export async function runAgentLoop(
             throw new Error(`Model error (fallback also failed): ${upstreamErr.slice(0, 200)}`);
           }
         }
+        // 502 / tokenization error (TextEncodeInput) → switch to fallback model
+        // DeepSeek V4 Flash crashes with "TextEncodeInput must be Union..." when context is large
+        else if (upstreamErr.includes('TextEncodeInput')) {
+          const currentModel502 = config.model ?? DEFAULT_MODEL;
+          logger.warn('AGENT', `[${config.name}] 502/tokenization error → trying fallback model chain...`);
+          let recovered = false;
+          for (const fbModel of FALLBACK_MODELS) {
+            if (fbModel === currentModel502) continue;
+            await _delay(2000);
+            try {
+              response = await createTrackedCompletion({
+                model: fbModel,
+                messages: buildRequestMessages(fbModel),
+                tools: config.tools.length > 0 ? config.tools : undefined,
+                tool_choice: config.tools.length > 0 ? toolChoice : undefined,
+                max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
+              }, {
+                reason: 'response-body-502-fallback',
+              });
+              if (response?.choices?.[0]) {
+                logger.info('AGENT', `[${config.name}] 502 fallback successful: ${fbModel}`);
+                recovered = true;
+                break;
+              }
+            } catch { continue; }
+          }
+          if (!recovered || !response?.choices?.[0]) {
+            // Last resort: force text response with truncated context
+            const toolResults = collectRecoveryToolEvidenceBlocks().join('\n---\n');
+            if (toolResults.trim().length === 0) {
+              throw new Error(`502/tokenization error — all fallbacks failed: ${upstreamErr.slice(0, 200)}`);
+            }
+            logger.warn('AGENT', `[${config.name}] All 502 fallbacks failed — forcing synthesis with truncated context.`);
+            const truncatedData = toolResults.length > 10000 ? toolResults.slice(0, 10000) + '\n[...truncated]' : toolResults;
+            const recoverySystemPrompt = history.find(message => message.role === 'system' && typeof message.content === 'string');
+            const recoveryUserPrompt = [...history].reverse().find(
+              message => message.role === 'user'
+                && typeof message.content === 'string'
+                && !isInternalControlPrompt(message.content as string)
+            );
+            try {
+              const cleanResp = await createTrackedCompletion({
+                model: FALLBACK_MODELS[0],
+                messages: [
+                  {
+                    role: 'system',
+                    content: `${typeof recoverySystemPrompt?.content === 'string' ? recoverySystemPrompt.content.slice(0, 3000) + '\n\n' : ''}Summarize the research data in Markdown. Preserve the original task filters, evidence rules, and limitation handling. Write only the report.`,
+                  },
+                  {
+                    role: 'user',
+                    content: `Original task:\n${typeof recoveryUserPrompt?.content === 'string' ? recoveryUserPrompt.content : 'Unknown'}\n\nResearch data:\n${truncatedData}`,
+                  },
+                ],
+                max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
+              }, {
+                reason: '502-truncated-recovery',
+                phase: 'recovery',
+              });
+              const text = cleanResp.choices?.[0]?.message?.content?.trim() ?? '';
+              const cleanedText = stripThinkingTokens(text);
+              if (cleanedText.length > 50) {
+                pushHistory({ role: 'assistant', content: cleanedText });
+                return { finalResponse: cleanedText, toolCallCount, toolsUsed, session: rebuildAgentSession(config.name, history), history };
+              }
+            } catch { /* clean call also failed */ }
+            throw new Error(`502/tokenization error — all fallbacks failed: ${upstreamErr.slice(0, 200)}`);
+          }
+        }
         // Invalid JSON argument error → give the model a chance to correct (max 3 attempts)
         // 504 upstream timeout / operation aborted → try fallback model chain
         else if (upstreamErr.includes('504') || upstreamErr.toLowerCase().includes('aborted') || upstreamErr.toLowerCase().includes('timeout')) {
@@ -516,9 +786,13 @@ export async function runAgentLoop(
           }
           continue;
         }
-        throw new Error(`Upstream API error: ${upstreamErr}`);
+        if (!response?.choices?.[0]) {
+          throw new Error(`Upstream API error: ${upstreamErr}`);
+        }
       }
-      throw new Error(`Invalid API response: no choices. Response: ${JSON.stringify(response)}`);
+      if (!response?.choices?.[0]) {
+        throw new Error(`Invalid API response: no choices. Response: ${JSON.stringify(response)}`);
+      }
     }
 
     const message = response.choices[0].message;
@@ -624,6 +898,13 @@ export async function runAgentLoop(
     }
 
     const pendingFollowUpUserMessages: string[] = [];
+    const verificationTools = ['run_sherlock', 'run_maigret', 'cross_reference', 'verify_profiles',
+      'run_github_osint', 'check_email_registrations', 'scrape_profile', 'verify_claim',
+      'nitter_profile', 'web_fetch', 'auto_visual_intel'];
+    const searchCountBeforeBatch = (toolsUsed['search_web'] ?? 0) + (toolsUsed['search_web_multi'] ?? 0);
+    const verificationCountBeforeBatch = countSuccessfulVerificationCalls(verificationTools);
+    let batchSearchCount = 0;
+    let batchVerificationCount = 0;
     for (const toolCall of (sanitizedToolCalls ?? message.tool_calls ?? [])) {
       if (toolCall.type !== 'function') continue;
       let result = '';
@@ -631,6 +912,9 @@ export async function runAgentLoop(
       const toolName = toolCall.function.name;
       try {
         const args = JSON.parse(toolCall.function.arguments) as Record<string, string>;
+        if (toolName === 'search_web' || toolName === 'search_web_multi') {
+          batchSearchCount++;
+        }
 
         // Detect calls that were sanitized due to invalid JSON arguments.
         // Give the model a clear error instead of trying to execute with empty/wrong args.
@@ -692,7 +976,6 @@ export async function runAgentLoop(
               lowYieldStreak = 0; // Reset to prevent repeated injections
             }
           }
-
           // TUI: short preview (first line, 80 chars)
           const resultPreview = result.split('\n')[0].slice(0, 80);
           emitProgress(`  ✓ ${toolName} → ${resultPreview}`);
@@ -715,9 +998,32 @@ export async function runAgentLoop(
           pendingFollowUpUserMessages.push(followUpUserMessage);
         }
       }
+      if (verificationTools.includes(toolName) && isSuccessfulVerificationResult(toolName, result)) {
+        batchVerificationCount++;
+      }
       toolsUsed[toolName] = (toolsUsed[toolName] ?? 0) + 1;
       toolCallCount++;
       toolCallCountFloor = toolCallCount;
+    }
+
+    const totalSearchCount = searchCountBeforeBatch + batchSearchCount;
+    const totalVerificationCount = verificationCountBeforeBatch + batchVerificationCount;
+    const crossedDiversityThreshold = Array.from({ length: batchSearchCount }, (_, index) => searchCountBeforeBatch + index + 1)
+      .some(count => count >= 4 && count % 4 === 0);
+    if (batchSearchCount > 0 && crossedDiversityThreshold && totalVerificationCount === 0) {
+      const availableTools = verificationTools.filter(toolName =>
+        config.tools.some((tool: any) => tool.type === 'function' && tool.function.name === toolName)
+      );
+      if (availableTools.length > 0) {
+        const diversityMessage =
+          '⚠️ TOOL DIVERSITY REQUIREMENT: You have made ' + totalSearchCount + ' search calls but used ZERO verification/deep-dive tools. ' +
+          'Before making any more searches, you MUST call at least one of: ' + availableTools.slice(0, 5).join(', ') + '. ' +
+          'Search-only investigations produce unreliable results. Verify your findings NOW.';
+        if (!pendingFollowUpUserMessages.includes(diversityMessage)) {
+          pendingFollowUpUserMessages.push(diversityMessage);
+        }
+        logger.warn('AGENT', `[${config.name}] Search-only loop detected (${totalSearchCount} searches, 0 verification). Forcing diversity.`);
+      }
     }
 
     for (const pendingMessage of pendingFollowUpUserMessages) {

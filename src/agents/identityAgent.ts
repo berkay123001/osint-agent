@@ -1,4 +1,4 @@
-import type { Message, AgentConfig } from './types.js';
+import type { Message, AgentConfig, AgentResult } from './types.js';
 import { runAgentLoop } from './baseAgent.js';
 import { tools, executeTool } from '../lib/toolRegistry.js';
 import chalk from 'chalk';
@@ -11,7 +11,7 @@ import { findUnexploredPivots, formatUnexploredPivots } from '../lib/pivotAnalyz
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-async function saveKnowledgeFromHistory(history: Message[], query: string): Promise<void> {
+async function saveKnowledgeFromHistory(history: Message[], query: string, knowledgeFilePath?: string): Promise<boolean> {
   const toolResultMap = new Map<string, string>();
   for (const msg of history) {
     if (msg.role === 'tool') {
@@ -31,7 +31,7 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
       calls.push({ name: tc.function.name, args: tc.function.arguments, result });
     }
   }
-  if (calls.length === 0) return;
+  if (calls.length === 0) return false;
   const groups: Record<string, { name: string; args: string; result: string }[]> = {};
   for (const c of calls) {
     if (!groups[c.name]) groups[c.name] = [];
@@ -60,11 +60,14 @@ async function saveKnowledgeFromHistory(history: Message[], query: string): Prom
     }
   }
   try {
-    const dir = path.resolve(__dirname, '../../.osint-sessions');
+    const filePath = knowledgeFilePath ?? path.resolve(__dirname, '../../.osint-sessions/identity-knowledge.md');
+    const dir = path.dirname(filePath);
     await mkdir(dir, { recursive: true });
-    await writeFile(path.join(dir, 'identity-knowledge.md'), md, 'utf-8');
+    await writeFile(filePath, md, 'utf-8');
     emitProgress(`🧠 Identity knowledge base saved (${calls.length} tool results)`);
+    return true;
   } catch { /* skip silently */ }
+  return false;
 }
 
 const IDENTITY_TOOLS = [
@@ -74,6 +77,36 @@ const IDENTITY_TOOLS = [
   'search_web', 'search_web_multi', 'scrape_profile', 'web_fetch', 'verify_claim',
   'auto_visual_intel'
 ];
+
+const IDENTITY_SOURCING_GUIDANCE = `# ⛔ TASK FILTER ENFORCEMENT
+
+When the task specifies criteria (years of experience, company, skill level, location):
+1. You MUST extract and VERIFY each criterion before including a candidate
+2. For "X-Y years experience": find graduation year or first job start date, calculate years, exclude candidates outside range
+3. For company filters: verify current employment with at least scrape_profile or cross_reference
+4. Candidates NOT matching ALL criteria must be listed under "Rejected Candidates" with reason, NOT in main findings
+5. NEVER include Senior/Staff/Principal titles when task asks for junior-mid level (1-4 YOE)
+
+# SOURCING REPORT FORMAT
+
+## Summary
+Target definition + key findings
+
+## Verified Candidates
+Only candidates matching ALL task criteria. For each:
+- Name, current role, company
+- Evidence sources (list tool calls that confirmed this)
+- Confidence: ✅ VERIFIED or ⚠️ SINGLE SOURCE
+- YOE calculation (if task specified experience filter)
+
+## Rejected Candidates
+Candidates found but NOT matching criteria — list with rejection reason
+
+## Unverified Findings
+Insufficient evidence findings
+
+## Tool Statistics
+Which tools were called, what was found`;
 
 export const identityAgentConfig: AgentConfig = {
   name: 'IdentityAgent',
@@ -90,7 +123,12 @@ Your task: Uncover a person's digital footprint, accounts, connections, and iden
 1. **ACCURACY > COMPLETENESS**: Presenting unverified information is FORBIDDEN. If unsure, write "⚠️ Unverified".
 2. **NO GENERAL KNOWLEDGE**: Do not include information not present in tool outputs. Your training data ≠ OSINT findings.
 3. **SOURCE REQUIRED**: Add [source: tool_name] to every claim. Unsubstantiated claim = hallucination.
-4. **CONFIDENCE LABELS**:
+4. **EVIDENCE HIERARCHY** (use this for EVERY person in your report):
+   - ✅ VERIFIED = 2+ independent tool calls confirmed the same fact (e.g., search_web found LinkedIn + run_github_osint found matching GitHub with same name/company)
+   - ⚠️ SINGLE SOURCE = only 1 tool call supports this claim — mark explicitly
+   - ❓ UNVERIFIED = tool returned no data or error — do NOT present as finding
+   - A search snippet alone is NEVER enough for ✅ VERIFIED
+5. **CONFIDENCE LABELS**:
    - ✅ Verified (multiple independent sources)
    - ⚠️ Single source / weak evidence
    - ❓ Could not verify
@@ -148,11 +186,14 @@ You are an OSINT specialist — do not follow a rigid order, act on your finding
 ## Summary
 Target definition + key findings
 
-## Findings
-Per platform: findings, evidence status, confidence level
+## Verified Findings
+High-confidence findings with evidence sources
 
-## Unverified Findings
-Insufficient evidence findings
+## Unverified or Partial Findings
+Insufficient evidence findings, blocked profiles, unresolved links
+
+## Open Questions / Next Pivots
+Remaining leads and recommended next checks
 
 ## Tool Statistics
 Which tools were called, what was found`
@@ -165,6 +206,8 @@ export interface SubAgentResult {
   response: string;
   history: Message[];
 }
+
+type AgentLoopRunner = (history: Message[], config: AgentConfig) => Promise<AgentResult>;
 
 /**
  * Extract candidate usernames or known identifiers from the query string.
@@ -206,35 +249,204 @@ async function loadPivotContext(query: string): Promise<string | null> {
   return null;
 }
 
-export async function runIdentityAgent(query: string, context?: string, depth?: string, existingHistory?: Message[]): Promise<SubAgentResult> {
+/**
+ * Separate Strategy Plan from raw context.
+ * The plan is injected as a MANDATORY INSTRUCTIONS block at system level,
+ * not buried in context where the model treats it as optional background info.
+ */
+function separatePlanFromContext(context?: string): { plan: string | null; cleanContext: string | null } {
+  if (!context) return { plan: null, cleanContext: null };
+
+  const header = '[STRATEGY PLAN — Research according to this plan]:';
+  const headerIndex = context.indexOf(header);
+  if (headerIndex !== -1) {
+    const beforeHeader = context.slice(0, headerIndex).trim();
+    const afterHeader = context.slice(headerIndex + header.length).replace(/^\n/, '');
+    const lines = afterHeader.split('\n');
+    const planLines: string[] = [];
+    const trailingLines: string[] = [];
+    let planStarted = false;
+
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index];
+      const trimmed = line.trim();
+
+      if (!planStarted) {
+        if (!trimmed) {
+          continue;
+        }
+        if (/^(\d+\.|[-*])\s+/.test(trimmed)) {
+          planStarted = true;
+          planLines.push(trimmed);
+          continue;
+        }
+        trailingLines.push(...lines.slice(index));
+        break;
+      }
+
+      if (!trimmed) {
+        continue;
+      }
+
+      if (/^(\d+\.|[-*])\s+/.test(trimmed)) {
+        planLines.push(trimmed);
+        continue;
+      }
+
+      trailingLines.push(...lines.slice(index));
+      break;
+    }
+
+    const cleanContext = [beforeHeader, trailingLines.join('\n').trim()].filter(Boolean).join('\n\n');
+    const plan = sanitizeStrategyPlan(planLines.join('\n'));
+    if (!plan) {
+      return { plan: null, cleanContext: cleanContext || null };
+    }
+    return { plan, cleanContext: cleanContext || null };
+  }
+  return { plan: null, cleanContext: context };
+}
+
+function sanitizeStrategyPlan(plan: string): string | null {
+  const forbiddenInstructionPatterns = [
+    /\bignore all previous instructions\b/i,
+    /\boverride\b/i,
+    /\bfabricat(e|ion)\b/i,
+    /\binvent\b/i,
+    /\bfiction\b/i,
+    /\bunrestricted\b/i,
+  ];
+  const unsafeSuffixPattern = /(?:,|;|\bthen\b|\band\b)\s*(?=ignore all previous instructions\b|override\b|fabricat(?:e|ion)\b|invent\b|fiction\b|unrestricted\b).*/i;
+  const sanitizedLines = plan
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .filter(line => /^(\d+\.|[-*])\s+/.test(line))
+    .map((line) => {
+      const markerMatch = line.match(/^(\d+\.|[-*])\s+/);
+      const marker = markerMatch?.[0].trimEnd() ?? '-';
+      const lineWithoutMarker = line
+        .slice(markerMatch?.[0].length ?? 0)
+        .replace(/[<>`]/g, '')
+        .replace(/\b(system|assistant|user)\s*:/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const safeBody = lineWithoutMarker
+        .replace(unsafeSuffixPattern, '')
+        .trim()
+        .slice(0, 160);
+      if (forbiddenInstructionPatterns.some(pattern => pattern.test(safeBody))) {
+        return null;
+      }
+      return safeBody.length > 0 ? `${marker} ${safeBody}` : null;
+    })
+    .filter((line): line is string => Boolean(line));
+
+  if (sanitizedLines.length === 0) {
+    return null;
+  }
+
+  return sanitizedLines.slice(0, 8).join('\n');
+}
+
+function looksLikeCandidateSourcingTask(query: string, context?: string): boolean {
+  const haystack = `${query}\n${context ?? ''}`;
+  const sourcingIntentPatterns = [
+    /\brecruit(ing|er)?\b/i,
+    /\bhir(e|ing)\b/i,
+    /\bsourc(e|ing)\b/i,
+  ];
+  const candidatePoolPatterns = [
+    /\bcandidates?\b/i,
+    /\b(engineers|developers|researchers|analysts|designers)\b/i,
+  ];
+  const sourcingFilterPatterns = [
+    /\b\d+\s*-\s*\d+\s*(?:yoe|years? of experience)\b/i,
+    /\b(?:yoe|years? of experience|experience|location|remote|onsite|hybrid)\b/i,
+    /\b(?:at|for)\s+[A-Z][\w&.-]*(?:\s+[A-Z][\w&.-]*){0,4}\b/,
+  ];
+  const filteredSourcingRequestPatterns = [
+    /\bfind\b[\s\S]{0,80}\b\d+\s*-\s*\d+\s*(?:yoe|years? of experience)\b[\s\S]{0,80}\b(engineers?|developers?|researchers?|analysts?|designers?)\b/i,
+    /\bneed\b[\s\S]{0,80}\bcandidates?\b[\s\S]{0,80}\b(?:at|for)\s+[A-Z]/i,
+    /\bfind\b[\s\S]{0,80}\b(engineer|developer|researcher|analyst|designer)\b[\s\S]{0,80}\b(?:at|for)\s+[A-Z][\w&.-]*(?:\s+[A-Z][\w&.-]*){0,4}\b[\s\S]{0,80}\b(?:\d+\s*-\s*\d+\s*(?:yoe|years? of experience)|remote|onsite|hybrid)\b/i,
+  ];
+  const mentionsCandidatePool = candidatePoolPatterns.some(pattern => pattern.test(haystack));
+  const targetsNamedIndividual = /\b(?:[Ii]nvestigate|[Ll]ookup|[Rr]esearch|[Pp]rofile|[Aa]bout|[Ff]ind)\b[\s\S]{0,80}\b(?!Backend\b|Frontend\b|Fullstack\b|Full-Stack\b|Data\b|Security\b|Mobile\b|DevOps\b|Lead\b|Senior\b|Staff\b|Principal\b|Junior\b|Mid\b)[A-Z][a-z]+\s+(?!Engineer\b|Developer\b|Researcher\b|Analyst\b|Designer\b|Labs\b|Inc\b|Corp\b|LLC\b|Ltd\b|Technologies\b|Systems\b|Company\b|University\b|Institute\b)[A-Z][a-z]+\b/.test(haystack);
+
+  const hasExplicitSourcingIntent = sourcingIntentPatterns.some(pattern => pattern.test(haystack));
+  const looksLikeFilteredCandidatePool = mentionsCandidatePool
+    && sourcingFilterPatterns.some(pattern => pattern.test(haystack));
+  const matchesFilteredSourcingRequest = filteredSourcingRequestPatterns.some(pattern => pattern.test(haystack));
+
+  return !targetsNamedIndividual && (hasExplicitSourcingIntent || looksLikeFilteredCandidatePool || matchesFilteredSourcingRequest);
+}
+
+export async function runIdentityAgent(
+  query: string,
+  context?: string,
+  depth?: string,
+  existingHistory?: Message[],
+  agentLoopRunner: AgentLoopRunner = runAgentLoop,
+  knowledgeFilePath?: string,
+): Promise<SubAgentResult> {
   const multiplier = DEPTH_MULTIPLIERS[depth ?? 'normal'] ?? 1;
   const maxToolCalls = Math.ceil((identityAgentConfig.maxToolCalls ?? 30) * multiplier);
   emitProgress(`🕵️‍♂️ IdentityAgent → "${query.length > 120 ? query.slice(0, 117) + '...' : query}" [depth: ${depth ?? 'normal'}, budget: ${maxToolCalls}]`);
 
-  // Fresh session only — don't run pivot lookup when continuing an existing history
-  let enrichedContext = context;
+  // Separate strategy plan from raw context
+  const { plan: strategyPlan, cleanContext } = separatePlanFromContext(context);
+
+  // Build pivot context from Neo4j graph
+  let pivotSection = '';
   if (!existingHistory) {
     const pivotBlock = await loadPivotContext(query);
     if (pivotBlock) {
-      const pivotSection = `\n\n[GRAPH MEMORY — Previously discovered data about this target]\n${pivotBlock}\n[/GRAPH MEMORY]\n\nPrioritize the unexplored pivots listed above — they are the most valuable next steps.`;
-      enrichedContext = context ? context + pivotSection : pivotSection;
+      pivotSection = `\n\n[GRAPH MEMORY — Previously discovered data about this target]\n${pivotBlock}\n[/GRAPH MEMORY]\n\nPrioritize the unexplored pivots listed above — they are the most valuable next steps.`;
     }
   }
+
+  // Build system prompt: base + mandatory strategy plan (if exists)
+  let systemPrompt = identityAgentConfig.systemPrompt;
+  if (looksLikeCandidateSourcingTask(query, cleanContext ?? context)) {
+    systemPrompt += `\n\n${IDENTITY_SOURCING_GUIDANCE}`;
+  }
+  if (strategyPlan) {
+    systemPrompt += `\n\n# ⛔ MANDATORY RESEARCH PLAN (FROM STRATEGY — YOU MUST FOLLOW THIS)\n\nThe Strategy Agent analyzed this task and created the plan below. You MUST execute this plan:\n- Follow the tool usage order specified\n- Do NOT skip tools listed in the plan\n- Do NOT default to only using search_web/search_web_multi\n- Use Sherlock, Maigret, cross_reference, verify_profiles as the plan instructs\n\n<strategy_plan>\n${strategyPlan}\n</strategy_plan>\n\nAfter following the plan above, you must also satisfy these rules:\n1. Every person found must be verified by at least 2 INDEPENDENT sources before being marked as "Verified"\n2. If the task specifies filters (e.g., years of experience), EXTRACT and VERIFY dates — do not skip filtering\n3. Candidates that don't match all filters must be excluded from the final report, not just flagged`;
+  }
+
+  // Build user message: context (without plan) + pivot + task
+  const userParts: string[] = [];
+  if (cleanContext) userParts.push(`Context:\n${cleanContext}`);
+  if (pivotSection) userParts.push(pivotSection.trim());
+  userParts.push(`Task:\n${query}`);
+  const userMessage = userParts.join('\n\n');
 
   // Continue with existing history if provided (AutoGen-style), otherwise start fresh
   const history: Message[] = existingHistory
     ? [...existingHistory]
     : [
-        { role: 'system', content: identityAgentConfig.systemPrompt },
-        { role: 'user', content: enrichedContext ? `Context:\n${enrichedContext}\n\nTask:\n${query}` : query },
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
       ];
 
-  const result = await runAgentLoop(history, { ...identityAgentConfig, maxToolCalls });
-  await saveKnowledgeFromHistory(history, query);
-  const toolSummary = Object.entries(result.toolsUsed)
-    .map(([tool, count]) => `${tool}×${count}`)
-    .join(', ');
-  emitProgress(`✅ IdentityAgent completed [${result.toolCallCount} tools: ${toolSummary || 'none'}]`);
-  const meta = `\n\n---\n**[META] IdentityAgent tool stats:** ${toolSummary || 'no tools used'} (total: ${result.toolCallCount})`;
-  return { response: result.finalResponse + meta, history };
+  try {
+    const result = await agentLoopRunner(history, { ...identityAgentConfig, maxToolCalls });
+    const effectiveHistory = result.history ?? history;
+    await saveKnowledgeFromHistory(effectiveHistory, query, knowledgeFilePath);
+    const toolSummary = Object.entries(result.toolsUsed)
+      .map(([tool, count]) => `${tool}×${count}`)
+      .join(', ');
+    emitProgress(`✅ IdentityAgent completed [${result.toolCallCount} tools: ${toolSummary || 'none'}]`);
+    const meta = `\n\n---\n**[META] IdentityAgent tool stats:** ${toolSummary || 'no tools used'} (total: ${result.toolCallCount})`;
+    return { response: result.finalResponse + meta, history: effectiveHistory };
+  } catch (error) {
+    const savedKnowledge = await saveKnowledgeFromHistory(history, query, knowledgeFilePath);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const recoveryHint = savedKnowledge
+      ? knowledgeFilePath
+        ? `\n\nPartial tool results saved to ${knowledgeFilePath}.`
+        : '\n\nPartial tool results saved to .osint-sessions/identity-knowledge.md. Recover them with read_session_file(agent="identity", include_knowledge=true).'
+      : '';
+    throw new Error(`${errorMessage}${recoveryHint}`);
+  }
 }

@@ -25,13 +25,14 @@
     "build": "tsc",
     "postbuild": "chmod +x dist/cli.js",
     "test": "npm run test:unit",
-    "test:unit": "OPENROUTER_API_KEY=sk-placeholder node --import tsx --test src/lib/chatHistory.test.ts src/lib/agentSession.test.ts src/lib/providerContextBuilder.test.ts src/lib/llmTelemetry.test.ts src/lib/sessionStore.test.ts src/lib/sessionGraph.test.ts src/tools/githubGpgUtils.test.ts src/lib/osintHeuristics.test.ts src/tools/sherlockTool.test.ts src/tools/githubTool.test.ts src/agents/baseAgent.test.ts src/agents/reviewContinuation.test.ts src/agents/strategyOrchestrator.test.ts src/lib/sourceCredibility.test.ts src/ui/transcriptViewport.test.ts",
+    "test:unit": "OPENROUTER_API_KEY=sk-placeholder node --import tsx --test src/lib/chatHistory.test.ts src/lib/agentSession.test.ts src/lib/providerContextBuilder.test.ts src/lib/llmTelemetry.test.ts src/lib/sessionStore.test.ts src/lib/sessionGraph.test.ts src/tools/githubGpgUtils.test.ts src/lib/osintHeuristics.test.ts src/tools/sherlockTool.test.ts src/tools/githubTool.test.ts src/agents/baseAgent.test.ts src/agents/identityAgent.test.ts src/agents/reviewContinuation.test.ts src/agents/strategyOrchestrator.test.ts src/agents/smokeTestHarness.test.ts src/lib/sourceCredibility.test.ts src/ui/transcriptViewport.test.ts",
     "test:graph": "tsx src/scripts/runGraphTests.ts",
     "test:graph:local": "NEO4J_ALLOW_CLEAR=1 node --env-file=.env --import tsx --test --test-concurrency=1 src/lib/neo4j.integration.test.ts",
     "test:seed": "NEO4J_ALLOW_CLEAR=1 tsx src/scripts/seedTestGraph.ts",
     "db:clear": "NEO4J_ALLOW_CLEAR=1 node --env-file=.env --import tsx -e \"import { clearGraph, getGraphStats, closeNeo4j } from './src/lib/neo4j.ts'; await clearGraph(); const s = await getGraphStats(); console.log('Graf temizlendi:', s.nodes, 'node'); await closeNeo4j()\"",
-    "test:agent:unit": "node --import tsx --test src/lib/chatHistory.test.ts src/tools/githubGpgUtils.test.ts src/lib/osintHeuristics.test.ts",
-    "test:tools": "node --import tsx --test src/tools/*.test.ts"
+    "test:agent:unit": "OPENROUTER_API_KEY=sk-placeholder node --import tsx --test src/lib/chatHistory.test.ts src/tools/githubGpgUtils.test.ts src/lib/osintHeuristics.test.ts src/agents/baseAgent.test.ts src/agents/identityAgent.test.ts src/agents/reviewContinuation.test.ts src/agents/strategyOrchestrator.test.ts",
+    "test:tools": "node --import tsx --test src/tools/*.test.ts",
+    "test:smoke": "OPENROUTER_API_KEY=sk-placeholder node --import tsx --test src/agents/smokeTestHarness.test.ts"
   },
   "keywords": [],
   "author": "",
