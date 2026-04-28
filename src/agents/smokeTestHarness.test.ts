@@ -590,3 +590,229 @@ test('runSmokeScenario strips meta footer before content assertions while keepin
   assert.equal(result.assertions.passed, false)
   assert.equal(result.assertions.failures[0].rule, 'response_min_length(20)')
 })
+
+// ── Entegrasyon Testleri: Gerçek Agent Config + META Parse Zinciri ───────
+
+import { identityAgentConfig } from './identityAgent.js'
+import { mediaAgentConfig } from './mediaAgent.js'
+import { academicAgentConfig } from './academicAgent.js'
+
+test('Agent configs route tools correctly — identity has identity tools, not media/academic tools', () => {
+  const identityTools = new Set(identityAgentConfig.tools.map((t: any) => t.function.name))
+  const mediaTools = new Set(mediaAgentConfig.tools.map((t: any) => t.function.name))
+  const academicTools = new Set(academicAgentConfig.tools.map((t: any) => t.function.name))
+
+  // Identity-specific tools
+  assert.ok(identityTools.has('run_sherlock'), 'Identity should have run_sherlock')
+  assert.ok(identityTools.has('run_github_osint'), 'Identity should have run_github_osint')
+  assert.ok(identityTools.has('check_email_registrations'), 'Identity should have check_email_registrations')
+  assert.ok(identityTools.has('cross_reference'), 'Identity should have cross_reference')
+  assert.ok(identityTools.has('verify_profiles'), 'Identity should have verify_profiles')
+
+  // Identity must NOT have media/academic-only tools
+  assert.ok(!identityTools.has('extract_metadata'), 'Identity must not have extract_metadata')
+  assert.ok(!identityTools.has('reverse_image_search'), 'Identity must not have reverse_image_search')
+  assert.ok(!identityTools.has('compare_images_phash'), 'Identity must not have compare_images_phash')
+  assert.ok(!identityTools.has('search_academic_papers'), 'Identity must not have search_academic_papers')
+  assert.ok(!identityTools.has('search_researcher_papers'), 'Identity must not have search_researcher_papers')
+  assert.ok(!identityTools.has('check_plagiarism'), 'Identity must not have check_plagiarism')
+
+  // Media-specific tools
+  assert.ok(mediaTools.has('extract_metadata'), 'Media should have extract_metadata')
+  assert.ok(mediaTools.has('reverse_image_search'), 'Media should have reverse_image_search')
+  assert.ok(mediaTools.has('fact_check_to_graph'), 'Media should have fact_check_to_graph')
+  assert.ok(mediaTools.has('wayback_search'), 'Media should have wayback_search')
+
+  // Media must NOT have identity/academic-only tools
+  assert.ok(!mediaTools.has('run_sherlock'), 'Media must not have run_sherlock')
+  assert.ok(!mediaTools.has('run_github_osint'), 'Media must not have run_github_osint')
+  assert.ok(!mediaTools.has('check_email_registrations'), 'Media must not have check_email_registrations')
+  assert.ok(!mediaTools.has('search_academic_papers'), 'Media must not have search_academic_papers')
+  assert.ok(!mediaTools.has('search_researcher_papers'), 'Media must not have search_researcher_papers')
+
+  // Academic-specific tools
+  assert.ok(academicTools.has('search_academic_papers'), 'Academic should have search_academic_papers')
+  assert.ok(academicTools.has('search_researcher_papers'), 'Academic should have search_researcher_papers')
+  assert.ok(academicTools.has('check_plagiarism'), 'Academic should have check_plagiarism')
+  assert.ok(academicTools.has('query_graph'), 'Academic should have query_graph')
+
+  // Academic must NOT have identity/media-only tools
+  assert.ok(!academicTools.has('run_sherlock'), 'Academic must not have run_sherlock')
+  assert.ok(!academicTools.has('extract_metadata'), 'Academic must not have extract_metadata')
+  assert.ok(!academicTools.has('reverse_image_search'), 'Academic must not have reverse_image_search')
+  assert.ok(!academicTools.has('check_email_registrations'), 'Academic must not have check_email_registrations')
+
+  // Shared tools (both have these)
+  assert.ok(identityTools.has('search_web') && mediaTools.has('search_web') && academicTools.has('search_web'),
+    'All agents should share search_web')
+  assert.ok(identityTools.has('scrape_profile') && mediaTools.has('scrape_profile') && academicTools.has('scrape_profile'),
+    'All agents should share scrape_profile')
+})
+
+test('runSmokeScenario + real [META] footer parse chain produces correct tool stats and stripped response', async () => {
+  const scenario: SmokeTestScenario = {
+    name: 'integration-meta-parse',
+    agentType: 'identity',
+    query: 'test query',
+    maxToolBudget: 20,
+    mockTools: {},
+    assertions: [
+      { type: 'used_tool', toolName: 'run_sherlock', minCount: 1 },
+      { type: 'used_tool', toolName: 'search_web', minCount: 1 },
+      { type: 'did_not_use_tool', toolName: 'extract_metadata' },
+      { type: 'has_confidence_labels' },
+      { type: 'has_limitation_statement' },
+      { type: 'tool_budget_respected' },
+      { type: 'no_empty_claims' },
+    ],
+  }
+
+  // Simulate a realistic agent response with [META] footer
+  const realisticResponse = [
+    '## Identity Investigation Report',
+    '',
+    '### Summary',
+    'Target: testuser — Digital footprint analysis.',
+    '',
+    '### Verified Findings',
+    '✅ GitHub: https://github.com/testuser [source: run_github_osint]',
+    '⚠️ Twitter: Could not verify — login wall detected',
+    '',
+    '### Unverified Findings',
+    '❓ LinkedIn: No data available — inaccessible',
+    '',
+    '### Limitations',
+    '- Twitter profile could not be scraped (login wall)',
+    '- No breach data found for associated emails',
+    '',
+    '---',
+    '**[META] IdentityAgent tool stats:** run_sherlock×1, run_github_osint×1, search_web×2, cross_reference×1, verify_profiles×1 (total: 6)',
+  ].join('\n')
+
+  const result = await runSmokeScenario(scenario, async () => ({
+    response: realisticResponse,
+    history: [],
+  }))
+
+  // META parse: tool stats extracted correctly
+  assert.equal(result.toolCallCount, 6)
+  assert.equal(result.toolsUsed['run_sherlock'], 1)
+  assert.equal(result.toolsUsed['run_github_osint'], 1)
+  assert.equal(result.toolsUsed['search_web'], 2)
+  assert.equal(result.toolsUsed['cross_reference'], 1)
+  assert.equal(result.toolsUsed['verify_profiles'], 1)
+
+  // META footer stripped from response body
+  assert.ok(!result.responsePreview.includes('[META]'), 'META footer should be stripped from responsePreview')
+  assert.ok(!result.responsePreview.includes('tool stats'), 'tool stats text should be stripped')
+  assert.ok(result.responsePreview.includes('Identity Investigation Report'), 'Report header should be preserved')
+
+  // Response length should NOT include META footer
+  const expectedBody = realisticResponse.split('\n---\n**[META]')[0].trim()
+  assert.equal(result.responseLength, expectedBody.length)
+
+  // All assertions should pass
+  assert.equal(result.assertions.passed, true,
+    `Assertions failed: ${result.assertions.failures.map(f => `${f.rule}: ${f.actual}`).join('; ')}`)
+})
+
+test('runSmokeScenario with media agent config + realistic [META] parses correctly', async () => {
+  const scenario: SmokeTestScenario = {
+    name: 'integration-media-meta',
+    agentType: 'media',
+    query: 'Verify this image claim',
+    maxToolBudget: 10,
+    mockTools: {},
+    assertions: [
+      { type: 'used_tool', toolName: 'extract_metadata', minCount: 1 },
+      { type: 'did_not_use_tool', toolName: 'run_sherlock' },
+      { type: 'has_confidence_labels' },
+      { type: 'has_limitation_statement' },
+    ],
+  }
+
+  const mediaResponse = [
+    '## Media Verification Report',
+    '',
+    '### Claim Summary',
+    'Image claims to show Istanbul, March 2024.',
+    '',
+    '### Source Analysis',
+    '1. EXIF: GPS coordinates match Istanbul ✅ [source: extract_metadata]',
+    '2. Reverse search: Original found ⚠️ but edited version also exists',
+    '',
+    '### Limitations',
+    '- Could not verify photographer identity',
+    '- Single source confirmation only',
+    '',
+    '---',
+    '**[META] MediaAgent tool stats:** extract_metadata×1, reverse_image_search×1, compare_images_phash×1, search_web×2, verify_claim×1 (total: 6)',
+  ].join('\n')
+
+  const result = await runSmokeScenario(scenario, async () => ({
+    response: mediaResponse,
+    history: [],
+  }))
+
+  assert.equal(result.toolCallCount, 6)
+  assert.equal(result.toolsUsed['extract_metadata'], 1)
+  assert.equal(result.toolsUsed['search_web'], 2)
+  assert.ok(!result.responsePreview.includes('[META]'))
+  assert.equal(result.assertions.passed, true,
+    `Assertions failed: ${result.assertions.failures.map(f => `${f.rule}: ${f.actual}`).join('; ')}`)
+})
+
+test('runSmokeScenario with academic agent config + multi-tool [META] parses correctly', async () => {
+  const scenario: SmokeTestScenario = {
+    name: 'integration-academic-meta',
+    agentType: 'academic',
+    query: 'Find papers on multi-agent systems',
+    maxToolBudget: 15,
+    mockTools: {},
+    assertions: [
+      { type: 'used_tool', toolName: 'search_academic_papers', minCount: 2 },
+      { type: 'used_tool', toolName: 'web_fetch', minCount: 1 },
+      { type: 'did_not_use_tool', toolName: 'run_sherlock' },
+      { type: 'did_not_use_tool', toolName: 'check_email_registrations' },
+      { type: 'has_confidence_labels' },
+      { type: 'has_limitation_statement' },
+      { type: 'tool_budget_respected' },
+    ],
+  }
+
+  const academicResponse = [
+    '## Academic Research Report',
+    '',
+    '### Researcher Profile',
+    '| Name | Institution | h-index |',
+    '| Jane Smith | MIT | 25 | ✅ Found',
+    '',
+    '### Papers Found',
+    '1. Multi-Agent OSINT (2024) — 15 citations ✅ [source: search_researcher_papers]',
+    '2. Confidence Scoring (2023) — 12 citations ✅ [source: search_academic_papers]',
+    '',
+    '### Research Gaps',
+    '❓ No peer-reviewed comparison of confidence methods in multi-agent OSINT',
+    '',
+    '### Limitations',
+    '- Full text not available for all papers (needs verification)',
+    '- Citation counts may not be complete',
+    '',
+    '---',
+    '**[META] AcademicAgent tool stats:** search_researcher_papers×1, search_academic_papers×3, web_fetch×2, search_web×1 (total: 7)',
+  ].join('\n')
+
+  const result = await runSmokeScenario(scenario, async () => ({
+    response: academicResponse,
+    history: [],
+  }))
+
+  assert.equal(result.toolCallCount, 7)
+  assert.equal(result.toolsUsed['search_academic_papers'], 3)
+  assert.equal(result.toolsUsed['web_fetch'], 2)
+  assert.equal(result.toolsUsed['search_researcher_papers'], 1)
+  assert.equal(result.toolsUsed['search_web'], 1)
+  assert.ok(!result.responsePreview.includes('[META]'))
+  assert.ok(result.assertions.passed,
+    `Assertions failed: ${result.assertions.failures.map(f => `${f.rule}: ${f.actual}`).join('; ')}`)
+})
