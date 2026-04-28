@@ -112,6 +112,10 @@ export async function runAgentLoop(
     return prepared.messages;
   }
 
+  // Tools that return free-form page content — broad error words like "error analysis",
+  // "failure modes", "failed state" are benign in their output and must not suppress success.
+  const broadContentTools = new Set(['web_fetch', 'nitter_profile', 'auto_visual_intel']);
+
   function isSuccessfulVerificationResult(toolName: string, result: string): boolean {
     const normalized = result
       .trim()
@@ -119,6 +123,8 @@ export async function runAgentLoop(
       .replace(/ı/g, 'i')
       .normalize('NFKD')
       .replace(/[\u0300-\u036f]/g, '');
+    // Patterns that unambiguously mean the tool found nothing or hit a gate —
+    // safe to apply to ALL tools including broad-content ones.
     const emptyVerificationPatterns = [
       /\bno (profiles?|results?|matches?|identifiers?|evidence|data|findings?)\b/,
       /\bnothing found\b/,
@@ -135,9 +141,6 @@ export async function runAgentLoop(
       /\bdogrulanamadi\b/,
       /\bhicbir dogrulanmis tanimlayici bulunamadi\b/,
       /\bgrafta dogrulanacak profil yok\b/,
-      /\berror\b/,
-      /\bfailed\b/,
-      /\bfailure\b/,
       /\btimeout\b/,
       /\btimed out\b/,
       /\bunavailable\b/,
@@ -150,6 +153,17 @@ export async function runAgentLoop(
       /\bdenied\b/,
       /\bcaptcha\b/,
     ];
+    // Broad single-word patterns that are ambiguous in free-form page content (e.g. "error
+    // analysis", "failed state", "failure mode"). Only applied to narrow-output tools.
+    const strictErrorPatterns = [
+      /\berror\b/,
+      /\bfailed\b/,
+      /\bfailure\b/,
+    ];
+    const isBroadContentTool = broadContentTools.has(toolName);
+    const activePatterns = isBroadContentTool
+      ? emptyVerificationPatterns
+      : [...emptyVerificationPatterns, ...strictErrorPatterns];
     const explicitPositivePatternsByTool: Partial<Record<string, RegExp[]>> = {
       cross_reference: [
         /\bverified\b/,
@@ -189,12 +203,12 @@ export async function runAgentLoop(
       ];
 
       return isUsableRecoveryToolResult(result)
-        && !emptyVerificationPatterns.some(pattern => pattern.test(normalized))
+        && !activePatterns.some(pattern => pattern.test(normalized))
         && explicitPositiveVerificationPatterns.some(pattern => pattern.test(normalized));
     }
 
     return isUsableRecoveryToolResult(result)
-      && !emptyVerificationPatterns.some(pattern => pattern.test(normalized))
+      && !activePatterns.some(pattern => pattern.test(normalized))
       && (!explicitPositivePatterns || explicitPositivePatterns.some(pattern => pattern.test(normalized)));
   }
 

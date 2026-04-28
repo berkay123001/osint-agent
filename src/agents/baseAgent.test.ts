@@ -1653,3 +1653,72 @@ test('continuation keeps tools disabled after a TOOL_CALL_DISABLED recovery prom
   assert.equal(seenToolChoice, 'none');
   assert.equal(result.finalResponse, 'text-only continuation');
 });
+
+test('web_fetch result with benign error words does not suppress diversity prompt suppression', async () => {
+  // Regression: /\berror\b/ / /\bfailed\b/ / /\bfailure\b/ were applied to ALL tools.
+  // For broad-content tools like web_fetch, page text mentioning "error analysis" or
+  // "failure modes" is benign and must still count as a successful verification.
+  // Proof: after 1 web_fetch verification + 3 searches, diversity prompt must stay silent.
+  const primedHistory: Message[] = [{ role: 'user', content: 'hello' }];
+  const benignWebFetchContent = [
+    'Title: Error Analysis in Machine Learning Systems',
+    'This paper examines failure modes and error correction algorithms.',
+    'The methodology failed to converge in early experiments but was later refined.',
+    'Author confirmed at Example Labs: Dr. Jane Smith.',
+  ].join('\n');
+  appendCompletedToolCall(
+    primedHistory,
+    'web_fetch_seed',
+    'web_fetch',
+    { url: 'https://example.com/paper' },
+    benignWebFetchContent
+  );
+  for (let index = 0; index < 3; index++) {
+    appendCompletedToolCall(
+      primedHistory,
+      `search_seed_${index + 1}`,
+      'search_web',
+      { query: `seed-${index}` },
+      'https://example.com/one\nhttps://example.com/two\nhttps://example.com/three'
+    );
+  }
+
+  const config = makeConfig({
+    tools: [
+      {
+        type: 'function',
+        function: {
+          name: 'search_web',
+          description: 'Searches the web',
+          parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'web_fetch',
+          description: 'Fetches web content',
+          parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
+        },
+      },
+    ] as any,
+    executeTool: async () => 'https://example.com/one\nhttps://example.com/two',
+    maxToolCalls: 6,
+  });
+
+  const client = makeMockClient([
+    () => makeToolCallResponse('search_web', { query: 'sample target' }),
+    () => makeSuccessResponse('done'),
+  ]);
+
+  const result = await runAgentLoop(primedHistory, config, client, 0);
+  const diversityMessage = result.history?.find(
+    message => message.role === 'user'
+      && typeof message.content === 'string'
+      && message.content.includes('TOOL DIVERSITY REQUIREMENT')
+  );
+
+  assert.equal(diversityMessage, undefined,
+    'Diversity prompt must not fire when web_fetch already returned benign content ' +
+    'mentioning "error"/"failed"/"failure" — those words are page content, not tool errors.');
+});

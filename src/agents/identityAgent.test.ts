@@ -474,3 +474,60 @@ test('failed sub-agent run without tool history does not claim partial results w
   await assert.rejects(() => readFile(knowledgeFile, 'utf-8'));
   await rm(path.dirname(knowledgeFile), { recursive: true, force: true });
 });
+
+// --- Recruiting heuristic generalization regression tests ---
+
+test('data scientist pool query with YOE filter triggers recruiting mode', async () => {
+  let capturedSystem: string | undefined;
+  const runner = async (history: Message[], _config: AgentConfig): Promise<AgentResult> => {
+    capturedSystem = String(history[0]?.content ?? '');
+    return { finalResponse: 'ok', toolCallCount: 0, toolsUsed: {}, history };
+  };
+  await runIdentityAgent('???', 'Find data scientists with 2-5 YOE at Example Corp.', 'normal', undefined, runner);
+  assert.match(capturedSystem ?? '', /TASK FILTER ENFORCEMENT/,
+    'Data scientist pool query with YOE filter must trigger recruiting mode');
+});
+
+test('product manager pool query with company filter triggers recruiting mode', async () => {
+  let capturedSystem: string | undefined;
+  const runner = async (history: Message[], _config: AgentConfig): Promise<AgentResult> => {
+    capturedSystem = String(history[0]?.content ?? '');
+    return { finalResponse: 'ok', toolCallCount: 0, toolsUsed: {}, history };
+  };
+  await runIdentityAgent('???', 'Find product managers at Example Corp with remote work.', 'normal', undefined, runner);
+  assert.match(capturedSystem ?? '', /TASK FILTER ENFORCEMENT/,
+    'Product manager pool query with company + remote filter must trigger recruiting mode');
+});
+
+test('security researcher pool query with YOE filter triggers recruiting mode', async () => {
+  let capturedSystem: string | undefined;
+  const runner = async (history: Message[], _config: AgentConfig): Promise<AgentResult> => {
+    capturedSystem = String(history[0]?.content ?? '');
+    return { finalResponse: 'ok', toolCallCount: 0, toolsUsed: {}, history };
+  };
+  await runIdentityAgent('???', 'Find security researchers with 3-6 years of experience at Example Labs.', 'normal', undefined, runner);
+  assert.match(capturedSystem ?? '', /TASK FILTER ENFORCEMENT/,
+    'Security researcher pool query with YOE filter must trigger recruiting mode');
+});
+
+test('named data scientist individual lookup does not trigger recruiting mode', async () => {
+  let capturedSystem: string | undefined;
+  const runner = async (history: Message[], _config: AgentConfig): Promise<AgentResult> => {
+    capturedSystem = String(history[0]?.content ?? '');
+    return { finalResponse: 'ok', toolCallCount: 0, toolsUsed: {}, history };
+  };
+  await runIdentityAgent('???', 'Investigate data scientist Jane Doe at Example Corp.', 'normal', undefined, runner);
+  assert.doesNotMatch(capturedSystem ?? '', /TASK FILTER ENFORCEMENT/,
+    'Named individual data scientist lookup must NOT trigger recruiting mode');
+});
+
+test('named product manager individual lookup does not trigger recruiting mode', async () => {
+  let capturedSystem: string | undefined;
+  const runner = async (history: Message[], _config: AgentConfig): Promise<AgentResult> => {
+    capturedSystem = String(history[0]?.content ?? '');
+    return { finalResponse: 'ok', toolCallCount: 0, toolsUsed: {}, history };
+  };
+  await runIdentityAgent('???', 'Find product manager John Smith at Example Corp.', 'normal', undefined, runner);
+  assert.doesNotMatch(capturedSystem ?? '', /TASK FILTER ENFORCEMENT/,
+    'Named individual product manager lookup must NOT trigger recruiting mode');
+});
