@@ -35,6 +35,7 @@ import { generateOsintReport } from '../tools/reportTool.js'
 import { checkPlagiarism } from '../tools/plagiarismTool.js'
 import { analyzeGpxFiles, formatGpxResult } from '../tools/gpxAnalyzerTool.js'
 import { runMaigret, formatMaigretResult } from '../tools/maigretTool.js'
+import { computeGraphConfidence, fetchGraphEvidence } from './graphConfidence.js'
 import { obsidianWrite, obsidianAppend, obsidianRead, obsidianDailyLog, obsidianList, obsidianSearch, obsidianWriteProfile } from '../tools/obsidianTool.js'
 import os from 'os'
 import { writeFile, unlink } from 'fs/promises'
@@ -459,6 +460,22 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
           deep: { type: 'string', enum: ['true', 'false'], description: 'Set to true for deep mode: fetches following list, filters real people by follower count, reads their bios. Slower but reveals social connections.' },
         },
         required: ['username'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_graph_confidence',
+      description:
+        'Compute the graph-aware confidence score (Cv) for a node already in the investigation graph. Returns a numeric score [0–1], confidence level (verified/high/medium/low), and a breakdown: source quality, corroboration count, source diversity, contradiction penalty, false-positive penalty. Use after save_finding or when assessing how well-supported an entity is.',
+      parameters: {
+        type: 'object',
+        properties: {
+          label: { type: 'string', description: 'Node label to query (Username, Email, Person, Website, etc.)' },
+          value: { type: 'string', description: 'Node value to query (e.g. "torvalds", "user@example.com")' },
+        },
+        required: ['label', 'value'],
       },
     },
   },  {
@@ -984,6 +1001,25 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
     }
     else if (name === 'run_github_osint') result = await runGithubOsint(args.username, args.deep === 'true')
     else if (name === 'query_graph') result = await queryGraph(args.value)
+    else if (name === 'query_graph_confidence') {
+      try {
+        const evidence = await fetchGraphEvidence(args.label, args.value)
+        const gcResult = computeGraphConfidence(evidence)
+        const pct = (gcResult.score * 100).toFixed(1)
+        const { cSource, cCorroboration, cDiversity, pContradiction, pFalsePositive } = gcResult.components
+        result = [
+          `📊 Graph Confidence — ${args.label}:${args.value}`,
+          `Score: ${pct}% → ${gcResult.level}`,
+          `  source_quality:         ${(cSource * 100).toFixed(1)}%`,
+          `  corroboration:          ${(cCorroboration * 100).toFixed(1)}%`,
+          `  diversity:              ${(cDiversity * 100).toFixed(1)}%`,
+          `  contradiction_penalty:  -${(pContradiction * 100).toFixed(1)}%`,
+          `  false_positive_penalty: -${(pFalsePositive * 100).toFixed(1)}%`,
+        ].join('\n')
+      } catch (e: any) {
+        result = `❌ query_graph_confidence error: ${e.message}`
+      }
+    }
     else if (name === 'graph_stats') result = await graphStats()
     else if (name === 'list_graph_nodes') result = await runListGraphNodes(args.label, args.limit)
     else if (name === 'cross_reference') result = await runCrossReference(args.username)
