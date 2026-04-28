@@ -10,6 +10,7 @@ import { readFile } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Message, AgentConfig, AgentResult } from './types.js';
+import { BloomFilter } from '../lib/bloomFilter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -89,7 +90,8 @@ export async function runAgentLoop(
   // Stagnation detection: track consecutive low-yield calls
   let lowYieldStreak = 0;
   const LOW_YIELD_THRESHOLD = 5; // After this many consecutive low-yield calls, force synthesis
-  let seenUrls = new Set<string>(); // Track unique URLs found across all search results
+  let seenUrls = new Set<string>(); // Track unique URLs found across all search results (exact, for session persistence)
+  let urlBloom = new BloomFilter(10_000, 0.01); // O(1) URL membership — Bloom Filter deduplication
   let completionAttempt = 0;
 
   function refreshRuntimeState(): void {
@@ -100,6 +102,8 @@ export async function runAgentLoop(
     perToolCount = { ...session.runtime.perToolCount };
     lowYieldStreak = session.runtime.lowYieldStreak;
     seenUrls = new Set(session.runtime.seenUrls);
+    urlBloom = new BloomFilter(10_000, 0.01);
+    session.runtime.seenUrls.forEach(url => urlBloom.add(url));
   }
 
   function buildRequestMessages(modelName: string): Message[] {
@@ -973,8 +977,8 @@ export async function runAgentLoop(
           // Stagnation detection: count new URLs in search results
           if (toolName === 'search_web' || toolName === 'search_web_multi') {
             const urlMatches = result.match(/https?:\/\/[^\s|\]]+/g) || [];
-            const newUrls = urlMatches.filter(u => !seenUrls.has(u));
-            newUrls.forEach(u => seenUrls.add(u));
+            const newUrls = urlMatches.filter(u => !urlBloom.mightContain(u));
+            newUrls.forEach(u => { urlBloom.add(u); seenUrls.add(u); });
             if (newUrls.length <= 2) {
               lowYieldStreak++;
             } else {
