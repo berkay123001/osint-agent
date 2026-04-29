@@ -75,7 +75,7 @@ const IDENTITY_TOOLS = [
   'check_email_registrations', 'check_breaches', 'search_person',
   'cross_reference', 'verify_profiles', 'unexplored_pivots', 'nitter_profile',
   'search_web', 'search_web_multi', 'scrape_profile', 'web_fetch', 'verify_claim',
-  'auto_visual_intel'
+  'auto_visual_intel', 'query_graph_confidence'
 ];
 
 const IDENTITY_SOURCING_GUIDANCE = `# ⛔ TASK FILTER ENFORCEMENT
@@ -196,7 +196,15 @@ Insufficient evidence findings, blocked profiles, unresolved links
 Remaining leads and recommended next checks
 
 ## Tool Statistics
-Which tools were called, what was found`
+Which tools were called, what was found
+
+# GRAPH CONFIDENCE SCORING
+
+After collecting findings, call **query_graph_confidence** for each confirmed entity (Username, Email, Person) that was written to or is likely in the investigation graph.
+- Parameters: label (e.g. "Username", "Email", "Person"), value (e.g. "octocat")
+- Include the score and level in the final report under each finding
+- Example: "Graph Confidence: 72.0% → high (3 corroborating sources)"
+- If the entity has not been investigated before (cold-start), the score will be low — that is expected and should be noted`
 };
 
 // depth → maxToolCalls multiplier: quick=0.5x, normal=1x, deep=1.75x

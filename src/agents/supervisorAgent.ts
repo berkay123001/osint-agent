@@ -272,7 +272,7 @@ You are the Chief (Supervisor) Agent of the OSINT Digital Inspector system. You 
 
 <rules>
 0. SESSION CHECK: If the user references a previous investigation ("earlier", "just now", "what about") → FIRST call read_session_file. Answer directly if data exists.
-1. Person/username/email → call ask_identity_agent
+1. Person/username/email/GitHub profile → ⛔ MANDATORY: call ask_identity_agent. NEVER use search_web or web_fetch to answer person/username queries yourself. Even for simple or well-known targets (octocat, torvalds, etc.) — always delegate. This rule has NO exceptions.
 2. Image/video/news verification → First collect URLs with search_web, then call ask_media_agent (write raw URLs + quotes in context)
 3. Academic research → call ask_academic_agent
    ⚠️ FOLLOW-UP: If already called → answer from [AGENT_DONE] report in history, or use read_session_file if insufficient
@@ -397,8 +397,50 @@ function formatAgentOutput(text: string): string {
     .join('\n');
 }
 
+/**
+ * Detects if a user message is clearly an identity/person/username/email query.
+ * Used for pre-routing before the LLM loop — prevents supervisor from bypassing ask_identity_agent.
+ */
+function isIdentityQuery(content: string): boolean {
+  const lower = content.toLowerCase();
+  // GitHub user/profile queries
+  if (/github\s+(kullan[iı]c[iı]|user|account|hesap|profil|profile)/.test(lower)) return true;
+  // @username mention (social handle)
+  if (/@[a-z0-9_.-]{2,}/i.test(lower)) return true;
+  // username/email investigation keywords
+  if (/(username|email|kullan[iı]c[iı]\s*ad[iı])\s*(kimdir|araştır|hakkında|investigate|profil)/.test(lower)) return true;
+  // "profil çıkar/ver" or "kişi araştır" patterns
+  if (/profil\s*(ç[iı]kar|ver|göster|analiz)|kişi\s*araştır/.test(lower)) return true;
+  return false;
+}
+
 export async function runSupervisor(history: Message[]): Promise<{ finalResponse: string; history: Message[] } | undefined> {
   try {
+    // Pre-routing: detect identity queries before the LLM loop.
+    // Prevents the model from bypassing ask_identity_agent for "simple" or well-known targets.
+    const lastUserMsg = [...history].reverse().find(m => m.role === 'user');
+    if (lastUserMsg && isIdentityQuery(String(lastUserMsg.content))) {
+      const query = String(lastUserMsg.content);
+      logger.info('AGENT', '[Supervisor] Pre-routing → ask_identity_agent (identity query detected)');
+      const toolCallId = `pre_route_${Date.now()}`;
+      const updatedHistory: Message[] = [
+        ...history,
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            id: toolCallId,
+            type: 'function' as const,
+            function: { name: 'ask_identity_agent', arguments: JSON.stringify({ query, depth: 'normal' }) },
+          }],
+        } as Message,
+      ];
+      const agentResult = await supervisorExecuteTool('ask_identity_agent', { query, depth: 'normal' });
+      const formatted = formatAgentOutput(agentResult);
+      logger.info('AGENT', `\n🤖 Supervisor:\n${formatted}\n`);
+      return { finalResponse: agentResult, history: updatedHistory };
+    }
+
     const result = await runAgentLoop(history, supervisorAgentConfig);
     const formatted = formatAgentOutput(result.finalResponse);
     logger.info('AGENT', `\n🤖 Supervisor:\n${formatted}\n`);
