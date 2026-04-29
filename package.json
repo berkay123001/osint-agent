@@ -32,7 +32,10 @@
     "db:clear": "NEO4J_ALLOW_CLEAR=1 node --env-file=.env --import tsx -e \"import { clearGraph, getGraphStats, closeNeo4j } from './src/lib/neo4j.ts'; await clearGraph(); const s = await getGraphStats(); console.log('Graf temizlendi:', s.nodes, 'node'); await closeNeo4j()\"",
     "test:agent:unit": "OPENROUTER_API_KEY=sk-placeholder node --import tsx --test src/lib/chatHistory.test.ts src/tools/githubGpgUtils.test.ts src/lib/osintHeuristics.test.ts src/agents/baseAgent.test.ts src/agents/identityAgent.test.ts src/agents/reviewContinuation.test.ts src/agents/strategyOrchestrator.test.ts",
     "test:tools": "node --import tsx --test src/tools/*.test.ts",
-    "test:smoke": "OPENROUTER_API_KEY=sk-placeholder node --import tsx --test src/agents/smokeTestHarness.test.ts"
+    "test:smoke": "OPENROUTER_API_KEY=sk-placeholder node --import tsx --test src/agents/smokeTestHarness.test.ts",
+    "test:live": "npx tsx src/agents/liveIntegrationTest.ts",
+    "test:live:quick": "npx tsx src/agents/liveIntegrationTest.ts --no-llm",
+    "test:live:smoke": "npx tsx src/agents/liveSmokeTest.ts"
   },
   "keywords": [],
   "author": "",
