@@ -3,6 +3,8 @@ import 'dotenv/config'
 import OpenAI from 'openai'
 import * as readline from 'readline'
 import { spawn } from 'child_process'
+import { existsSync } from 'fs'
+import { execSync } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { logger } from './logger.js'
@@ -867,12 +869,32 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
 ]
 
 // ─── Tool Executors ──────────────────────────────────────────────────
+function resolveSherlockPath(): string {
+  if (process.env.SHERLOCK_BIN && process.env.SHERLOCK_BIN !== 'sherlock') {
+    return process.env.SHERLOCK_BIN
+  }
+  const homeDir = process.env.HOME || os.homedir()
+  const candidates = [
+    path.join(homeDir, 'anaconda3', 'bin', 'sherlock'),
+    path.join(homeDir, 'miniconda3', 'bin', 'sherlock'),
+    path.join(homeDir, '.local', 'bin', 'sherlock'),
+  ]
+  for (const c of candidates) {
+    if (existsSync(c)) return c
+  }
+  try {
+    const which = execSync('which sherlock 2>/dev/null', { encoding: 'utf-8' }).trim()
+    if (which) return which
+  } catch { /* not in PATH */ }
+  return 'sherlock'
+}
+
 async function runSherlock(username: string): Promise<string> {
   if (!isLikelyUsernameCandidate(username)) {
     return `Sherlock is only suitable for username/handle searches. "${username}" contains a space; this looks like a real name and may produce false positives.`
   }
 
-  const SHERLOCK_BIN = process.env.SHERLOCK_BIN || 'sherlock'
+  const SHERLOCK_BIN = resolveSherlockPath()
   return new Promise((resolve) => {
     logger.info('TOOL', `🌐 Scanning Sherlock for ${username}...`)
     logger.info('TOOL', '(This may take 1-2 minutes)')
@@ -1056,15 +1078,28 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
         else if (name === 'fact_check_to_graph') {
       logger.info('TOOL', `🧠 Fact Check Record (Neo4j): ${args.claimId}`)
       try {
+        // Safely parse tags — model may send a plain comma-separated string or invalid JSON
+        let parsedTags: string[] = [];
+        if (args.tags) {
+          try {
+            const parsed = JSON.parse(args.tags);
+            parsedTags = Array.isArray(parsed) ? parsed : [String(parsed)];
+          } catch {
+            // fallback: treat as comma-separated plain string
+            parsedTags = String(args.tags).split(',').map((t: string) => t.trim()).filter(Boolean);
+          }
+        }
+        // Sanitize claimId: strip whitespace and trailing commas/garbage
+        const claimId = String(args.claimId ?? '').trim().replace(/[,\s]+$/, '') || 'unknown-claim';
         await writeFactCheckToGraph({
-           claimId: args.claimId,
+           claimId,
            claimText: args.claimText,
            source: args.source,
            claimDate: args.claimDate,
            verdict: args.verdict as 'FALSE' | 'TRUE' | 'UNVERIFIED',
            truthExplanation: args.truthExplanation,
            imageUrl: args.imageUrl,
-           tags: args.tags ? JSON.parse(args.tags) : []
+           tags: parsedTags
         });
         result = `✅ Fact-Check result successfully saved to Neo4j Data Graph! (Claim ID: ${args.claimId})`;
       } catch (e: any) {
@@ -1425,7 +1460,17 @@ async function runWaybackSearch(url: string): Promise<string> {
 async function runWebFetch(url: string): Promise<string> {
   logger.info('TOOL', `🌐 Sayfa çekiliyor: ${url}...`)
   let result = await webFetch(url)
-  
+
+  // SSRF / internal network block — do NOT fall through to scraper (scraper has no SSRF check)
+  if (result.error && (
+    result.error.includes('İç ağ adreslerine erişim engellendi') ||
+    result.error.includes('Sadece http/https desteklenir') ||
+    result.error.includes('Geçersiz URL')
+  )) {
+    logger.warn('TOOL', `🚫 Erişim engellendi: ${result.error}`)
+    return `❌ Erişim engellendi: ${result.error}`
+  }
+
   // HİBRİT FALLBACK: Eğer 403 (Cloudflare/Bot protection) veya bağlantı hatası alırsak, Firecrawl API'sine (scrapeTool) düş.
   if (result.error || result.statusCode === 403 || result.statusCode === 401) {
     logger.warn('TOOL', `⚠️ curl engellendi (HTTP ${result.statusCode || 'Hata'}). Firecrawl Stealth Proxy'ye geçiliyor...`)

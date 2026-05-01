@@ -16,6 +16,7 @@ export interface VerificationResult {
   verified: boolean
   confidence: 'high' | 'medium' | 'low'
   matchedIndicators: string[]
+  profScore?: number  // S_prof skoru [0, 1]
   scrapedBio?: string
   error?: string
 }
@@ -38,27 +39,52 @@ const VERIFIABLE_PLATFORMS = new Set([
   'Flickr', 'Gravatar', 'About.me', 'Linktree',
 ])
 
+// Kanıt tipi ağırlıkları — S_prof = Σ w_i · e_i formülü (Formül 1)
+export const EVIDENCE_WEIGHTS: Record<string, number> = {
+  email:        0.40,  // en güçlü — benzersiz tanımlayıcı
+  isim:         0.25,  // ad + soyad birlikte
+  website:      0.15,  // URL cross-link
+  organizasyon: 0.10,  // şirket/üniversite
+  konum:        0.05,  // yardımcı kanıt
+  avatar:       0.05,  // pHash mesafesi ≤ 6
+  avatar_weak:  0.00,  // kısmi benzerlik — skora katkısı yok
+}
+
 // Scrape'e değmeyecek platformlar (giriş gerektirir veya Firecrawl desteklemez)
 const SKIP_PLATFORMS = new Set([
   'Twitter', 'X', 'Reddit', 'Facebook', 'Instagram',
   'LinkedIn', 'WhatsApp', 'Telegram',
 ])
 
+export interface WeightedEvidence {
+  indicator: string  // görüntülenecek etiket (örn. "email: foo@bar.com")
+  type: string       // ağırlık tablosundaki anahtar (örn. "email")
+  weight: number     // w_i
+}
+
+/**
+ * S_prof = Σ w_i · e_i  (Formül 1)
+ * Ağırlıklı eşleşme listesinden sayısal skor üretir.
+ */
+export function computeProfScore(weightedMatches: WeightedEvidence[]): number {
+  return weightedMatches.reduce((sum, m) => sum + m.weight, 0)
+}
+
 /**
  * Bilinen tanımlayıcıları sayfa içeriğinde (markdown) ara.
- * Herhangi biri eşleşirse profil doğrulanır.
+ * Her eşleşme için kanıt tipi ve ağırlığı döndürür.
  */
-function findMatchesInContent(
+export function findWeightedMatches(
   content: string,
   known: KnownIdentifiers,
-): string[] {
-  const matches: string[] = []
+): WeightedEvidence[] {
+  const matches: WeightedEvidence[] = []
   const lower = content.toLowerCase()
 
   // Email eşleşmesi — en güçlü kanıt
   for (const email of known.emails) {
     if (lower.includes(email.toLowerCase())) {
-      matches.push(`email: ${email}`)
+      matches.push({ indicator: `email: ${email}`, type: 'email', weight: EVIDENCE_WEIGHTS.email })
     }
   }
 
@@ -68,17 +94,7 @@ function findMatchesInContent(
     if (nameParts.length >= 2) {
       const allFound = nameParts.every(part => lower.includes(part))
       if (allFound) {
-        matches.push(`isim: ${known.realName}`)
-      }
-    }
-  }
-
-  // Konum eşleşmesi (yardımcı kanıt)
-  if (known.location && known.location.length > 3) {
-    const locParts = known.location.toLowerCase().split(/[,/]/).map(s => s.trim()).filter(s => s.length > 3)
-    for (const part of locParts) {
-      if (lower.includes(part)) {
-        matches.push(`konum: ${part}`)
+        matches.push({ indicator: `isim: ${known.realName}`, type: 'isim', weight: EVIDENCE_WEIGHTS.isim })
       }
     }
   }
@@ -87,14 +103,25 @@ function findMatchesInContent(
   if (known.blog && known.blog.length > 5) {
     const blogClean = known.blog.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase()
     if (lower.includes(blogClean)) {
-      matches.push(`website: ${known.blog}`)
+      matches.push({ indicator: `website: ${known.blog}`, type: 'website', weight: EVIDENCE_WEIGHTS.website })
     }
   }
 
   // Şirket/üniversite eşleşmesi
   if (known.company && known.company.length > 3) {
     if (lower.includes(known.company.toLowerCase())) {
-      matches.push(`organizasyon: ${known.company}`)
+      matches.push({ indicator: `organizasyon: ${known.company}`, type: 'organizasyon', weight: EVIDENCE_WEIGHTS.organizasyon })
+    }
+  }
+
+  // Konum eşleşmesi (yardımcı kanıt)
+  if (known.location && known.location.length > 3) {
+    const locParts = known.location.toLowerCase().split(/[,/]/).map(s => s.trim()).filter(s => s.length > 3)
+    for (const part of locParts) {
+      if (lower.includes(part)) {
+        matches.push({ indicator: `konum: ${part}`, type: 'konum', weight: EVIDENCE_WEIGHTS.konum })
+        break  // tek konum parçası yeterli
+      }
     }
   }
 
@@ -143,7 +170,7 @@ export async function verifyProfile(
       scrapeResult.description,
     ].join('\n')
 
-    const matches = findMatchesInContent(fullContent, known)
+    const weightedMatches = findWeightedMatches(fullContent, known)
 
     // Bio'yu çıkar (ilk 200 karakter)
     const bio = scrapeResult.description || scrapeResult.markdown.slice(0, 200)
@@ -156,34 +183,36 @@ export async function verifyProfile(
         const scrapedAvatarHash = await fetchAndHashImage(scrapeResult.avatarUrl);
         if (scrapedAvatarHash) {
           const distance = calculateHammingDistance(known.avatarHash, scrapedAvatarHash);
-          // ≤6: güçlü eşleşme (aynı fotoğrafın farklı boyutu), 7-10: belirsiz (harf avatarı çakışabilir)
           if (distance <= 6) {
             isAvatarMatch = true;
-            matches.push(`avatar: Görsel Eşleşmesi (Mesafe: ${distance}/64)`);
+            weightedMatches.push({ indicator: `avatar: Görsel Eşleşmesi (Mesafe: ${distance}/64)`, type: 'avatar', weight: EVIDENCE_WEIGHTS.avatar });
           } else if (distance <= 10) {
-            matches.push(`avatar_weak: Kısmi Benzerlik (Mesafe: ${distance}/64, harf avatarı olabilir)`);
+            weightedMatches.push({ indicator: `avatar_weak: Kısmi Benzerlik (Mesafe: ${distance}/64, harf avatarı olabilir)`, type: 'avatar_weak', weight: EVIDENCE_WEIGHTS.avatar_weak });
           }
         }
       }
     } else if (known.avatarUrl && scrapeResult.avatarUrl && known.avatarUrl === scrapeResult.avatarUrl) {
       isAvatarMatch = true;
-      matches.push(`avatar: URL Eşleşmesi`);
+      weightedMatches.push({ indicator: 'avatar: URL Eşleşmesi', type: 'avatar', weight: EVIDENCE_WEIGHTS.avatar });
     }
 
+    const matches = weightedMatches.map(m => m.indicator)
+    const S_prof = computeProfScore(weightedMatches)
+
     if (matches.length > 0 || isAvatarMatch) {
-      // Avatar eşleşmesi tek başına HIGH vermez — başka somut kanıt da gerekir
-      const hasNonAvatarEvidence = matches.some(m => !m.startsWith('avatar'));
-      const confidence: 'high' | 'medium' | 'low' = hasNonAvatarEvidence && matches.length > 1
-        ? 'high'
-        : hasNonAvatarEvidence
-          ? 'medium'
-          : 'low';
+      const hasNonAvatarEvidence = weightedMatches.some(m => m.type !== 'avatar' && m.type !== 'avatar_weak')
+      // V(p) karar fonksiyonu (Formül 2) — S_prof eşikleriyle birleştirilmiş
+      const confidence: 'high' | 'medium' | 'low' =
+        hasNonAvatarEvidence && matches.length > 1 && S_prof >= 0.50 ? 'high'
+        : hasNonAvatarEvidence && S_prof >= 0.15 ? 'medium'
+        : 'low'
       return {
         platform,
         url,
-        verified: hasNonAvatarEvidence,  // avatar tek başına doğrulama sayılmaz
+        verified: hasNonAvatarEvidence && S_prof >= 0.25,
         confidence,
         matchedIndicators: matches,
+        profScore: Math.round(S_prof * 1000) / 1000,
         scrapedBio: bio,
       }
     }
@@ -298,7 +327,10 @@ export function formatVerificationResults(
   if (verified.length > 0) {
     lines.push('✅ DOĞRULANAN PROFİLLER:')
     for (const r of verified) {
-      lines.push(`  • ${r.platform} → ${r.url}`)
+      const scoreLabel = r.profScore !== undefined
+        ? ` (S_prof: ${r.profScore.toFixed(2)} → ${r.confidence})`
+        : ''
+      lines.push(`  • ${r.platform}${scoreLabel} → ${r.url}`)
       lines.push(`    Eşleşen: ${r.matchedIndicators.join(', ')}`)
       if (r.scrapedBio) lines.push(`    Bio: ${r.scrapedBio.slice(0, 100)}`)
     }

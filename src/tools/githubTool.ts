@@ -76,13 +76,13 @@ async function fetchWithTimeout(url: string, ms = REQUEST_TIMEOUT): Promise<Resp
   }
 }
 
-async function getProfile(username: string): Promise<GitHubProfile | null> {
+async function getProfile(username: string): Promise<{ profile: GitHubProfile | null; status: number }> {
   try {
     const res = await fetchWithTimeout(`${GITHUB_API}/users/${username}`)
-    if (!res.ok) return null
-    return await res.json() as GitHubProfile
+    if (!res.ok) return { profile: null, status: res.status }
+    return { profile: await res.json() as GitHubProfile, status: 200 }
   } catch {
-    return null
+    return { profile: null, status: 0 }
   }
 }
 
@@ -104,7 +104,7 @@ async function getFollowing(username: string): Promise<FollowingProfile[]> {
     const profiles: FollowingProfile[] = []
     for (const item of list) {
       await sleep(DEEP_SLEEP_MS)
-      const p = await getProfile(item.login)
+      const { profile: p } = await getProfile(item.login)
       if (!p) continue
       profiles.push({
         username: p.login,
@@ -204,9 +204,17 @@ export async function githubOsint(username: string, deep = false): Promise<GitHu
   }
 
   // 1. Profil bilgisi
-  const profile = await getProfile(username)
+  const { profile, status } = await getProfile(username)
   if (!profile) {
-    result.error = `GitHub user "${username}" not found or API rate limited.`
+    if (status === 401) {
+      result.error = `GitHub API authentication failed — GITHUB_TOKEN is expired or invalid. Please refresh the token in .env.`
+    } else if (status === 403) {
+      result.error = `GitHub API rate limit exceeded for "${username}". Try again later or add/refresh GITHUB_TOKEN in .env.`
+    } else if (status === 404) {
+      result.error = `GitHub user "${username}" does not exist.`
+    } else {
+      result.error = `GitHub API request failed for "${username}" (status: ${status || 'network error'}).`
+    }
     result.rawSummary = result.error
     return result
   }

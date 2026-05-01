@@ -35,7 +35,10 @@
     "test:smoke": "OPENROUTER_API_KEY=sk-placeholder node --import tsx --test src/agents/smokeTestHarness.test.ts",
     "test:live": "npx tsx src/agents/liveIntegrationTest.ts",
     "test:live:quick": "npx tsx src/agents/liveIntegrationTest.ts --no-llm",
-    "test:live:smoke": "npx tsx src/agents/liveSmokeTest.ts"
+    "test:live:smoke": "npx tsx src/agents/liveSmokeTest.ts",
+    "test:perf": "npx tsx src/agents/performanceTest.ts",
+    "test:perf:quick": "npx tsx src/agents/performanceTest.ts --no-llm --no-graph",
+    "test:perf:no-llm": "npx tsx src/agents/performanceTest.ts --no-llm"
   },
   "keywords": [],
   "author": "",

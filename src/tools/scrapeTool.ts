@@ -355,6 +355,34 @@ async function fallbackScraplingFetch(url: string): Promise<ScrapeResult> {
 }
 
 export async function scrapeProfile(url: string): Promise<ScrapeResult> {
+  // SSRF protection — block private/internal network addresses
+  try {
+    const parsed = new URL(url)
+    const hostname = parsed.hostname
+    if (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '0.0.0.0' ||
+      hostname === '::1' ||
+      hostname.endsWith('.local') ||
+      /^10\./.test(hostname) ||
+      /^192\.168\./.test(hostname) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
+      /^169\.254\./.test(hostname)
+    ) {
+      return {
+        url, markdown: '', title: '', description: '',
+        links: [], emails: [], cryptoWallets: [], usernameHints: [],
+        error: `İç ağ adreslerine erişim engellendi: ${hostname}`,
+      }
+    }
+  } catch {
+    return {
+      url, markdown: '', title: '', description: '',
+      links: [], emails: [], cryptoWallets: [], usernameHints: [],
+      error: `Geçersiz URL: ${url}`,
+    }
+  }
 
   if (isInterestingFile(url)) {
     emitProgress(`[Scrape] Medya/belge dosyası: ${url}`);
