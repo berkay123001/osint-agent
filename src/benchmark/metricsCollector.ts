@@ -8,6 +8,7 @@ import { existsSync } from 'fs'
 import path from 'path'
 import type { TestCase } from './testCases.js'
 import type { LLMTelemetryEvent } from '../lib/llmTelemetry.js'
+import type { GraphQualityResult } from './graphQualityMetrics.js'
 
 export interface GraphSnapshot {
   nodes: number
@@ -62,6 +63,9 @@ export interface BenchmarkRunResult {
   // Error (if any)
   error?: string
   status: 'success' | 'error' | 'timeout'
+
+  // Graph quality (post-run Neo4j analysis)
+  graphQuality?: GraphQualityResult
 }
 
 export interface BenchmarkSummary {

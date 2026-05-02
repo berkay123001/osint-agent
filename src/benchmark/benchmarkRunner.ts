@@ -10,6 +10,7 @@ import { runMediaAgent } from '../agents/mediaAgent.js'
 import { runAcademicAgent } from '../agents/academicAgent.js'
 import { runSupervisor } from '../agents/supervisorAgent.js'
 import { createCollector, type BenchmarkRunResult } from './metricsCollector.js'
+import { collectGraphQuality, generateQualityReport } from './graphQualityMetrics.js'
 import type { TestCase } from './testCases.js'
 import type { LLMTelemetryEvent } from '../lib/llmTelemetry.js'
 import type { Message } from '../agents/types.js'
@@ -176,6 +177,13 @@ async function runSingleTestCase(
     status,
   }
 
+  // Graph quality — sadece başarılı ve graf değişikliği olan testler için
+  if (status === 'success' && result.graphNodesDelta > 0) {
+    try {
+      result.graphQuality = await collectGraphQuality()
+    } catch { /* Neo4j erişilemiyorsa atla */ }
+  }
+
   return result
 }
 
@@ -227,5 +235,16 @@ export async function runBenchmark(
   }
 
   await collector.saveSummary(results)
+
+  // Graf kalite raporu — sessionId'si olan testler için
+  const qualityResults = results
+    .map(r => r.graphQuality)
+    .filter((q): q is NonNullable<typeof q> => q !== undefined)
+  if (qualityResults.length > 0) {
+    try {
+      await generateQualityReport(qualityResults)
+    } catch { /* dosya yazma hatası benchmark'ı durdurmasın */ }
+  }
+
   return results
 }
