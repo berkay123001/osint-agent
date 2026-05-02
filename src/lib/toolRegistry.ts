@@ -155,6 +155,12 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
             enum: ['verified', 'high', 'medium', 'low'],
             description: 'Confidence level'
           },
+          confidence_score: {
+            type: 'number',
+            minimum: 0,
+            maximum: 1,
+            description: 'C_v numeric confidence score (0–1). Computed via: C_v = 0.25·C_source + 0.20·C_corroboration + 0.20·C_diversity - 0.20·P_contradiction - 0.15·P_falsePositive. Include whenever you have enough evidence to calculate.'
+          },
           evidence: { type: 'string', description: 'Evidence for the finding (source URL or description)' },
         },
         required: ['subject_label', 'subject_value', 'finding_type', 'target_label', 'target_value', 'relation'],
@@ -181,6 +187,12 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
                 target_value: { type: 'string', description: 'Target node value' },
                 relation: { type: 'string', description: 'Relationship type (USES_EMAIL, LOCATED_IN, WORKS_AT, etc.)' },
                 confidence: { type: 'string', enum: ['verified', 'high', 'medium', 'low'], description: 'Confidence level' },
+                confidence_score: {
+                  type: 'number',
+                  minimum: 0,
+                  maximum: 1,
+                  description: 'C_v numeric confidence score (0–1). Calculate and include when possible.'
+                },
                 evidence: { type: 'string', description: 'Short evidence note (max 200 characters)' },
               },
               required: ['subject_label', 'subject_value', 'target_label', 'target_value', 'relation'],
@@ -1124,14 +1136,15 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
         logger.info('TOOL', `💾 Batch findings write (Neo4j): ${findings.length} findings`)
         try {
           const stats = await batchWriteFindings(
-            findings.map((f: Record<string, string>) => ({
-              subjectLabel: f.subject_label,
-              subjectValue: f.subject_value,
-              targetLabel: f.target_label,
-              targetValue: f.target_value,
-              relation: f.relation,
+            findings.map((f: Record<string, unknown>) => ({
+              subjectLabel: f.subject_label as string,
+              subjectValue: f.subject_value as string,
+              targetLabel: f.target_label as string,
+              targetValue: f.target_value as string,
+              relation: f.relation as string,
               confidence: (f.confidence as any) ?? 'medium',
-              evidence: f.evidence,
+              confidenceScore: typeof f.confidence_score === 'number' ? f.confidence_score : undefined,
+              evidence: f.evidence as string | undefined,
             }))
           )
           const parts = [`✅ ${findings.length} findings written to Neo4j graph in batch. (${stats.nodesCreated} nodes, ${stats.relsCreated} relationships)`]
@@ -1153,6 +1166,7 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
           targetValue: args.target_value,
           relation: args.relation,
           confidence: (args.confidence as any) ?? 'medium',
+          confidenceScore: typeof args.confidence_score === 'number' ? args.confidence_score : undefined,
           evidence: args.evidence,
         })
         result = `✅ Finding saved to Neo4j graph. (${stats.nodesCreated} nodes, ${stats.relsCreated} relationships created)`

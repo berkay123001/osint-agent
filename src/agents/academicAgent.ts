@@ -216,7 +216,21 @@ How has the field changed since 2020?
 # RULES
 - If no arXiv, prioritize Semantic Scholar + DergiPark
 - Fabricating citation counts is FORBIDDEN — get from Semantic Scholar or write "unknown"
-- If Semantic Scholar returns nothing: ORCID → ResearchGate → DergiPark → university page`,
+- If Semantic Scholar returns nothing: ORCID → ResearchGate → DergiPark → university page
+
+# GRAPH CONFIDENCE SCORING
+
+When saving findings to the graph via save_finding tool, include a confidence_score (0-1) based on the C_v formula:
+C_v = 0.25·C_source + 0.20·C_corroboration + 0.20·C_diversity - 0.20·P_contradiction - 0.15·P_falsePositive
+
+Where:
+- C_source: reliability of the source (official=1.0, news=0.7, social=0.4, anonymous=0.2)
+- C_corroboration: how many independent sources confirm (1 source=0.3, 2=0.6, 3+=1.0)
+- C_diversity: variety of source types (single type=0.3, 2 types=0.6, 3+=1.0)
+- P_contradiction: conflicting information found (0 if none, 0.5 if minor, 1.0 if major)
+- P_falsePositive: likelihood of false match (exact match=0, partial=0.3, uncertain=0.7)
+
+Calculate and include this score for each finding you save. Clamp result to [0, 1].`,
 };
 
 // depth → maxToolCalls multiplier: quick=0.5x, normal=1x, deep=1.75x

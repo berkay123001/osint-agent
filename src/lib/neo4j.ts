@@ -57,15 +57,19 @@ export async function clearGraph(): Promise<void> {
 /** MERGE bir node — varsa günceller, yoksa oluşturur */
 export async function mergeNode(
   label: string,
-  properties: Record<string, string>
+  properties: Record<string, string>,
+  confidenceScore?: number  // C_v skoru (0-1), verilirse node property olarak yazılır
 ): Promise<void> {
   const session = getDriver().session()
   try {
     const key = properties.value || properties.name || Object.values(properties)[0]
+    const props = confidenceScore !== undefined
+      ? { ...properties, confidence: confidenceScore }
+      : properties
     await session.run(
       `MERGE (n:${sanitizeLabel(label)} {value: $key})
        SET n += $props, n.updatedAt = datetime()`,
-      { key, props: properties }
+      { key, props }
     )
   } finally {
     await session.close()
@@ -82,13 +86,15 @@ export async function mergeRelation(
   toLabel: string,
   toValue: string,
   relationType: string,
-  meta?: { source?: string; confidence?: ConfidenceLevel }
+  meta?: { source?: string; confidence?: ConfidenceLevel },
+  confidenceScore?: number  // C_v sayısal skoru (0-1), verilirse ilişki property'si olarak eklenir
 ): Promise<void> {
   const session = getDriver().session()
   try {
+    const hasScore = confidenceScore !== undefined
     const setClause = meta
-      ? `, r.source = $source, r.confidence = $confidence, r.updatedAt = datetime()`
-      : ', r.updatedAt = datetime()'
+      ? `, r.source = $source, r.confidence = $confidence${hasScore ? ', r.confidence_score = $confidenceScore' : ''}, r.updatedAt = datetime()`
+      : `${hasScore ? ', r.confidence_score = $confidenceScore' : ''}, r.updatedAt = datetime()`
     await session.run(
       `MERGE (a:${sanitizeLabel(fromLabel)} {value: $fromVal})
        MERGE (b:${sanitizeLabel(toLabel)} {value: $toVal})
@@ -99,6 +105,7 @@ export async function mergeRelation(
         toVal: toValue,
         source: meta?.source ?? 'unknown',
         confidence: meta?.confidence ?? 'medium',
+        ...(hasScore ? { confidenceScore } : {}),
       }
     )
   } finally {
@@ -683,6 +690,7 @@ export async function writeFinding(
     targetValue: string
     relation: string
     confidence?: ConfidenceLevel
+    confidenceScore?: number  // C_v sayısal skoru (0-1)
     evidence?: string
     source?: string
   }
@@ -696,13 +704,14 @@ export async function writeFinding(
     (meta as any).evidence = finding.evidence
   }
 
-  await mergeNode(subjectLabel, { value: subjectValue })
+  await mergeNode(subjectLabel, { value: subjectValue }, finding.confidenceScore)
   await mergeNode(finding.targetLabel, { value: finding.targetValue })
   await mergeRelation(
     subjectLabel, subjectValue,
     finding.targetLabel, finding.targetValue,
     sanitizeRelType(finding.relation),
-    meta
+    meta,
+    finding.confidenceScore
   )
 
   const after = await getGraphStats()
@@ -799,6 +808,7 @@ export async function batchWriteFindings(
     targetValue: string
     relation: string
     confidence?: ConfidenceLevel
+    confidenceScore?: number  // C_v sayısal skoru (0-1)
     evidence?: string
   }>
 ): Promise<{ nodesCreated: number; relsCreated: number; errors: string[] }> {
@@ -817,20 +827,25 @@ export async function batchWriteFindings(
         const sLabel = sanitizeLabel(f.subjectLabel)
         const tLabel = sanitizeLabel(f.targetLabel)
         const relType = sanitizeLabel(sanitizeRelType(f.relation))
-        const meta: Record<string, string> = {
+        const meta: Record<string, unknown> = {
           source: 'supervisor_llm',
           confidence: f.confidence ?? 'medium',
         }
         if (f.evidence) meta.evidence = f.evidence
+        if (f.confidenceScore !== undefined) meta.confidence_score = f.confidenceScore
+
+        const nodeProps: Record<string, unknown> = { value: f.subjectValue, updatedAt: 'datetime()' }
+        const nodePropsBTarget: Record<string, unknown> = { value: f.targetValue, updatedAt: 'datetime()' }
+        if (f.confidenceScore !== undefined) nodeProps.confidence = f.confidenceScore
 
         await session.run(
           `MERGE (a:${sLabel} {value: $sVal})
-           SET a += {value: $sVal, updatedAt: datetime()}
+           SET a += $aProps
            MERGE (b:${tLabel} {value: $tVal})
            SET b += {value: $tVal, updatedAt: datetime()}
            MERGE (a)-[r:${relType}]->(b)
            SET r += $meta`,
-          { sVal: f.subjectValue, tVal: f.targetValue, meta }
+          { sVal: f.subjectValue, tVal: f.targetValue, aProps: nodeProps, meta }
         )
       } catch (e) {
         errors.push(`${f.subjectLabel}:${f.subjectValue} → ${f.targetLabel}:${f.targetValue}: ${(e as Error).message}`)
