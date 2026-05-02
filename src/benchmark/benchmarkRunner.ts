@@ -4,7 +4,7 @@
  */
 
 import { progressEmitter } from '../lib/progressEmitter.js'
-import { getGraphStats } from '../lib/neo4j.js'
+import { getGraphStats, clearGraph } from '../lib/neo4j.js'
 import { runIdentityAgent } from '../agents/identityAgent.js'
 import { runMediaAgent } from '../agents/mediaAgent.js'
 import { runAcademicAgent } from '../agents/academicAgent.js'
@@ -57,9 +57,18 @@ function checkExpectedSignals(response: string, signals: string[]): { found: str
 async function runSingleTestCase(
   tc: TestCase,
   collector: ReturnType<typeof createCollector>,
+  clearGraphBeforeRun = false,
 ): Promise<BenchmarkRunResult> {
   const startedAt = new Date().toISOString()
   const startMs = Date.now()
+
+  // Per-test graph clear — ensures delta measurement is not polluted by previous runs
+  // Only active when NEO4J_ALLOW_CLEAR=1 AND caller passes clearGraphBeforeRun=true
+  if (clearGraphBeforeRun && process.env.NEO4J_ALLOW_CLEAR === '1') {
+    try {
+      await clearGraph()
+    } catch { /* Neo4j might not be reachable */ }
+  }
 
   // Telemetry listener — capture all LLM calls during this test
   const telEvents: LLMTelemetryEvent[] = []
@@ -191,6 +200,8 @@ export interface RunnerOptions {
   onProgress?: (msg: string) => void
   onTestStart?: (tc: TestCase, index: number, total: number) => void
   onTestComplete?: (result: BenchmarkRunResult) => void
+  /** Her test case öncesi grafı temizle. NEO4J_ALLOW_CLEAR=1 gerektirir. */
+  clearGraphBetweenTests?: boolean
 }
 
 export async function runBenchmark(
@@ -207,7 +218,7 @@ export async function runBenchmark(
     options.onTestStart?.(tc, i + 1, total)
     options.onProgress?.(`[${i + 1}/${total}] Running ${tc.id}: ${tc.description}`)
 
-    const result = await runSingleTestCase(tc, collector)
+    const result = await runSingleTestCase(tc, collector, options.clearGraphBetweenTests ?? false)
     results.push(result)
 
     await collector.saveRunResult(result)

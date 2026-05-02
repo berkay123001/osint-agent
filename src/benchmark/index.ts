@@ -32,6 +32,7 @@ function getFlagValue(name: string): string | undefined {
 
 const shouldList = getFlag('--list')
 const shouldClean = getFlag('--clean')
+const shouldCleanBetween = getFlag('--clean-between')
 const categoryFilter = getFlagValue('--category') as TestCategory | undefined
 const idFilter = getFlagValue('--id')
 const dryRun = getFlag('--dry-run')
@@ -166,7 +167,8 @@ async function main(): Promise<void> {
   console.log(`  Test cases:  ${testCases.length}`)
   if (categoryFilter) console.log(`  Category:    ${categoryFilter}`)
   if (idFilter) console.log(`  Test ID:     ${idFilter}`)
-  if (shouldClean) console.log(`  Graph:       ${chalk.yellow('will be cleared')}`)
+  if (shouldClean) console.log(`  Graph:       ${chalk.yellow('will be cleared before suite')}`)
+  if (shouldCleanBetween) console.log(`  Graph:       ${chalk.yellow('will be cleared BEFORE EACH TEST (requires NEO4J_ALLOW_CLEAR=1)')}`)
   if (dryRun) console.log(chalk.yellow('  DRY RUN — no agents will be called'))
   console.log(chalk.bold('════════════════════════════════════════════════════\n'))
 
@@ -193,6 +195,7 @@ async function main(): Promise<void> {
       console.log(chalk.dim(`  ${tc.description}`))
     },
     onTestComplete: () => {},
+    clearGraphBetweenTests: shouldCleanBetween,
   })
 
   printSummary(results)
