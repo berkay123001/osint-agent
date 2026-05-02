@@ -415,14 +415,26 @@ function formatAgentOutput(text: string): string {
  * Detects if a user message is clearly an identity/person/username/email query.
  * Used for pre-routing before the LLM loop — prevents supervisor from bypassing ask_identity_agent.
  */
-function isIdentityQuery(content: string): boolean {
+export function isIdentityQuery(content: string): boolean {
   const lower = content.toLowerCase();
+
+  // Cross-domain queries must go through the LLM loop (runAgentLoop) so the
+  // supervisor can delegate to multiple agents sequentially.
+  // Pre-routing short-circuits runAgentLoop entirely — cross-domain queries
+  // would never reach the academic or media agent if pre-routed.
+  const crossDomainSignals = [
+    /akademik|yay[iı]n|makale|paper|publication|citation|scholar/,
+    /görsel|image|foto|video|haber|news|fact.check|do[gğ]rula/,
+    /hem.*hem|ve aynı zamanda|ayrıca.*araştır|karşılaştır/,
+  ];
+  if (crossDomainSignals.some(re => re.test(lower))) return false;
+
   // GitHub user/profile queries
   if (/github\s+(kullan[iı]c[iı]|user|account|hesap|profil|profile)/.test(lower)) return true;
   // @username mention (social handle)
   if (/@[a-z0-9_.-]{2,}/i.test(lower)) return true;
-  // username/email investigation keywords
-  if (/(username|email|kullan[iı]c[iı]\s*ad[iı])\s*(kimdir|araştır|hakkında|investigate|profil)/.test(lower)) return true;
+  // username/email investigation keywords (allow up to 40 chars between keyword and action)
+  if (/(username|email|e-posta|kullan[iı]c[iı]\s*ad[iı]).{0,40}(kimdir|araştır|hakkında|investigate|profil|kime ait)/s.test(lower)) return true;
   // "profil çıkar/ver" or "kişi araştır" patterns
   if (/profil\s*(ç[iı]kar|ver|göster|analiz)|kişi\s*araştır/.test(lower)) return true;
   return false;
