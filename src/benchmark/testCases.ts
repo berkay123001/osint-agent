@@ -89,8 +89,8 @@ export const TEST_CASES: TestCase[] = [
     category: 'academic',
     agent: 'academic',
     query: 'Multi-agent OSINT sistemleri üzerine 2020-2025 arası yayımlanan güncel akademik literatürü tara. Graph RAG ve knowledge graph kullanılan çalışmalara odaklan.',
-    depth: 'quick',
-    description: 'Konu bazlı literatür taraması — Graph RAG + OSINT araştırma alanı haritalama',
+    depth: 'normal',
+    description: 'Konu bazlı literatür taraması — Graph RAG + OSINT araştırma alanı haritalama (normal depth ile bütçe skalama)',
     expectedSignals: ['graph', 'OSINT', 'multi-agent'],
   },
 
@@ -100,8 +100,8 @@ export const TEST_CASES: TestCase[] = [
     category: 'cross-domain',
     agent: 'supervisor',
     query: 'torvalds GitHub kullanıcısının kimliğini doğrula ve aynı zamanda Linux çekirdeği üzerine yayınlarını akademik veri tabanlarında ara. Dijital kimlik ile akademik yayın profilini karşılaştır.',
-    depth: 'quick',
-    description: 'Kimlik↔Akademik korelasyon — supervisor çok-ajan yönlendirme senaryosu',
+    depth: 'normal',
+    description: 'Kimlik↔Akademik korelasyon — supervisor çok-ajan yönlendirme senaryosu (normal depth)',
     expectedSignals: ['Linus', 'Linux', 'publication'],
   },
   {
@@ -109,8 +109,8 @@ export const TEST_CASES: TestCase[] = [
     category: 'cross-domain',
     agent: 'supervisor',
     query: '"Ahmet Yılmaz" adındaki kişinin GitHub profilini, akademik yayınlarını ve sosyal medya hesaplarını araştır. Hangi Ahmet Yılmaz olduğunu belirlemeye çalış.',
-    depth: 'quick',
-    description: 'Çok-ajan yönlendirme — ortak isim belirsizlik çözümü senaryosu',
+    depth: 'normal',
+    description: 'Çok-ajan yönlendirme — ortak isim belirsizlik çözümü senaryosu (normal depth)',
     expectedSignals: [],
   },
 

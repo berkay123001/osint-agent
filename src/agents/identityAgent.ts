@@ -213,6 +213,8 @@ const DEPTH_MULTIPLIERS: Record<string, number> = { quick: 0.5, normal: 1, deep:
 export interface SubAgentResult {
   response: string;
   history: Message[];
+  toolCallCount?: number;
+  toolsUsed?: Record<string, number>;
 }
 
 type AgentLoopRunner = (history: Message[], config: AgentConfig) => Promise<AgentResult>;
@@ -473,7 +475,7 @@ export async function runIdentityAgent(
       .join(', ');
     emitProgress(`✅ IdentityAgent completed [${result.toolCallCount} tools: ${toolSummary || 'none'}]`);
     const meta = `\n\n---\n**[META] IdentityAgent tool stats:** ${toolSummary || 'no tools used'} (total: ${result.toolCallCount})`;
-    return { response: result.finalResponse + meta, history: effectiveHistory };
+    return { response: result.finalResponse + meta, history: effectiveHistory, toolCallCount: result.toolCallCount, toolsUsed: result.toolsUsed };
   } catch (error) {
     const savedKnowledge = await saveKnowledgeFromHistory(history, query, knowledgeFilePath);
     const errorMessage = error instanceof Error ? error.message : String(error);

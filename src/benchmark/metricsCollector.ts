@@ -116,10 +116,6 @@ export function createCollector() {
     events.push(event)
   }
 
-  function drainEvents(): LLMTelemetryEvent[] {
-    return [...events.splice(0)]
-  }
-
   function computeTokenMetrics(telEvents: LLMTelemetryEvent[]) {
     let promptTokens = 0
     let completionTokens = 0
@@ -259,7 +255,7 @@ export function createCollector() {
     )
   }
 
-  return { captureTelemetry, drainEvents, computeTokenMetrics, saveRunResult, saveSummary }
+  return { captureTelemetry, computeTokenMetrics, saveRunResult, saveSummary }
 }
 
 export type MetricsCollector = ReturnType<typeof createCollector>

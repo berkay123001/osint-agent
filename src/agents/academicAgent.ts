@@ -266,6 +266,6 @@ export async function runAcademicAgent(query: string, context?: string, depth?: 
     .join(', ');
   emitProgress(`✅ AcademicAgent completed [${result.toolCallCount} tools: ${toolSummary || 'none'}]`);
   const meta = `\n\n---\n**[META] AcademicAgent tool stats:** ${toolSummary || 'no tools used'} (total: ${result.toolCallCount})`;
-  return { response: result.finalResponse + meta, history };
+  return { response: result.finalResponse + meta, history, toolCallCount: result.toolCallCount, toolsUsed: result.toolsUsed };
 }
 

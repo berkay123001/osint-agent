@@ -20,19 +20,21 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-function extractToolStats(response: string): { toolCallCount: number; toolsUsed: Record<string, number> } {
-  // META footer: "[META] XxxAgent tool stats: tool1×3, tool2×1 (total: 4)"
-  const metaMatch = response.match(/\[META\].*?tool stats:\s*(.*?)\s*\(total:\s*(\d+)\)/s)
-  if (!metaMatch) {
-    return { toolCallCount: 0, toolsUsed: {} }
-  }
-  const totalStr = metaMatch[2]
-  const toolCallCount = parseInt(totalStr, 10) || 0
+/**
+ * Supervisor history'sinden tool call istatistiklerini çıkar.
+ * assistant mesajlarındaki tool_calls dizilerini tarar.
+ */
+function extractSupervisorToolStats(history: Message[]): { toolCallCount: number; toolsUsed: Record<string, number> } {
   const toolsUsed: Record<string, number> = {}
-  const toolParts = metaMatch[1].split(',').map(s => s.trim()).filter(Boolean)
-  for (const part of toolParts) {
-    const m = part.match(/^(.+?)×(\d+)$/)
-    if (m) toolsUsed[m[1].trim()] = parseInt(m[2], 10)
+  let toolCallCount = 0
+  for (const msg of history) {
+    const assistantMsg = msg as { role: string; tool_calls?: { function: { name: string } }[] }
+    if (assistantMsg.role !== 'assistant' || !assistantMsg.tool_calls) continue
+    for (const tc of assistantMsg.tool_calls) {
+      const name = tc.function.name
+      toolsUsed[name] = (toolsUsed[name] ?? 0) + 1
+      toolCallCount++
+    }
   }
   return { toolCallCount, toolsUsed }
 }
@@ -72,28 +74,40 @@ async function runSingleTestCase(
   let response = ''
   let error: string | undefined
   let status: BenchmarkRunResult['status'] = 'success'
+  let toolCallCount = 0
+  let toolsUsed: Record<string, number> = {}
 
   try {
     switch (tc.agent) {
       case 'identity': {
         const result = await runIdentityAgent(tc.query, tc.context, tc.depth)
         response = result.response
+        toolCallCount = result.toolCallCount ?? 0
+        toolsUsed = result.toolsUsed ?? {}
         break
       }
       case 'media': {
         const result = await runMediaAgent(tc.query, tc.context, tc.depth)
         response = result.response
+        toolCallCount = result.toolCallCount ?? 0
+        toolsUsed = result.toolsUsed ?? {}
         break
       }
       case 'academic': {
         const result = await runAcademicAgent(tc.query, tc.context, tc.depth)
         response = result.response
+        toolCallCount = result.toolCallCount ?? 0
+        toolsUsed = result.toolsUsed ?? {}
         break
       }
       case 'supervisor': {
         const history: Message[] = [{ role: 'user', content: tc.query }]
         const result = await runSupervisor(history)
         response = result?.finalResponse ?? '(no response)'
+        // Supervisor tool calls from returned history
+        const supervisorStats = extractSupervisorToolStats(result?.history ?? history)
+        toolCallCount = supervisorStats.toolCallCount
+        toolsUsed = supervisorStats.toolsUsed
         break
       }
     }
@@ -114,10 +128,6 @@ async function runSingleTestCase(
   try {
     graphAfter = await getGraphStats()
   } catch { /* ignore */ }
-
-  // Derive tool stats from META footer (works for all sub-agents)
-  // For supervisor, extract delegation tool calls from the response
-  const { toolCallCount, toolsUsed } = extractToolStats(response)
 
   // Token metrics from captured telemetry events
   const tokenMetrics = collector.computeTokenMetrics(telEvents)

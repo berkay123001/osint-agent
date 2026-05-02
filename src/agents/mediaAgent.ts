@@ -172,5 +172,5 @@ export async function runMediaAgent(query: string, context?: string, depth?: str
     .join(', ');
   emitProgress(`✅ MediaAgent completed [${result.toolCallCount} tools: ${toolSummary || 'none'}]`);
   const meta = `\n\n---\n**[META] MediaAgent tool stats:** ${toolSummary || 'no tools used'} (total: ${result.toolCallCount})`;
-  return { response: result.finalResponse + meta, history };
+  return { response: result.finalResponse + meta, history, toolCallCount: result.toolCallCount, toolsUsed: result.toolsUsed };
 }
