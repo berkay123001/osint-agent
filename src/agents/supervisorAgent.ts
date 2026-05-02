@@ -272,7 +272,13 @@ You are the Chief (Supervisor) Agent of the OSINT Digital Inspector system. You 
 
 <rules>
 0. SESSION CHECK: If the user references a previous investigation ("earlier", "just now", "what about") → FIRST call read_session_file. Answer directly if data exists.
-1. Person/username/email/GitHub profile → ⛔ MANDATORY: call ask_identity_agent. NEVER use search_web or web_fetch to answer person/username queries yourself. Even for simple or well-known targets (octocat, torvalds, etc.) — always delegate. This rule has NO exceptions.
+0.5. **CROSS-DOMAIN QUERIES** — Read this BEFORE rules 1-3: If the query explicitly requests research in MULTIPLE specialist domains, you MUST call ALL relevant sub-agents sequentially — one after another. Do NOT stop after the first sub-agent.
+  - "person + their academic publications/papers" → ask_identity_agent (GitHub/identity) THEN ask_academic_agent (publications)
+  - "person + image/news verification" → ask_identity_agent THEN ask_media_agent
+  - "GitHub + academic + social media" → ask_identity_agent THEN ask_academic_agent
+  - Trigger keywords: "ve aynı zamanda / and also", "akademik + kimlik", "yayınlar + profil", "hem ... hem de", "ayrıca"
+  - After EACH sub-agent completes, assess if remaining domains still need coverage — if yes, call the next agent.
+1. Person/username/email/GitHub profile → call ask_identity_agent. NEVER use search_web or web_fetch to answer person/username queries yourself. Even for simple or well-known targets (octocat, torvalds, etc.) — always delegate. Exception: if cross-domain rule 0.5 applies, continue to next relevant agent after identity agent completes.
 2. Image/video/news verification → First collect URLs with search_web, then call ask_media_agent (write raw URLs + quotes in context)
 3. Academic research → call ask_academic_agent
    ⚠️ FOLLOW-UP: If already called → answer from [AGENT_DONE] report in history, or use read_session_file if insufficient
@@ -312,8 +318,9 @@ If the user wants more detail, expand with read_session_file.
 
 <tool_rules>
 ## Sub-agent rules:
-- Each sub-agent (ask_identity_agent, ask_media_agent, ask_academic_agent) is called ONLY ONCE
-- When you see [AGENT_DONE] tag, that investigation is closed — do not call again
+- Each sub-agent (ask_identity_agent, ask_media_agent, ask_academic_agent) is called ONLY ONCE per domain — do not call the same agent twice for the same topic
+- For cross-domain queries (rule 0.5), calling DIFFERENT sub-agents sequentially is REQUIRED — this is NOT calling the same agent twice
+- When you see [AGENT_DONE] tag, that specific investigation is closed — do not re-call that same agent
 - After sub-agent returns, NEVER run search_web on the same person/topic (agent already researched it)
 
 ## ALLOWED tools after sub-agent:
@@ -423,22 +430,22 @@ export async function runSupervisor(history: Message[]): Promise<{ finalResponse
       const query = String(lastUserMsg.content);
       logger.info('AGENT', '[Supervisor] Pre-routing → ask_identity_agent (identity query detected)');
       const toolCallId = `pre_route_${Date.now()}`;
-      const updatedHistory: Message[] = [
-        ...history,
-        {
-          role: 'assistant',
-          content: null,
-          tool_calls: [{
-            id: toolCallId,
-            type: 'function' as const,
-            function: { name: 'ask_identity_agent', arguments: JSON.stringify({ query, depth: 'normal' }) },
-          }],
-        } as Message,
-      ];
+      // Mutate history in-place (consistent with runAgentLoop's pushHistory behavior)
+      history.push({
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: toolCallId,
+          type: 'function' as const,
+          function: { name: 'ask_identity_agent', arguments: JSON.stringify({ query, depth: 'normal' }) },
+        }],
+      } as Message);
       const agentResult = await supervisorExecuteTool('ask_identity_agent', { query, depth: 'normal' });
+      history.push({ role: 'tool' as const, tool_call_id: toolCallId, content: agentResult } as Message);
+      history.push({ role: 'assistant' as const, content: agentResult } as Message);
       const formatted = formatAgentOutput(agentResult);
       logger.info('AGENT', `\n🤖 Supervisor:\n${formatted}\n`);
-      return { finalResponse: agentResult, history: updatedHistory };
+      return { finalResponse: agentResult, history };
     }
 
     const result = await runAgentLoop(history, supervisorAgentConfig);
