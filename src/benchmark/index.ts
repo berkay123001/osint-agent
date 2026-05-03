@@ -47,7 +47,7 @@ function listTestCases(): void {
     byCategory[tc.category].push(tc)
   }
 
-  const catColors: Record<string, (s: string) => string> = {
+  const catColors: Record<string, any> = {
     identity: chalk.cyan,
     media: chalk.magenta,
     academic: chalk.yellow,

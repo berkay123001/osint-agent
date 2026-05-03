@@ -40,17 +40,16 @@ A multi-agent OSINT system designed for investigating individuals, usernames, em
 ## Architecture
 
 ```
-User → Supervisor (MiniMax M2.7)
+User → Supervisor
               │
      ┌────────┼────────┐
      ▼        ▼        ▼
   Identity   Media   Academic
    Agent     Agent    Agent
- (Qwen 3.5) (Qwen 3.5) (Qwen 3.5)
      │        │        │
      └────────┼────────┘
               │
-      Strategy Agent (DeepSeek v3.2)
+      Strategy Agent
       Plan → Review → Synthesize
               │
       Tool Registry (35+ tools)
@@ -64,13 +63,13 @@ User → Supervisor (MiniMax M2.7)
                      Scrapling)
 ```
 
-| Agent | Model | Responsibility |
-|-------|-------|---------------|
-| **Supervisor** | MiniMax M2.7 | Coordination, synthesis, graph queries, reporting |
-| **Identity Agent** | Qwen 3.5 Flash | Username, email, GitHub, breach investigation |
-| **Media Agent** | Qwen 3.5 Flash | Image verification, fact-check, EXIF analysis |
-| **Academic Agent** | Qwen 3.5 Flash | Paper survey, researcher profiles, plagiarism |
-| **Strategy Agent** | DeepSeek v3.2 | Research planning, quality review, report synthesis |
+| Agent | Responsibility |
+|-------|---------------|
+| **Supervisor** | Coordination, synthesis, graph queries, reporting |
+| **Identity Agent** | Username, email, GitHub, breach investigation |
+| **Media Agent** | Image verification, fact-check, EXIF analysis |
+| **Academic Agent** | Paper survey, researcher profiles, plagiarism |
+| **Strategy Agent** | Research planning, quality review, report synthesis |
 
 ### Strategy Agent Pipeline
 

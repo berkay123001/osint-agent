@@ -19,7 +19,7 @@ import { tools, executeTool } from './toolRegistry.js';
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function findTool(name: string) {
-  return tools.find(t => t.function.name === name);
+  return tools.find(t => 'function' in t && (t as { function: { name: string } }).function.name === name) as { function: { name: string; description?: string; parameters: unknown } } | undefined;
 }
 
 function parseConfidenceOutput(output: string): {

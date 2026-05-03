@@ -174,7 +174,7 @@ async function executeSubAgentWithStrategy(
   const strategy = new StrategySession(agentType, args.query);
   const flow = await executeStrategyFlow({
     agentType,
-    args,
+    args: { query: args.query, context: args.context, depth: args.depth },
     agentFn,
     strategy,
     agentLabel,

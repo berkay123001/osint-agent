@@ -611,7 +611,7 @@ async function testG2_factCheckGraphPersistence(): Promise<void> {
       claimDate: new Date().toISOString().slice(0, 10),
       verdict: 'UNVERIFIED',
       truthExplanation: 'Otomatik performans testi',
-      tags: ['perf-test', 'automated'],  // Valid JSON array this time
+      tags: JSON.stringify(['perf-test', 'automated']),  // Valid JSON array this time
     })
     const writeStr = String(writeResult)
     const writeOk = writeStr.includes('✅') || writeStr.includes('successfully')
@@ -695,11 +695,11 @@ async function testH_agentRoutingMatrix(): Promise<void> {
       // Check which tool was called in supervisor history
       const calledTools = resultHistory
         .filter((msg: Message) => {
-          const m = msg as Record<string, unknown>
+          const m = msg as unknown as Record<string, unknown>
           return m.role === 'assistant' && Array.isArray(m.tool_calls) && (m.tool_calls as unknown[]).length > 0
         })
         .flatMap((msg: Message) => {
-          const m = msg as Record<string, unknown>
+          const m = msg as unknown as Record<string, unknown>
           const tcs = m.tool_calls as Array<{ function: { name: string } }>
           return tcs.map(tc => tc.function.name)
         })

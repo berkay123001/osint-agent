@@ -295,7 +295,7 @@ async function testC1_identityAgentCallsQueryGraphConfidence(): Promise<void> {
 
     // Check if query_graph_confidence was called in history
     const gcCalled = history.some((msg: Message) => {
-      const anyMsg = msg as Record<string, unknown>
+      const anyMsg = msg as unknown as Record<string, unknown>
       if (anyMsg.role !== 'assistant' || !anyMsg.tool_calls) return false
       const tcs = anyMsg.tool_calls as Array<{ function: { name: string } }>
       return tcs.some(tc => tc.function.name === 'query_graph_confidence')
@@ -309,7 +309,7 @@ async function testC1_identityAgentCallsQueryGraphConfidence(): Promise<void> {
 
     // At minimum: agent must respond with tool calls + non-empty response
     const toolCallCount = history.filter((msg: Message) => {
-      const anyMsg = msg as Record<string, unknown>
+      const anyMsg = msg as unknown as Record<string, unknown>
       return anyMsg.role === 'assistant' && Array.isArray(anyMsg.tool_calls) && (anyMsg.tool_calls as unknown[]).length > 0
     }).length
 
@@ -354,7 +354,7 @@ async function testC2_identityAgentStagnationBudget(): Promise<void> {
 
     const history = result.history
     const toolCallCount = history.filter((msg: Message) => {
-      const anyMsg = msg as Record<string, unknown>
+      const anyMsg = msg as unknown as Record<string, unknown>
       return anyMsg.role === 'assistant' && Array.isArray(anyMsg.tool_calls) && (anyMsg.tool_calls as unknown[]).length > 0
     }).length
 
@@ -399,7 +399,7 @@ async function testC3_supervisorRoutingIdentity(): Promise<void> {
 
     // Check if ask_identity_agent was called in supervisor history
     const identityDelegated = history.some((msg: Message) => {
-      const anyMsg = msg as Record<string, unknown>
+      const anyMsg = msg as unknown as Record<string, unknown>
       if (anyMsg.role !== 'assistant' || !anyMsg.tool_calls) return false
       const tcs = anyMsg.tool_calls as Array<{ function: { name: string } }>
       return tcs.some(tc => tc.function.name === 'ask_identity_agent')

@@ -56,13 +56,6 @@ export class BloomFilter {
     this.bits = new Uint8Array(Math.ceil(this.m / 8));
   }
 
-  private constructor_internal(m: number, k: number, bits: Uint8Array, count: number) {
-    this.m = m;
-    this.k = k;
-    this.bits = bits;
-    this.count = count;
-  }
-
   // ── Hash functions ────────────────────────────────────────────────────────
 
   /** FNV-1a 32-bit hash (first independent hash). */
