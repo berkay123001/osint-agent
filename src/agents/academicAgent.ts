@@ -93,7 +93,7 @@ const ACADEMIC_TOOLS = [
 
 export const academicAgentConfig: AgentConfig = {
   name: 'AcademicAgent',
-  model: 'minimax/minimax-m2.5',
+  model: 'deepseek/deepseek-v4-pro',
   maxToolCalls: 30,
   tools: tools.filter((t: any) => t.type === 'function' && ACADEMIC_TOOLS.includes(t.function.name)),
   executeTool: executeTool,

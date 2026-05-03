@@ -249,7 +249,7 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
 
 export const supervisorAgentConfig: AgentConfig = {
   name: 'Supervisor',
-  model: 'qwen/qwen3.6-plus',
+  model: 'deepseek/deepseek-v4-pro',
   maxTokens: 32768, // Large sub-agent reports + thinking tokens need a generous budget
   maxToolCalls: 90, // Complex multi-agent tasks: 3+ sub-agent delegations × retries + report + graph ops
   tools: supervisorMetaTools,

@@ -113,16 +113,24 @@ async function main() {
 
   let agentResponse = '';
 
-  // runSupervisor writes output to console; but we also want to capture the response.
-  // We do this by directly watching the history array.
-  await runSupervisor(session.history);
+  // runSupervisor mutates session.history (via runAgentLoop's pushHistory) and also returns finalResponse
+  const supervisorResult = await runSupervisor(session.history);
 
-  // runSupervisor pushes the assistant message to history
-  const lastMsg = session.history[session.history.length - 1];
-  if (lastMsg && lastMsg.role === 'assistant') {
-    agentResponse = typeof lastMsg.content === 'string'
-      ? lastMsg.content
-      : JSON.stringify(lastMsg.content);
+  if (supervisorResult) {
+    // Prefer returned finalResponse (covers both normal loop and pre-routing paths)
+    agentResponse = supervisorResult.finalResponse;
+    // Sync history if pre-routing returned a different array reference
+    if (supervisorResult.history !== session.history) {
+      session.history = supervisorResult.history;
+    }
+  } else {
+    // Fallback: read last assistant message from mutated history
+    const lastMsg = session.history[session.history.length - 1];
+    if (lastMsg && lastMsg.role === 'assistant') {
+      agentResponse = typeof lastMsg.content === 'string'
+        ? lastMsg.content
+        : JSON.stringify(lastMsg.content);
+    }
   }
 
   // Kaydet

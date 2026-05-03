@@ -136,7 +136,7 @@ test('Kullanici bulunamadi hatasi', async () => {
 
   const result = await githubOsint('nonexistent')
 
-  assert.ok(result.error?.includes('not found'))
+  assert.ok(result.error?.includes('does not exist'))
   assert.deepEqual(result.emails, [])
 })
 

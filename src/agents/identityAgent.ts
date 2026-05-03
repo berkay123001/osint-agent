@@ -110,7 +110,7 @@ Which tools were called, what was found`;
 
 export const identityAgentConfig: AgentConfig = {
   name: 'IdentityAgent',
-  model: 'minimax/minimax-m2.5',
+  model: 'deepseek/deepseek-v4-pro',
   tools: tools.filter((t: any) => t.type === 'function' && IDENTITY_TOOLS.includes(t.function.name)),
   executeTool: executeTool,
   maxToolCalls: 40,
