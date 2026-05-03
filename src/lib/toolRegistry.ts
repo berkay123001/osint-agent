@@ -159,11 +159,11 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
             type: 'number',
             minimum: 0,
             maximum: 1,
-            description: 'C_v numeric confidence score (0–1). Computed via: C_v = 0.25·C_source + 0.20·C_corroboration + 0.20·C_diversity - 0.20·P_contradiction - 0.15·P_falsePositive. Include whenever you have enough evidence to calculate.'
+            description: '⚠️ REQUIRED. C_v numeric confidence score (0–1). MUST be calculated before calling this tool. Formula: C_v = 0.25·C_source + 0.20·C_corroboration + 0.20·C_diversity - 0.20·P_contradiction - 0.15·P_falsePositive. Omitting this field will cause the call to be rejected.'
           },
           evidence: { type: 'string', description: 'Evidence for the finding (source URL or description)' },
         },
-        required: ['subject_label', 'subject_value', 'finding_type', 'target_label', 'target_value', 'relation'],
+        required: ['subject_label', 'subject_value', 'finding_type', 'target_label', 'target_value', 'relation', 'confidence_score'],
       },
     },
   },
@@ -191,11 +191,11 @@ export const tools: OpenAI.Chat.ChatCompletionTool[] = [
                   type: 'number',
                   minimum: 0,
                   maximum: 1,
-                  description: 'C_v numeric confidence score (0–1). Calculate and include when possible.'
+                  description: '⚠️ REQUIRED. C_v numeric confidence score (0–1). MUST be calculated before including this finding. Formula: C_v = 0.25·C_source + 0.20·C_corroboration + 0.20·C_diversity - 0.20·P_contradiction - 0.15·P_falsePositive.'
                 },
                 evidence: { type: 'string', description: 'Short evidence note (max 200 characters)' },
               },
-              required: ['subject_label', 'subject_value', 'target_label', 'target_value', 'relation'],
+              required: ['subject_label', 'subject_value', 'target_label', 'target_value', 'relation', 'confidence_score'],
             },
             maxItems: 30,
           },
@@ -1158,20 +1158,24 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       }
     }
     else if (name === 'save_finding') {
-      logger.info('TOOL', `💾 Saving finding (Neo4j): ${args.subject_label}:${args.subject_value} -[${args.relation}]-> ${args.target_label}:${args.target_value}`)
-      try {
-        const stats = await writeFinding(args.subject_label, args.subject_value, {
-          type: args.finding_type as 'identity' | 'location' | 'affiliation' | 'alias' | 'association',
-          targetLabel: args.target_label,
-          targetValue: args.target_value,
-          relation: args.relation,
-          confidence: (args.confidence as any) ?? 'medium',
-          confidenceScore: typeof args.confidence_score === 'number' ? args.confidence_score : undefined,
-          evidence: args.evidence,
-        })
-        result = `✅ Finding saved to Neo4j graph. (${stats.nodesCreated} nodes, ${stats.relsCreated} relationships created)`
-      } catch (e: any) {
-        result = `❌ Graph write error: ${e.message}`
+      if (args.confidence_score === undefined || args.confidence_score === null || args.confidence_score === '') {
+        result = `❌ save_finding REJECTED: confidence_score is REQUIRED. Calculate C_v = 0.25·C_source + 0.20·C_corroboration + 0.20·C_diversity - 0.20·P_contradiction - 0.15·P_falsePositive before calling this tool, then retry with confidence_score included.`;
+      } else {
+        logger.info('TOOL', `💾 Saving finding (Neo4j): ${args.subject_label}:${args.subject_value} -[${args.relation}]-> ${args.target_label}:${args.target_value}`)
+        try {
+          const stats = await writeFinding(args.subject_label, args.subject_value, {
+            type: args.finding_type as 'identity' | 'location' | 'affiliation' | 'alias' | 'association',
+            targetLabel: args.target_label,
+            targetValue: args.target_value,
+            relation: args.relation,
+            confidence: (args.confidence as any) ?? 'medium',
+            confidenceScore: typeof args.confidence_score === 'number' ? args.confidence_score : (parseFloat(args.confidence_score as any) || undefined),
+            evidence: args.evidence,
+          })
+          result = `✅ Finding saved to Neo4j graph. (${stats.nodesCreated} nodes, ${stats.relsCreated} relationships created)`
+        } catch (e: any) {
+          result = `❌ Graph write error: ${e.message}`
+        }
       }
     }
     else if (name === 'save_ioc') {
