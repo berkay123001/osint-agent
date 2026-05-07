@@ -1008,7 +1008,7 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
 
   export async function executeTool(
     name: string,
-    args: Record<string, string>
+    args: Record<string, any>
   ): Promise<string> {
     // Resolve alias — if model called a non-existent tool, try the canonical name
     name = TOOL_ALIASES[name] ?? name;

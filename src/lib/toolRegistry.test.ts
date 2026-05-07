@@ -179,7 +179,7 @@ describe('toolRegistry — save_finding / batch_save_findings confidence rejecti
       target_value: 'test@example.com',
       relation: 'has_email',
       finding_type: 'identity',
-      confidence_score: null,
+      confidence_score: undefined as any,
     });
 
     assert.ok(result.includes('REJECTED'), `Expected REJECTED, got: ${result}`);
@@ -203,7 +203,7 @@ describe('toolRegistry — save_finding / batch_save_findings confidence rejecti
           target_value: 'twitter',
           relation: 'has_account',
           // confidence_score missing on this one
-        },
+        } as any,
       ],
     });
 
@@ -216,7 +216,7 @@ describe('toolRegistry — save_finding / batch_save_findings confidence rejecti
       findings: [
         { subject_label: 'A', subject_value: 'x', target_label: 'B', target_value: 'y', relation: 'r' },
         { subject_label: 'A', subject_value: 'x', target_label: 'C', target_value: 'z', relation: 'r' },
-      ],
+      ] as any[],
     });
 
     assert.ok(result.includes('REJECTED'), `Expected REJECTED, got: ${result}`);
@@ -225,7 +225,7 @@ describe('toolRegistry — save_finding / batch_save_findings confidence rejecti
 
   it('batch_save_findings REJECTED on empty array', async () => {
     const result = await executeTool('batch_save_findings', {
-      findings: [],
+      findings: [] as any[],
     });
 
     assert.ok(result.includes('empty') || result.includes('invalid'), `Expected empty/invalid msg, got: ${result}`);
