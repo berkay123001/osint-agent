@@ -153,6 +153,85 @@ describe('toolRegistry — query_graph_confidence executeTool (no Neo4j)', () =>
   });
 });
 
+describe('toolRegistry — save_finding / batch_save_findings confidence rejection', () => {
+  it('save_finding REJECTED when confidence_score is missing', async () => {
+    const result = await executeTool('save_finding', {
+      subject_label: 'Username',
+      subject_value: 'testuser',
+      target_label: 'Email',
+      target_value: 'test@example.com',
+      relation: 'has_email',
+      finding_type: 'identity',
+      confidence: 'medium',
+      // confidence_score deliberately omitted
+    });
+
+    assert.ok(typeof result === 'string');
+    assert.ok(result.includes('REJECTED'), `Expected REJECTED, got: ${result.slice(0, 200)}`);
+    assert.ok(result.includes('confidence_score'), `Should mention confidence_score, got: ${result.slice(0, 200)}`);
+  });
+
+  it('save_finding REJECTED when confidence_score is null', async () => {
+    const result = await executeTool('save_finding', {
+      subject_label: 'Username',
+      subject_value: 'testuser',
+      target_label: 'Email',
+      target_value: 'test@example.com',
+      relation: 'has_email',
+      finding_type: 'identity',
+      confidence_score: null,
+    });
+
+    assert.ok(result.includes('REJECTED'), `Expected REJECTED, got: ${result}`);
+  });
+
+  it('batch_save_findings REJECTED when any finding lacks confidence_score', async () => {
+    const result = await executeTool('batch_save_findings', {
+      findings: [
+        {
+          subject_label: 'Username',
+          subject_value: 'user1',
+          target_label: 'Email',
+          target_value: 'a@b.com',
+          relation: 'has_email',
+          confidence_score: 0.8,
+        },
+        {
+          subject_label: 'Username',
+          subject_value: 'user1',
+          target_label: 'Platform',
+          target_value: 'twitter',
+          relation: 'has_account',
+          // confidence_score missing on this one
+        },
+      ],
+    });
+
+    assert.ok(result.includes('REJECTED'), `Expected REJECTED, got: ${result.slice(0, 200)}`);
+    assert.ok(result.includes('1/2'), `Should report 1 of 2 missing, got: ${result}`);
+  });
+
+  it('batch_save_findings REJECTED when ALL findings lack confidence_score', async () => {
+    const result = await executeTool('batch_save_findings', {
+      findings: [
+        { subject_label: 'A', subject_value: 'x', target_label: 'B', target_value: 'y', relation: 'r' },
+        { subject_label: 'A', subject_value: 'x', target_label: 'C', target_value: 'z', relation: 'r' },
+      ],
+    });
+
+    assert.ok(result.includes('REJECTED'), `Expected REJECTED, got: ${result}`);
+    assert.ok(result.includes('2/2'), `Should report 2 of 2 missing, got: ${result}`);
+  });
+
+  it('batch_save_findings REJECTED on empty array', async () => {
+    const result = await executeTool('batch_save_findings', {
+      findings: [],
+    });
+
+    assert.ok(result.includes('empty') || result.includes('invalid'), `Expected empty/invalid msg, got: ${result}`);
+  });
+});
+
 describe('toolRegistry — query_graph_confidence pure scoring path', () => {
   it('computeGraphConfidence produces correct score for github_api source (direct unit)', async () => {
     // Import the pure functions directly — no tool registry overhead

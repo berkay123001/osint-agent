@@ -249,7 +249,7 @@ async function supervisorExecuteTool(name: string, args: Record<string, string>)
 
 export const supervisorAgentConfig: AgentConfig = {
   name: 'Supervisor',
-  model: 'deepseek/deepseek-v4-pro',
+  model: 'qwen/qwen3.6-plus',
   maxTokens: 32768, // Large sub-agent reports + thinking tokens need a generous budget
   maxToolCalls: 90, // Complex multi-agent tasks: 3+ sub-agent delegations × retries + report + graph ops
   tools: supervisorMetaTools,
@@ -279,7 +279,7 @@ You are the Chief (Supervisor) Agent of the OSINT Digital Inspector system. You 
   - Trigger keywords: "ve aynı zamanda / and also", "akademik + kimlik", "yayınlar + profil", "hem ... hem de", "ayrıca"
   - After EACH sub-agent completes, assess if remaining domains still need coverage — if yes, call the next agent.
 1. Person/username/email/GitHub profile → call ask_identity_agent. NEVER use search_web or web_fetch to answer person/username queries yourself. Even for simple or well-known targets (octocat, torvalds, etc.) — always delegate. Exception: if cross-domain rule 0.5 applies, continue to next relevant agent after identity agent completes.
-2. Image/video/news verification → First collect URLs with search_web, then call ask_media_agent (write raw URLs + quotes in context)
+2. Image/video/news/fact-check/claim verification → For in-depth verification, collect URLs with search_web first, then call ask_media_agent (write raw URLs + quotes in context). For simple yes/no questions you can answer from search results directly.
 3. Academic research → call ask_academic_agent
    ⚠️ FOLLOW-UP: If already called → answer from [AGENT_DONE] report in history, or use read_session_file if insufficient
 4. Graph query → query_graph, list_graph_nodes, graph_stats

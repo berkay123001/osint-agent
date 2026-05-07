@@ -124,6 +124,15 @@ export const TEST_CASES: TestCase[] = [
     description: 'Yaygın Türk ismi — heuristics ambiguity detection ve false-positive filtreleme testi',
     expectedSignals: ['belirsiz', 'birden fazla', 'doğrulanamadı', 'ambiguous', 'multiple'],
   },
+  {
+    id: 'FP-2',
+    category: 'false-positive',
+    agent: 'identity',
+    query: 'berkay123001 GitHub kullanıcısının dijital profilini çıkar. Gerçek kimliğini, kullandığı teknolojileri ve platformlardaki diğer hesaplarını bul.',
+    depth: 'normal',
+    description: 'Öznel doğruluk testi — spesifik bir GitHub kullanıcısında precision ölçümü (Berkay Hasret)',
+    expectedSignals: ['Berkay', 'Hasret', 'TypeScript', 'Python', 'osint-agent'],
+  },
 ]
 
 export function getTestCasesByCategory(category: TestCategory): TestCase[] {

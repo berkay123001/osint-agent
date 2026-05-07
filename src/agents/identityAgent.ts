@@ -37,7 +37,7 @@ async function saveKnowledgeFromHistory(history: Message[], query: string, knowl
     if (!groups[c.name]) groups[c.name] = [];
     groups[c.name].push(c);
   }
-  const MAX_RESULT_CHARS = 3000;
+  const MAX_RESULT_CHARS = 12000;
   let md = `# 🕵️ Identity Investigation Raw Knowledge Base\n\n`;
   md += `**Query:** ${query}\n**Date:** ${new Date().toISOString()}\n**Total tool calls:** ${calls.length}\n\n---\n\n`;
   const emoji: Record<string, string> = {
@@ -200,10 +200,7 @@ Which tools were called, what was found
 
 # GRAPH CONFIDENCE SCORING
 
-⚠️ MANDATORY: Every save_finding and batch_save_findings call MUST include confidence_score (0-1).
-If you call save_finding WITHOUT confidence_score, the tool will REJECT your call.
-Calculate C_v BEFORE each save_finding call. NEVER skip this field.
-
+When saving findings to the graph via save_finding tool, include a confidence_score (0-1) based on the C_v formula:
 C_v = 0.25·C_source + 0.20·C_corroboration + 0.20·C_diversity - 0.20·P_contradiction - 0.15·P_falsePositive
 
 Where:
@@ -213,7 +210,7 @@ Where:
 - P_contradiction: conflicting information found (0 if none, 0.5 if minor, 1.0 if major)
 - P_falsePositive: likelihood of false match (exact match=0, partial=0.3, uncertain=0.7)
 
-Clamp result to [0, 1]. Example: single news source, no corroboration, uncertain → C_v = 0.25·0.7 + 0.20·0.3 + 0.20·0.3 - 0 - 0.20·0.3 = 0.175 + 0.06 + 0.06 - 0.06 = 0.235
+Calculate and include this score for each finding you save. Clamp result to [0, 1].
 
 After collecting findings, call **query_graph_confidence** for each confirmed entity (Username, Email, Person) that was written to or is likely in the investigation graph.
 - Parameters: label (e.g. "Username", "Email", "Person"), value (e.g. "octocat")

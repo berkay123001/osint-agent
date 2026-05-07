@@ -5,7 +5,7 @@ export type Message = OpenAI.Chat.ChatCompletionMessageParam
 const EMPTY_ASSISTANT_FALLBACK = 'Tools completed but the model returned an empty response.'
 const EMPTY_TOOL_FALLBACK = 'Tool produced no output.'
 
-const TOOL_RESULT_MAX_CHARS = 3000
+const TOOL_RESULT_MAX_CHARS = 12000
 
 export function normalizeToolContent(content: string | null | undefined): string {
   const text = typeof content === 'string' ? content.trim() : ''

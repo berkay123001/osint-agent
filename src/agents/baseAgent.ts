@@ -21,6 +21,7 @@ export { DEFAULT_MODEL, SUPERVISOR_MODEL };
 
 // Fallback models — tried sequentially on content filter (PII) or rate limit errors
 const FALLBACK_MODELS = [
+  'qwen/qwen3.6-plus',
   'minimax/minimax-m2.5',
   'google/gemini-2.0-flash-001',
   'deepseek/deepseek-chat-v3-0324',
@@ -505,6 +506,32 @@ export async function runAgentLoop(
         }, {
           reason: 'transient-retry',
         });
+      }
+      // 400 Provider errors — try fallback models
+      else if (msg.includes('400') || msg.includes('Provider returned error')) {
+        logger.warn('AGENT', `[${config.name}] 400 Provider error (${msg.slice(0, 80)}...) — trying fallback models...`);
+        let lastErr = apiError;
+        for (const fbModel of FALLBACK_MODELS) {
+          if (fbModel === currentModel) continue;
+          try {
+            logger.info('AGENT', `[${config.name}] 400 fallback → trying ${fbModel}`);
+            response = await createTrackedCompletion({
+              model: fbModel,
+              messages: buildRequestMessages(fbModel),
+              tools: config.tools.length > 0 ? config.tools : undefined,
+              tool_choice: config.tools.length > 0 ? toolChoice : undefined,
+              max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
+            }, {
+              reason: '400-provider-fallback',
+            });
+            logger.info('AGENT', `[${config.name}] 400 fallback successful: ${fbModel}`);
+            break;
+          } catch (fbErr) {
+            lastErr = fbErr;
+            // try next fallback
+          }
+        }
+        if (!response) throw lastErr;
       }
       else {
         throw apiError;
