@@ -1133,45 +1133,57 @@ async function runGithubOsint(username: string, deep = false): Promise<string> {
       if (!Array.isArray(findings) || findings.length === 0) {
         result = '❌ findings is empty or invalid — at least 1 finding is required.'
       } else {
-        logger.info('TOOL', `💾 Batch findings write (Neo4j): ${findings.length} findings`)
-        try {
-          const stats = await batchWriteFindings(
-            findings.map((f: Record<string, unknown>) => ({
-              subjectLabel: f.subject_label as string,
-              subjectValue: f.subject_value as string,
-              targetLabel: f.target_label as string,
-              targetValue: f.target_value as string,
-              relation: f.relation as string,
-              confidence: (f.confidence as any) ?? 'medium',
-              confidenceScore: typeof f.confidence_score === 'number' ? f.confidence_score : undefined,
-              evidence: f.evidence as string | undefined,
-            }))
-          )
-          const parts = [`✅ ${findings.length} findings written to Neo4j graph in batch. (${stats.nodesCreated} nodes, ${stats.relsCreated} relationships)`]
-          if (stats.errors.length > 0) {
-            parts.push(`⚠️ ${stats.errors.length} errors: ${stats.errors.join('; ')}`)
+        const missingScores: number[] = []
+        findings.forEach((f: Record<string, unknown>, i: number) => {
+          if (typeof f.confidence_score !== 'number') missingScores.push(i + 1)
+        })
+        if (missingScores.length > 0) {
+          result = `⚠️ REJECTED — ${missingScores.length}/${findings.length} findings missing numeric confidence_score. Run query_graph_confidence for each entity first. Missing in positions: ${missingScores.join(', ')}`
+        } else {
+          logger.info('TOOL', `💾 Batch findings write (Neo4j): ${findings.length} findings`)
+          try {
+            const stats = await batchWriteFindings(
+              findings.map((f: Record<string, unknown>) => ({
+                subjectLabel: f.subject_label as string,
+                subjectValue: f.subject_value as string,
+                targetLabel: f.target_label as string,
+                targetValue: f.target_value as string,
+                relation: f.relation as string,
+                confidence: (f.confidence as any) ?? 'medium',
+                confidenceScore: f.confidence_score as number,
+                evidence: f.evidence as string | undefined,
+              }))
+            )
+            const parts = [`✅ ${findings.length} findings written to Neo4j graph in batch. (${stats.nodesCreated} nodes, ${stats.relsCreated} relationships)`]
+            if (stats.errors.length > 0) {
+              parts.push(`⚠️ ${stats.errors.length} errors: ${stats.errors.join('; ')}`)
+            }
+            result = parts.join('\n')
+          } catch (e: any) {
+            result = `❌ Batch graph write error: ${e.message}`
           }
-          result = parts.join('\n')
-        } catch (e: any) {
-          result = `❌ Batch graph write error: ${e.message}`
         }
       }
     }
     else if (name === 'save_finding') {
-      logger.info('TOOL', `💾 Saving finding (Neo4j): ${args.subject_label}:${args.subject_value} -[${args.relation}]-> ${args.target_label}:${args.target_value}`)
-      try {
-        const stats = await writeFinding(args.subject_label, args.subject_value, {
-          type: args.finding_type as 'identity' | 'location' | 'affiliation' | 'alias' | 'association',
-          targetLabel: args.target_label,
-          targetValue: args.target_value,
-          relation: args.relation,
-          confidence: (args.confidence as any) ?? 'medium',
-          confidenceScore: typeof args.confidence_score === 'number' ? args.confidence_score : undefined,
-          evidence: args.evidence,
-        })
-        result = `✅ Finding saved to Neo4j graph. (${stats.nodesCreated} nodes, ${stats.relsCreated} relationships created)`
-      } catch (e: any) {
-        result = `❌ Graph write error: ${e.message}`
+      if (typeof args.confidence_score !== 'number') {
+        result = `⚠️ REJECTED — save_finding requires a numeric confidence_score (0.0–1.0). Run query_graph_confidence first and include the resulting score. Missing: confidence_score=${args.confidence_score}`
+      } else {
+        logger.info('TOOL', `💾 Saving finding (Neo4j): ${args.subject_label}:${args.subject_value} -[${args.relation}]-> ${args.target_label}:${args.target_value}`)
+        try {
+          const stats = await writeFinding(args.subject_label, args.subject_value, {
+            type: args.finding_type as 'identity' | 'location' | 'affiliation' | 'alias' | 'association',
+            targetLabel: args.target_label,
+            targetValue: args.target_value,
+            relation: args.relation,
+            confidence: (args.confidence as any) ?? 'medium',
+            confidenceScore: args.confidence_score as number,
+            evidence: args.evidence,
+          })
+          result = `✅ Finding saved to Neo4j graph. (${stats.nodesCreated} nodes, ${stats.relsCreated} relationships created)`
+        } catch (e: any) {
+          result = `❌ Graph write error: ${e.message}`
+        }
       }
     }
     else if (name === 'save_ioc') {
