@@ -22,6 +22,72 @@ A multi-agent OSINT system designed for investigating individuals, usernames, em
 
 ---
 
+## Quickstart
+
+From `git clone` to your first OSINT query in under two minutes.
+
+### 1. Install
+
+```bash
+git clone https://github.com/berkay123001/osint-agent
+cd osint-agent
+npm install
+```
+
+### 2. Configure
+
+The only strictly required credential is an OpenRouter API key. Any free-tier model on OpenRouter works (e.g. `qwen/qwen-2.5-7b-instruct:free`).
+
+```bash
+cp .env.example .env
+# Then edit .env and set OPENROUTER_API_KEY
+```
+
+No OpenRouter account? Grab a free key at [openrouter.ai/keys](https://openrouter.ai/keys).
+
+### 3. Run
+
+```bash
+npm run chat
+```
+
+You'll drop into an interactive terminal. Try a real query:
+
+```
+> Find every public profile for the username "torvalds"
+```
+
+The agent routes this through the Identity sub-agent, calls Sherlock across 400+ sites, optionally checks GitHub and web search, and prints a structured report — usually in under 30 seconds.
+
+### 4. Verify without spending credits
+
+If you just want to confirm the install works before plugging in a real key:
+
+```bash
+OPENROUTER_API_KEY=sk-placeholder npm test
+```
+
+This runs the full unit-test suite against placeholder credentials and exits non-zero if anything is broken.
+
+### Optional layers
+
+The base install runs out of the box. The features below unlock as you add them — each is independent.
+
+| Layer | What it adds | How to enable |
+|-------|--------------|---------------|
+| Local graph (Neo4j) | Persisted findings, D3 visualization at `:3333` | `docker compose up -d neo4j` |
+| Self-hosted search (SearXNG) | Free metasearch, no rate limits | `docker compose up -d searxng` |
+| Self-hosted scraper (Firecrawl) | Free web scraping, no monthly cap | `docker compose up -d firecrawl` |
+| Email registration scan (Holehe) | Which platforms an email is registered on | `pip install holehe` + `PYTHON_PATH=python3` |
+| Username sweep (Sherlock) | 400+ platform check | `pip install sherlock-project` |
+| Stealth scraper (Scrapling) | Anti-bot bypass for hard sites | `pip install scrapling` |
+| Dark-web breach check | HIBP integration | set `HIBP_API_KEY` |
+| GitHub higher rate limit | 5000 req/h instead of 60 | set `GITHUB_TOKEN` |
+
+Anything missing from the table gracefully degrades — the agent will tell you which tool it skipped and why.
+
+---
+
 ## Features
 
 | Domain | Capability |
